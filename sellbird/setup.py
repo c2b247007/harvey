@@ -956,6 +956,9 @@ class SetupWizard:
   To re-run this setup:
     sellbird setup
 
+  News, new releases and the roadmap go out first on X:
+    https://x.com/sellbirdagent
+
   Before you send a single email:
     1. Use a dedicated sending domain (not your main domain) with
        SPF, DKIM, and DMARC configured.

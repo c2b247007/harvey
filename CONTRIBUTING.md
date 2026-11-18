@@ -59,6 +59,16 @@ Every test or verification email goes to an address you own, set up for that
 purpose. Never to an address from a database, an export, a reply or a fixture.
 Tests never send real email: use the fake providers in `tests/`.
 
+## Releases (maintainers)
+
+Every GitHub release note opens with this line, so people watching releases know where announcements go:
+
+```markdown
+> **Follow [@sellbirdagent](https://x.com/sellbirdagent) on X** for new releases, features and the roadmap.
+```
+
+Announce the release on X first, then link that post from the release notes.
+
 ## License and sign-off
 
 Sellbird is licensed under the GNU Affero General Public License v3.0 only
