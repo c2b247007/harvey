@@ -249,6 +249,14 @@ nav button.active .icon { color: var(--accent); }
 .status-dot.running { background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); }
 .status-dot.offline { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-bg); }
 .foot-actions { display: flex; gap: 6px; }
+/* A quiet pointer to the project's X account: news, releases, the roadmap. */
+.follow-link {
+  display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-ui); color: var(--text-3); text-decoration: none;
+  transition-property: color; transition-duration: 150ms; transition-timing-function: ease-out;
+}
+.follow-link .icon { width: 13px; height: 13px; flex: none; }
+@media (hover: hover) { .follow-link:hover { color: var(--text); } }
+.follow-link:focus-visible { color: var(--text); }
 
 /* Appearance: one icon per choice, the current one pressed. */
 .theme-switch { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm); background: var(--surface); box-shadow: var(--btn-shadow); }
@@ -990,6 +998,7 @@ textarea.form-input { height: auto; padding: 8px 12px; }
   .nav-label { display: none; }
   nav button { width: auto; height: 30px; flex: none; }
   .sidebar-foot { margin: 0 0 0 auto; flex-direction: row; align-items: center; border-top: none; padding: 0; }
+  .follow-link { display: none; }
   main.content { padding: var(--sp-5) var(--sp-4) 80px; }
   .tl-item { grid-template-columns: 52px 24px minmax(0, 1fr); }
   .queue-item { flex-wrap: wrap; }
