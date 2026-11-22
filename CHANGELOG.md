@@ -7,6 +7,16 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Changed
+
+- **The dashboard has a new frame.** The 15-tab sidebar is replaced by a dock
+  with six places (Today, Inbox, People, Calendar, Numbers, Set up), in the
+  Pale Harbor colours with the real Sellbird logo. Every earlier tab is still
+  there, inside one of the six. The layout sizes to its own container, so it
+  works at 320 pixels wide inside an agent's panel as well as full width, in
+  light and dark. Calendar and Numbers are new screens over data the engine
+  already kept. Screens have addresses (`#outbox`, `#signals`).
+
 ### Added
 
 - **`writer.require_tip: true` skips prospects with nothing to build a tip

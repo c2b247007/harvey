@@ -54,9 +54,9 @@ People will ask "how does this work?" — explain it simply:
 
 - **"Can it use ChatGPT / Codex instead of Claude?"** → Yes, opt-in. Install Codex CLI 0.159.3 (`npm install -g @openai/codex@0.159.3`; other versions are refused), run `codex login` with ChatGPT, and set `brain: { provider: codex, model: gpt-5.5 }` in sellbird.yaml (or choose codex in `sellbird setup`, which suggests gpt-5.5, or `sellbird train <url> --provider codex --model gpt-5.5`). Any exact model ID from the account's catalog also works, including Luna, Sol and Terra models (e.g. `gpt-6.1-sol`): Sellbird runs them in a private text-only catalog copy with no tools. A blank model picks the highest-priority listed model; an unlisted model needs an explicit ID, and unknown model IDs or unrecognised tool modes are refused. Claude stays the default; Sellbird never switches providers on its own. Each Codex call runs isolated with no tools — see docs/codex.md. macOS and Linux only; on Windows, Codex is refused, so use Claude. Don't edit the user's own `~/.codex` config to make it work.
 
-- **"What's the dashboard?"** → Have the user run `sellbird dashboard` in their own terminal and open the private link it prints (`http://127.0.0.1:5555/#token=…`; `sellbird dashboard --url` prints it again). Don't read, print or repeat the token yourself: it unlocks the dashboard. It opens on **Today** — anything waiting on a decision, then the pipeline. Tabs for Signals, Companies, Contacts, Campaigns, Outbox, Conversations, Activity, Usage, Settings.
+- **"What's the dashboard?"** → Have the user run `sellbird dashboard` in their own terminal and open the private link it prints (`http://127.0.0.1:5555/#token=…`; `sellbird dashboard --url` prints it again). Don't read, print or repeat the token yourself: it unlocks the dashboard. It opens on **Today**: anything waiting on a decision, then the pipeline. A dock at the bottom holds six places: Today, Inbox (Replies and the Outbox), People (and Companies), Calendar, Numbers (and Model usage) and Set up (Your company, Campaigns, Signals, Find businesses, Inboxes, Sending and keys, Engine, Activity, Help).
 
-- **"What are signals?"** → Signals are the facts Sellbird collects about a business: who its current agency is, whether it's running ads, whether it has online booking, how it ranks. **Sellbird proposes; you confirm.** Nothing is collected until the user says yes on the Signals tab (or `sellbird signals --confirm ...`). That keeps spend intentional and makes every prospect list explainable — a cohort is a query over signals a human chose, not a black box.
+- **"What are signals?"** → Signals are the facts Sellbird collects about a business: who its current agency is, whether it's running ads, whether it has online booking, how it ranks. **Sellbird proposes; you confirm.** Nothing is collected until the user says yes on the Signals screen, under Set up (or `sellbird signals --confirm ...`). That keeps spend intentional and makes every prospect list explainable: a cohort is a query over signals a human chose, not a black box.
 
 ---
 
@@ -111,7 +111,7 @@ TRULYINBOX_API_KEY=        # warmup: set by 'sellbird trulyinbox connect' (see S
 
 **Email verification matters:** Sellbird learns each company's email *pattern* and verifies ONE candidate rather than guessing (raw SMTP probing is not viable from a locally-running agent — outbound port 25 is usually blocked, and Google Workspace / Microsoft 365 accept everything from an unknown IP). Without a verifier key, found emails are marked `guess` and are **never sent**.
 
-**Approval by default:** with a native provider, every outgoing email waits in the **Outbox** for your approval (dashboard Outbox tab, or `sellbird outbox`). **Autopilot** (`channels.email.require_approval: false`) sends on its own, still inside the daily limit, quiet hours and opt-out rules, but holds any email that links to a domain that isn't the user's or quotes Sellbird's own instructions (text from websites and replies can carry planted instructions). Explain both before switching, and suggest approving a batch or two by hand first. The user switches it in dashboard → Settings → Sending (turning it on there takes typing `autopilot`; turning it off is one click and works at once), or in the config file Sellbird reads (`sellbird.local.yaml` if trained, else `sellbird.yaml`); a running Sellbird picks it up next cycle. Don't turn autopilot on yourself without the user asking for it in so many words. If they send from a secondary domain, their main site goes in `channels.email.link_domains` (training adds the trained site automatically). On Instantly, approval mode means campaigns aren't deployed at all.
+**Approval by default:** with a native provider, every outgoing email waits in the **Outbox** for your approval (dashboard Inbox → Outbox, or `sellbird outbox`). **Autopilot** (`channels.email.require_approval: false`) sends on its own, still inside the daily limit, quiet hours and opt-out rules, but holds any email that links to a domain that isn't the user's or quotes Sellbird's own instructions (text from websites and replies can carry planted instructions). Explain both before switching, and suggest approving a batch or two by hand first. The user switches it in dashboard → Set up → Sending and keys (turning it on there takes typing `autopilot`; turning it off is one click and works at once), or in the config file Sellbird reads (`sellbird.local.yaml` if trained, else `sellbird.yaml`); a running Sellbird picks it up next cycle. Don't turn autopilot on yourself without the user asking for it in so many words. If they send from a secondary domain, their main site goes in `channels.email.link_domains` (training adds the trained site automatically). On Instantly, approval mode means campaigns aren't deployed at all.
 
 After getting the Instantly API key, test it:
 ```bash
@@ -215,7 +215,7 @@ tool answers, such as a link, goes into the drafted reply. Without a handoff, th
 Sellbird ships a catalog of 29 signals it knows how to collect, all **proposed** and
 none active. Nothing is prospected against until the user confirms them.
 
-Send them to `sellbird dashboard` → **Signals**, where each one shows a
+Send them to `sellbird dashboard` → Set up → **Signals**, where each one shows a
 plain-language description, what it costs, and how many companies already carry
 it. Or from the terminal:
 
@@ -248,7 +248,7 @@ sellbird discover --preset accelerator --provider serper   # ...Techstars, Antle
 sellbird discover --preset funding --provider serper       # companies announcing a raise
 ```
 
-The dashboard's **Discover** tab is the same thing with the tradeoffs laid out
+The dashboard's **Find businesses** screen (under Set up) is the same thing with the tradeoffs laid out
 side by side: what each source does, what it costs, its free tier, and which
 `.env` keys it needs. Nothing is called until the user presses Run.
 
@@ -331,7 +331,7 @@ Users will come back with questions and tasks. Common ones:
 - **"I want to change what Sellbird says"** → Skills are in `skills/`, prompts are in `prompts/`. Both are plain markdown files. Edit them directly.
 - **"Train Sellbird on a different product"** → `sellbird train <new-url>`
 - **"How do I see the database?"** → It's at `data/sellbird.db`. They can open it with any SQLite tool, or ask you to query it.
-- **"I just want the prospect list"** → `sellbird export` writes a sequencer-ready CSV (verified/risky emails only; `--all` for everything). Also available as Export buttons on the dashboard's Contacts tab. Sellbird is valuable purely as a list-builder even if the user never lets it send.
+- **"I just want the prospect list"** → `sellbird export` writes a sequencer-ready CSV (verified/risky emails only; `--all` for everything). Also available as Export buttons on the dashboard's People place. Sellbird is valuable purely as a list-builder even if the user never lets it send.
 
 ---
 

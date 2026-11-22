@@ -20,6 +20,10 @@ function applyTheme(mode) {
     b.setAttribute('aria-pressed', String(b.dataset.themeOpt === mode)));
 }
 
+function currentTheme() {
+  try { return localStorage.getItem('sellbird-theme') || 'auto'; } catch { return 'auto'; }
+}
+
 function setTheme(mode) {
   try { localStorage.setItem('sellbird-theme', mode); } catch { /* private mode */ }
   applyTheme(mode);
@@ -401,18 +405,107 @@ function toggleVisibility(inputId) {
 
 // ── Tabs ──
 
-function showTab(id, btn) {
+// Six places in the dock. Each screen belongs to one place: a place with
+// several views shows them as pills (Inbox, People, Numbers), and Set up is
+// a list that opens each of its screens with a way back.
+const SCREENS = {
+  today:         {place: 'today'},
+  conversations: {place: 'inbox', pill: 'Replies', count: 'nav-conversations'},
+  outbox:        {place: 'inbox', pill: 'Outbox', count: 'nav-outbox'},
+  prospects:     {place: 'people', pill: 'People'},
+  companies:     {place: 'people', pill: 'Companies'},
+  calendar:      {place: 'calendar'},
+  numbers:       {place: 'numbers', pill: 'Overview'},
+  usage:         {place: 'numbers', pill: 'Model usage'},
+  setup:         {place: 'setup'},
+  company:       {place: 'setup', parent: 'setup'},
+  campaigns:     {place: 'setup', parent: 'setup'},
+  signals:       {place: 'setup', parent: 'setup'},
+  discover:      {place: 'setup', parent: 'setup'},
+  inboxes:       {place: 'setup', parent: 'setup'},
+  settings:      {place: 'setup', parent: 'setup'},
+  controls:      {place: 'setup', parent: 'setup'},
+  activity:      {place: 'setup', parent: 'setup'},
+  help:          {place: 'setup', parent: 'setup'},
+};
+// The dock's own names, and the old tab names links may still carry.
+const SCREEN_ALIASES = {inbox: 'conversations', people: 'prospects', contacts: 'prospects', replies: 'conversations'};
+// Screens that are one decision or one form stay chat width.
+const CARD_SCREENS = ['company', 'settings', 'controls', 'help'];
+let _lastScreen = {};   // the view each place was last on, so the dock returns to it
+let _counts = {};       // badge numbers by element id, kept across re-renders
+
+function screenId(id) {
+  const key = String(id || '').toLowerCase();
+  if (own(SCREENS, key)) return key;
+  return own(SCREEN_ALIASES, key) || 'today';
+}
+
+function renderScreenNav(id) {
+  const el = document.getElementById('screen-nav');
+  if (!el) return;
+  const s = SCREENS[id];
+  let html = '';
+  if (s.parent) {
+    html += '<button type="button" class="back" onclick="goTab(' + jsq(s.parent) + ')">' +
+      '<svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>Set up</button>';
+  }
+  const views = Object.keys(SCREENS).filter(k => SCREENS[k].place === s.place && SCREENS[k].pill);
+  if (views.length > 1 && s.pill) {
+    html += '<div class="pills" role="group" aria-label="Views">' + views.map(k =>
+      '<button type="button" class="pill' + (k === id ? ' on' : '') + '" aria-pressed="' + (k === id) +
+      '" onclick="goTab(' + jsq(k) + ')">' + escHtml(SCREENS[k].pill) +
+      (SCREENS[k].count ? '<span class="nav-count' + (_counts[SCREENS[k].count] > 0 ? ' on' : '') + '" id="' +
+        SCREENS[k].count + '">' + (_counts[SCREENS[k].count] > 0 ? _counts[SCREENS[k].count] : '') + '</span>' : '') +
+      '</button>').join('') + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function showTab(id, opts) {
+  opts = opts || {};
+  id = screenId(id);
+  const changed = id !== currentTab;
   currentTab = id;
+  const s = SCREENS[id];
+  _lastScreen[s.place] = id;
   if (id === 'companies') companyDrill = false;
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(x => x.classList.remove('active'));
   document.getElementById(id).classList.add('active');
-  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.navitem').forEach(b => {
+    const on = b.dataset.place === s.place;
+    b.classList.toggle('on', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  const inner = document.getElementById('inner');
+  if (inner) inner.classList.toggle('is-card', CARD_SCREENS.includes(id));
+  renderScreenNav(id);
+  if (!opts.fromHash) {
+    try { if (window.location.hash !== '#' + id) history.pushState(null, '', '#' + id); } catch { /* ignore */ }
+  }
+  if (changed && !opts.keepScroll) {
+    window.scrollTo(0, 0);
+    const title = document.querySelector('#' + id + ' .section-head h1');
+    if (title && opts.focus !== false) title.focus({preventScroll: true});
+  }
   loadCurrentTab();
 }
 
+// Go to a screen by name. The dock passes a place ("inbox"), which opens the
+// view that place was last on.
+function goTab(id) {
+  const key = String(id || '').toLowerCase();
+  const place = ['inbox', 'people', 'numbers'].includes(key) ? key : null;
+  showTab(place && _lastScreen[place] ? _lastScreen[place] : id);
+}
+
+window.addEventListener('popstate', () => showTab((window.location.hash || '').slice(1) || 'today', {fromHash: true}));
+
 function loadCurrentTab() {
   switch (currentTab) {
+    case 'calendar': loadCalendar(); break;
+    case 'numbers': loadNumbers(); break;
+    case 'setup': loadSetup(); break;
     case 'today': loadLiveStatus(); loadRenameNotice(); loadToday(); loadTrend(); loadFunnel(); loadSetupStatus(); loadRuns(); loadTodayActivity(); break;
     case 'signals': loadSignals(); break;
     case 'discover': loadDiscoverProviders(); break;
@@ -443,37 +536,49 @@ async function loadToday() {
     return;
   }
 
-  navCount('nav-today', (data.items || []).filter(i => i.tone !== 'good').length);
-  navCount('nav-outbox', (data.stats || {}).outbox_pending || 0);
-  navCount('nav-signals', (data.stats || {}).signals_proposed || 0);
-  navCount('nav-conversations', (data.stats || {}).needs_human || 0);
+  applyCounts(data);
   _todayStats = data.stats || {};
   renderFigures(_todayStats);
 
   const items = data.items || [];
+  const needs = items.filter(i => i.tone !== 'good').length;
+  const lede = document.getElementById('today-lede');
+  if (lede) lede.textContent = needs
+    ? (needs === 1 ? 'One thing needs you.' : needs + ' things need you.') + ' Everything else is running.'
+    : 'Nothing needs you right now.';
   if (!items.length) {
-    el.innerHTML = '<div class="queue-clear">' +
-      '<div class="queue-icon">' + icon('check') + '</div><div>' +
-      '<div class="qtitle">Nothing needs you</div>' +
-      '<div class="qdetail">Sellbird has everything it needs. Anything that requires a ' +
-      'decision — an email to approve, a signal to confirm — shows up here.</div>' +
-      '</div></div>';
+    el.innerHTML = '<div class="w"><div class="row">' +
+      '<span class="who tone-good" aria-hidden="true">' + icon('check') + '</span><div class="grow">' +
+      '<p class="t">Nothing needs you</p>' +
+      '<p class="s">Sellbird has everything it needs. Anything that takes a decision, ' +
+      'like an email to approve or a signal to confirm, shows up here.</p>' +
+      '</div></div></div>';
     return;
   }
 
   const glyph = {bad: 'alert', warn: 'flag', good: 'check'};
-  el.innerHTML = '<div class="queue">' + items.map(it => {
-    const tone = escHtml(it.tone || 'warn');
-    return '<div class="queue-item ' + tone + '">' +
-      '<div class="queue-icon">' + icon(glyph[it.tone] || 'flag') + '</div>' +
-      '<div class="qtext">' +
-        '<div class="qtitle">' + escHtml(it.title) + '</div>' +
-        '<div class="qdetail">' + escHtml(it.detail) + '</div>' +
+  el.innerHTML = '<div class="w">' + items.map(it => {
+    const tone = own(glyph, it.tone) ? it.tone : 'warn';
+    return '<div class="row">' +
+      '<span class="who tone-' + tone + '" aria-hidden="true">' + icon(glyph[tone]) + '</span>' +
+      '<div class="grow">' +
+        '<p class="t">' + escHtml(it.title) + '</p>' +
+        '<p class="s">' + escHtml(it.detail) + '</p>' +
       '</div>' +
-      '<button class="btn btn-secondary btn-sm" onclick="goTab(' + jsq(it.tab) + ')">' +
-        escHtml(it.action) + icon('arrow') + '</button>' +
+      '<button class="btn btn-sm rowbtn ' + (tone === 'good' ? 'btn-secondary' : 'btn-primary') +
+        '" onclick="goTab(' + jsq(it.tab) + ')">' + escHtml(it.action) + '</button>' +
     '</div>';
-  }).join('') + '</div>';
+  }).join('') + '<p class="w-f">Nothing sends until you approve it, unless you turned on autopilot.</p></div>';
+}
+
+// Badge numbers from /api/today: the dock and the pills read the same ones.
+function applyCounts(data) {
+  const st = (data && data.stats) || {};
+  navCount('nav-today', ((data && data.items) || []).filter(i => i.tone !== 'good').length);
+  navCount('nav-outbox', st.outbox_pending || 0);
+  navCount('nav-conversations', st.needs_human || 0);
+  navCount('nav-inbox', (st.outbox_pending || 0) + (st.needs_human || 0));
+  navCount('nav-signals', st.signals_proposed || 0);
 }
 
 // ── Live status: the "what's happening?" answer, kept on screen ──
@@ -524,7 +629,7 @@ async function loadLiveStatus() {
     (d.next ? '<div class="live-next">' + icon('arrow') + '<span><b>Next</b> · ' + escHtml(d.next) + '</span>' +
       (d.next_tab ? '<button class="btn btn-secondary btn-sm" onclick="goTab(' + jsq(d.next_tab) + ')">Go</button>' : '') +
       '</div>' : '') +
-    '<div class="live-flag">Updated ' + new Date().toLocaleTimeString() + ' · refreshes every 10 seconds</div>';
+    '<div class="live-flag">Updated ' + new Date().toLocaleTimeString() + '. Refreshes every 10 seconds.</div>';
 }
 
 // KPI cards. Totals come from /api/today; the 14-day bars from /api/trend.
@@ -535,13 +640,13 @@ function renderFigures(stats) {
   const sum = a => (a || []).reduce((x, y) => x + (Number(y) || 0), 0);
   const last7 = a => sum((a || []).slice(-7));
   const card = (label, value, spark, note) =>
-    '<div class="kpi"><div class="kpi-label">' + label + '</div>' +
-    '<div class="kpi-main"><span class="kpi-value' + (value ? '' : ' zero') + '">' + value + '</span>' + spark + '</div>' +
-    '<span class="kpi-note">' + note + '</span></div>';
+    '<div class="stat"><span>' + label + '</span>' +
+    '<div class="stat-main"><b class="v' + (value ? '' : ' zero') + '">' + value + '</b>' + spark + '</div>' +
+    '<span>' + note + '</span></div>';
 
   // Instantly sends from its own servers, so the Outbox never sees them.
   const sent = stats.email_provider === 'instantly'
-    ? card('Emails sent', '&mdash;', '', 'Instantly tracks sends')
+    ? card('Emails sent', 'n/a', '', 'Instantly tracks sends')
     : card('Emails sent', sum(t.sent), sparkBars(t.sent, 'Emails sent per day, last 14 days'),
            'last 14 days · <b>' + (stats.outbox_approved || 0) + '</b> scheduled');
   const waiting = (stats.outbox_pending || 0) + (stats.needs_human || 0);
@@ -555,8 +660,8 @@ function renderFigures(stats) {
     '<span><b>' + (stats.unprofiled || 0) + '</b> sites not read yet</span>' +
     '<span><b>' + (stats.signals_confirmed || 0) + '</b> signals on</span>';
 
-  el.innerHTML = '<div class="kpis">' +
-    card('Contacts found', stats.prospects || 0, sparkBars(t.found, 'Contacts found per day, last 14 days'),
+  el.innerHTML = '<div class="stats">' +
+    card('People found', stats.prospects || 0, sparkBars(t.found, 'Contacts found per day, last 14 days'),
          '<b>+' + last7(t.found) + '</b> this week') +
     sent +
     card('Conversations', stats.open_conversations || 0, sparkBars(t.replies, 'New replies per day, last 14 days'),
@@ -628,17 +733,11 @@ async function loadTodayActivity() {
 }
 
 function navCount(id, n) {
+  _counts[id] = n;
   const el = document.getElementById(id);
   if (!el) return;
   el.textContent = n > 0 ? n : '';
   el.className = 'nav-count' + (n > 0 ? ' on' : '');
-}
-
-// Jump to a tab from a link that isn't itself a nav button.
-function goTab(id) {
-  const btns = [...document.querySelectorAll('nav button')];
-  const btn = btns.find(b => (b.getAttribute('onclick') || '').includes("'" + id + "'"));
-  showTab(id, btn);
 }
 
 async function loadRuns() {
@@ -689,11 +788,11 @@ async function loadSetupStatus() {
   const el = document.getElementById('today-setup');
   if (!el) return;
   const data = await api('/api/setup-status');
-  if (!data || !data.checks) { el.innerHTML = ''; return; }
-
-  const pct = data.percent || 0;
+  const sec = document.getElementById('today-setup-sec');
+  const pct = (data && data.percent) || 0;
   // Finished setup disappears completely rather than greeting you forever.
-  if (pct === 100) { el.innerHTML = ''; return; }
+  if (sec) sec.hidden = !data || !data.checks || pct === 100;
+  if (!data || !data.checks || pct === 100) { el.innerHTML = ''; return; }
 
   // The first unfinished required step is the one to do now.
   const next = data.checks.find(c => c.required && !c.done);
@@ -713,9 +812,9 @@ async function loadSetupStatus() {
   const done = required.filter(c => c.done).length;
 
   el.innerHTML =
-    '<div class="card setup-card">' +
-      '<div class="setup-head"><div><h3>Finish setting up Sellbird</h3>' +
-        '<p class="muted">Sellbird starts finding prospects and sending once these are done.</p></div>' +
+    '<div class="w pad setup-card">' +
+      '<div class="setup-head"><div>' +
+        '<p class="s">Sellbird starts finding prospects and sending once these are done.</p></div>' +
         '<span class="setup-pct">' + done + ' of ' + required.length + ' done</span></div>' +
       '<div class="bar thick" style="margin-bottom:8px"><span style="width:' + pct + '%;background:var(--accent)"></span></div>' +
       required.map(c => renderCheck(c, false)).join('') +
@@ -1001,11 +1100,11 @@ function renderProfileCard(pending, running) {
   const el = document.getElementById('discover-profile');
   if (!el) return;
   if (!pending) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div class="subhead">Read websites</div><div class="card"><div class="queue-item good" style="padding:0;border:0;box-shadow:none">' +
-    '<div class="qtext"><div class="qtitle">' + pending + ' compan' + (pending === 1 ? 'y' : 'ies') +
-    ' not looked at yet</div><div class="qdetail">Free, no account needed. Sellbird reads each site for ' +
-    'who their agency is, what they are missing, and whether they run ads. Up to 200 per run.</div></div>' +
-    '<button class="btn btn-primary btn-sm" onclick="runProfile(this)"' + (running ? ' disabled' : '') + '>' +
+  el.innerHTML = '<div class="subhead">Read websites</div><div class="w"><div class="row">' +
+    '<div class="grow"><p class="t">' + pending + ' compan' + (pending === 1 ? 'y' : 'ies') +
+    ' not looked at yet</p><p class="s">Free, no account needed. Sellbird reads each site for ' +
+    'who their agency is, what they are missing, and whether they run ads. Up to 200 per run.</p></div>' +
+    '<button class="btn btn-primary btn-sm rowbtn" onclick="runProfile(this)"' + (running ? ' disabled' : '') + '>' +
     (running ? 'Busy…' : 'Read their sites') + '</button></div></div>';
 }
 
@@ -1027,7 +1126,7 @@ function renderDiscoverResult(report, running) {
   if (running) {
     el.innerHTML = '<div class="card"><h2>Running…</h2>' +
       '<p class="muted" style="font-size:13px">Sellbird is working through the ' +
-      'queries. Results land in Companies, and the run log is on Today.</p></div>';
+      'queries. Results land under People, Companies, and the run log is on Today.</p></div>';
     return;
   }
   if (!report) { el.innerHTML = ''; return; }
@@ -1261,7 +1360,7 @@ async function loadSettings() {
     const el = document.getElementById(id);
     if (!el) return;
     el.value = '';
-    el.placeholder = isSet ? 'Saved — enter new value to change' : base;
+    el.placeholder = isSet ? 'Saved. Enter a new value to change it.' : base;
   };
   const tag = (id, ok, okLabel) => {
     const el = document.getElementById(id);
@@ -1288,8 +1387,8 @@ async function loadSettings() {
   savedPh('imap-pass', data.imap_password_set, 'Same as SMTP password');
   document.getElementById('imap-same-pass').checked = !data.imap_password_set;
   savedPh('instantly-key', data.instantly_api_key_set, 'Enter your Instantly API key');
-  savedPh('reoon-key', data.reoon_api_key_set, '600 free/mo — reoon.com/email-verifier');
-  savedPh('zerobounce-key', data.zerobounce_api_key_set, '100 free/mo — best for M365/Workspace catch-alls');
+  savedPh('reoon-key', data.reoon_api_key_set, '600 free/mo, reoon.com/email-verifier');
+  savedPh('zerobounce-key', data.zerobounce_api_key_set, '100 free/mo, best for M365/Workspace catch-alls');
   savedPh('hunter-key', data.hunter_api_key_set, '50 free/mo + email-pattern lookup');
   savedPh('linkedin-password', data.linkedin_password_set, 'Enter password');
   savedPh('cf-api-token', data.cloudflare_api_token_set, 'Your Cloudflare API Token');
@@ -1300,7 +1399,7 @@ async function loadSettings() {
     const realId = /^\d+-[0-9a-z]+\.apps\.googleusercontent\.com$/.test((data.gmail_client_id || '').trim());
     if (data.gmail_client_id && !realId) { g.className = 'email-tag invalid'; g.textContent = 'client ID isn\'t real'; }
     else if (data.gmail_authorized) { g.className = 'email-tag verified'; g.textContent = 'authorized'; }
-    else if (data.gmail_client_secret_set) { g.className = 'email-tag risky'; g.textContent = 'sign in on Inboxes'; }
+    else if (data.gmail_client_secret_set) { g.className = 'email-tag risky'; g.textContent = 'sign in under Inboxes'; }
     else { g.className = 'email-tag guess'; g.textContent = 'not set up'; }
   }
   const m = document.getElementById('m365-status');
@@ -1308,7 +1407,7 @@ async function loadSettings() {
     const realM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test((data.m365_client_id || '').trim());
     if (data.m365_client_id && !realM) { m.className = 'email-tag invalid'; m.textContent = 'client ID isn\'t real'; }
     else if (data.m365_authorized) { m.className = 'email-tag verified'; m.textContent = 'authorized'; }
-    else if (data.m365_client_id) { m.className = 'email-tag risky'; m.textContent = 'sign in on Inboxes'; }
+    else if (data.m365_client_id) { m.className = 'email-tag risky'; m.textContent = 'sign in under Inboxes'; }
     else { m.className = 'email-tag guess'; m.textContent = 'not set up'; }
   }
   tag('reoon-status', data.reoon_api_key_set, 'set');
@@ -1320,7 +1419,7 @@ function saveGmail() {
   const payload = {GMAIL_CLIENT_ID: document.getElementById('gmail-id').value.trim()};
   const sec = document.getElementById('gmail-secret').value;
   if (sec) payload.GMAIL_CLIENT_SECRET = sec;
-  saveEnv(payload, 'Saved. Now sign in on the Inboxes tab.').then(loadSettings);
+  saveEnv(payload, 'Saved. Now sign in under Set up, Inboxes.').then(loadSettings);
 }
 
 function saveSmtp() {
@@ -1347,7 +1446,7 @@ function saveMicrosoft() {
   const client = document.getElementById('m365-client').value.trim();
   if (!client) { showToast('Paste the Application (client) ID first.', 'error'); return; }
   saveEnv({M365_CLIENT_ID: client, M365_TENANT_ID: document.getElementById('m365-tenant').value.trim()},
-          'Saved. Now sign in on the Inboxes tab.').then(loadSettings);
+          'Saved. Now sign in under Set up, Inboxes.').then(loadSettings);
 }
 
 function saveVerifiers() {
@@ -1423,7 +1522,8 @@ async function loadSellbirdStatus() {
   const running = !!data.running;
 
   headerDot.className = 'status-dot ' + (running ? 'running' : 'stopped');
-  headerText.textContent = running ? 'Sellbird is running' : 'Sellbird is stopped';
+  headerText.textContent = running ? 'Running' : 'Stopped';
+  document.getElementById('header-status').title = running ? 'Sellbird is running. Open the engine controls.' : 'Sellbird is stopped. Open the engine controls.';
   document.getElementById('control-dot').className = 'dot ' + (running ? 'running' : 'stopped');
   const label = document.getElementById('control-label');
   label.className = 'label ' + (running ? 'running' : 'stopped');
@@ -2040,7 +2140,7 @@ async function loadCompanies() {
   _companies = data;
   if (!data.length) {
     el.innerHTML = emptyState(icon('companies'), 'No companies yet',
-      'Confirm your <b>Signals</b>, then find businesses on the <b>Discover</b> tab. ' +
+      'Confirm your <b>Signals</b>, then <b>Find businesses</b>, both under Set up. ' +
       'OpenStreetMap is free and needs no account.');
     return;
   }
@@ -2188,11 +2288,11 @@ function fbCampaign(i) {
   if (c) submitFeedback('campaign', c.id, 'What should Sellbird do differently in the emails it writes next? (e.g. "shorter; don\'t mention reviews")');
 }
 
-// Search and status filter live outside the table, so the 15-second refresh
+// Search and the stage filter live outside the list, so the 15-second refresh
 // re-renders rows without losing what you typed.
 let _contactQuery = '', _contactFilter = 'all';
 const CONTACT_FILTERS = [
-  ['all', 'All', null],
+  ['all', 'Everyone', null],
   ['todo', 'To write', ['new', 'queued']],
   ['contacted', 'Contacted', ['contacted']],
   ['replied', 'Replied', ['replied', 'interested', 'meeting']],
@@ -2205,16 +2305,16 @@ async function loadProspects() {
   if (!data) { el.innerHTML = offlineState(); return; }
   _prospects = data;
   if (!data.length) {
-    el.innerHTML = emptyState(icon('contacts'), 'No contacts yet',
+    el.innerHTML = emptyState(icon('contacts'), 'No one here yet',
       'Sellbird hasn\'t found any prospects. Once it\'s running, the Scout agent searches the web for people matching your ideal customer profile in <b>sellbird.yaml</b>.');
     return;
   }
   if (!document.getElementById('contact-rows')) {
-    el.innerHTML = '<div class="toolbar">' +
+    el.innerHTML = '<div class="stages" id="contact-filters" role="group" aria-label="Filter by stage"></div>' +
+      '<div class="toolbar">' +
       '<label class="search">' + icon('discover') +
         '<input class="form-input" id="contact-search" type="search" placeholder="Search name, company, email" ' +
-        'aria-label="Search contacts" oninput="_contactQuery=this.value;renderContacts()"></label>' +
-      '<div class="segmented" id="contact-filters" role="group" aria-label="Filter by status"></div>' +
+        'aria-label="Search people" oninput="_contactQuery=this.value;renderContacts()"></label>' +
       '</div><div id="contact-rows"></div>';
     // A rebuild after an offline blip must show the search still applied.
     document.getElementById('contact-search').value = _contactQuery;
@@ -2232,6 +2332,35 @@ function contactMatches(p, f) {
 
 function setContactFilter(f) { _contactFilter = f; renderContacts(); }
 
+// One person as a row: who they are, where they stand, what you can do.
+function contactRow(p, i) {
+  const name = [p.first_name, p.last_name].filter(Boolean).map(escHtml).join(' ') || escHtml(p.email);
+  const role = [p.title, p.company].filter(Boolean).map(escHtml).join(', ');
+  const reach = [escHtml(p.email) + emailTag(p), p.phone ? escHtml(p.phone) +
+    (p.phone_verified ? ' <span class="verified" title="Phone verified">&#10003;</span>' : '') : '']
+    .filter(x => x.trim()).join(' · ');
+  const meta = [sourceLabel(p.source), p.score || p.score === 0 ? 'score ' + escHtml(String(p.score)) : '',
+    relTime(p.created_at)].filter(Boolean).join(' · ');
+  const optOut = p.status === 'opted_out' || p.opt_out_undone || _optOut.id === p.id
+    ? '<button class="btn btn-ghost btn-sm" onclick="toggleOptOut(' + i + ')" ' +
+      'aria-expanded="' + (_optOut.id === p.id) + '" title="What made Sellbird stop emailing them">' +
+      (p.status === 'opted_out' ? 'Why?' : 'Opt-out history') + '</button>' : '';
+  return '<div class="row">' +
+    '<span class="who" aria-hidden="true">' + initials(p.first_name, p.last_name) + '</span>' +
+    '<div class="grow"><p class="t">' + name + '</p>' +
+      (role ? '<p class="s">' + role + '</p>' : '') +
+      (reach ? '<p class="s">' + reach + '</p>' : '') +
+      '<p class="time">' + meta + '</p></div>' +
+    badge(p.status) +
+    '<div class="row-acts">' + optOut +
+      '<button class="btn btn-ghost btn-sm" onclick="fbProspect(' + i + ')" ' +
+      'title="Tell Sellbird something before it writes to this person">Feedback</button></div>' +
+    '</div>' +
+    (_optOut.id === p.id ? '<div class="row-detail">' + optOutPanel(p) + '</div>' : '');
+}
+
+const CONTACTS_SHOWN = 200;   // rows drawn at once; search narrows the rest
+
 function renderContacts() {
   const rowsEl = document.getElementById('contact-rows');
   const filtersEl = document.getElementById('contact-filters');
@@ -2239,42 +2368,21 @@ function renderContacts() {
   const q = _contactQuery.trim().toLowerCase();
   const found = p => !q || [p.first_name, p.last_name, p.company, p.email, p.title].join(' ').toLowerCase().includes(q);
   filtersEl.innerHTML = CONTACT_FILTERS.map(f =>
-    '<button class="' + (f[0] === _contactFilter ? 'on' : '') + '" aria-pressed="' + (f[0] === _contactFilter) + '" onclick="setContactFilter(\'' + f[0] + '\')">' +
-      f[1] + ' <span class="n">' + _prospects.filter(p => contactMatches(p, f[0]) && found(p)).length + '</span></button>'
+    '<button type="button" class="stage' + (f[0] === _contactFilter ? ' on' : '') + '" aria-pressed="' + (f[0] === _contactFilter) +
+      '" onclick="setContactFilter(\'' + f[0] + '\')"><b>' +
+      _prospects.filter(p => contactMatches(p, f[0]) && found(p)).length + '</b><span>' + f[1] + '</span></button>'
   ).join('');
 
   const rows = _prospects.map((p, i) => [p, i]).filter(([p]) => contactMatches(p, _contactFilter) && found(p));
   if (!rows.length) {
-    rowsEl.innerHTML = '<div class="table-card">' + emptyState(icon('discover'), 'No matches',
+    rowsEl.innerHTML = '<div class="w">' + emptyState(icon('discover'), 'No matches',
       'Nothing matches that search and filter.') + '</div>';
     return;
   }
-  let html = '<div class="table-card"><table class="nowrap"><thead><tr><th>Name</th><th>Company</th><th>Email</th>' +
-    '<th>Score</th><th>Status</th><th>Source</th><th>Added</th><th></th></tr></thead><tbody>';
-  for (const [p, i] of rows) {
-    html += '<tr><td><div class="cell-row"><span class="avatar">' + initials(p.first_name, p.last_name) + '</span>' +
-        '<div class="cell-stack"><span class="cell-main">' + escHtml(p.first_name) + ' ' + escHtml(p.last_name) + '</span>' +
-        '<span class="cell-sub">' + escHtml(p.title) + '</span></div></div></td>' +
-      '<td>' + escHtml(p.company) + '</td>' +
-      '<td><div class="cell-stack"><span>' + escHtml(p.email) + '</span>' +
-        '<span class="cell-sub">' + [emailTag(p).trim(), p.phone ? escHtml(p.phone) +
-          (p.phone_verified ? ' <span class="verified" title="Phone verified">&#10003;</span>' : '') : '']
-          .filter(Boolean).join(' · ') + '</span>' +
-        '</div></td>' +
-      '<td>' + (p.score || p.score === 0 ? meterHtml(p.score) : '') + '</td>' +
-      '<td>' + badge(p.status) + '</td>' +
-      '<td class="muted">' + sourceLabel(p.source) + '</td>' +
-      '<td class="muted" style="white-space:nowrap">' + relTime(p.created_at) + '</td>' +
-      '<td><div class="cell-row">' + (p.status === 'opted_out' || p.opt_out_undone || _optOut.id === p.id
-        ? '<button class="btn btn-ghost btn-sm" onclick="toggleOptOut(' + i + ')" ' +
-          'aria-expanded="' + (_optOut.id === p.id) + '" title="What made Sellbird stop emailing them">' +
-          (p.status === 'opted_out' ? 'Why?' : 'Opt-out history') + '</button>' : '') +
-        '<button class="btn btn-ghost btn-sm row-action" onclick="fbProspect(' + i + ')" ' +
-        'title="Leave feedback on this contact">Feedback</button></div></td></tr>';
-    if (_optOut.id === p.id) html += '<tr class="detail-row"><td colspan="8">' + optOutPanel(p) + '</td></tr>';
-  }
-  rowsEl.innerHTML = html + '</tbody></table></div>' +
-    '<div class="table-foot">' + rows.length + ' of ' + _prospects.length + ' contacts</div>';
+  rowsEl.innerHTML = '<div class="w">' + rows.slice(0, CONTACTS_SHOWN).map(([p, i]) => contactRow(p, i)).join('') +
+    '<p class="w-f">' + (rows.length > CONTACTS_SHOWN ? 'Showing the first ' + CONTACTS_SHOWN + ' of ' : '') +
+    rows.length + ' of ' + _prospects.length + ' people' +
+    (rows.length > CONTACTS_SHOWN ? '. Search to narrow it down.' : '') + '</p></div>';
 }
 
 // Why someone is opted out, and undoing it. Sellbird never moves anyone off
@@ -2566,10 +2674,10 @@ function setConvoFilter(f) { _convoFilter = f; renderConversations(); }
 function renderConversations() {
   const el = document.getElementById('conversations-list');
   const filter = CONVO_FILTERS.find(f => f[0] === _convoFilter) || CONVO_FILTERS[CONVO_FILTERS.length - 1];
-  const bar = '<div class="toolbar"><div class="segmented" role="group" aria-label="Filter conversations">' +
-    CONVO_FILTERS.map(f => '<button class="' + (f[0] === filter[0] ? 'on' : '') + '" aria-pressed="' + (f[0] === filter[0]) +
-      '" onclick="setConvoFilter(\'' + f[0] + '\')">' + f[1] + ' <span class="n">' +
-      _convos.filter(f[2]).length + '</span></button>').join('') + '</div></div>';
+  const bar = '<div class="toolbar"><div class="chips" role="group" aria-label="Filter conversations">' +
+    CONVO_FILTERS.map(f => '<button type="button" class="chip-btn' + (f[0] === filter[0] ? ' on' : '') + '" aria-pressed="' + (f[0] === filter[0]) +
+      '" onclick="setConvoFilter(\'' + f[0] + '\')">' + f[1] + ' <b>' +
+      _convos.filter(f[2]).length + '</b></button>').join('') + '</div></div>';
   // Handed-to-you first, then drafts waiting; otherwise newest first (as served).
   const rank = c => c.status === 'needs_human' ? 0 : c.draft ? 1 : 2;
   const shown = _convos.filter(filter[2]).map((c, i) => [c, i])
@@ -2720,7 +2828,7 @@ async function loadInboxes() {
   let html = '';
   if (data.sending_paused) {
     html += '<div class="notice wait"><b>All sending is paused:</b> ' + escHtml(data.sending_paused) +
-      '. Resume it on the Outbox tab.</div>';
+      '. Resume it in the Outbox.</div>';
   }
   const list = data.inboxes || [];
   const sending = list.filter(i => i.state === 'sending');
@@ -2821,7 +2929,7 @@ function openInbox(i) {
     }
     body += '<div class="modal-section"><h4>Settings</h4><p>Your main mailbox comes from sellbird.yaml: ' +
       'its address is persona.email, its daily cap is channels.email.per_inbox_daily_cap, and pausing it pauses ' +
-      'all sending, on the Outbox tab.</p></div>';
+      'all sending, in the Outbox.</p></div>';
     inboxDialog(inboxDialogHead(escHtml(ib.address || 'Main mailbox'), inboxBadge(ib) + ' Main mailbox') +
       '<div class="modal-body">' + body + '</div>');
     return;
@@ -2960,7 +3068,7 @@ const CONNECT_SETUP = {
     steps: [
       'In <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener noreferrer">Google Cloud Console</a>, pick or create a project and enable the Gmail API.',
       'Under <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Credentials</a>, create an OAuth client ID of type <b>Desktop app</b>.',
-      'Paste its Client ID and Client secret in Settings, under Gmail, and save.',
+      'Paste its Client ID and Client secret in Sending and keys, under Gmail, and save.',
       'Come back here and sign in.',
     ],
   },
@@ -2969,7 +3077,7 @@ const CONNECT_SETUP = {
     steps: [
       'In <a href="https://entra.microsoft.com" target="_blank" rel="noopener noreferrer">Entra</a>, go to App registrations and register an app for your organization only.',
       'Add the redirect URI <code>http://localhost:8766</code> as "Public client/native".',
-      'Paste the Application (client) ID and tenant ID in Settings, under Microsoft 365, and save.',
+      'Paste the Application (client) ID and tenant ID in Sending and keys, under Microsoft 365, and save.',
       'Come back here and sign in.',
     ],
   },
@@ -2980,14 +3088,12 @@ function connectSetupNotice(kind) {
   const problem = ((_inboxes && _inboxes.connect_problems) || {})[kind] || '';
   return '<div class="notice info"><b>' + escHtml(problem) + '</b>' +
     '<ol class="setup-steps">' + setup.steps.map(t => '<li>' + t + '</li>').join('') + '</ol>' +
-    '<button class="btn btn-secondary btn-sm" onclick="openSettingsAt(\'' + setup.field + '\')">Open Settings</button></div>';
+    '<button class="btn btn-secondary btn-sm" onclick="openSettingsAt(\'' + setup.field + '\')">Open Sending and keys</button></div>';
 }
 
 function openSettingsAt(fieldId) {
   closeInboxDialog();
-  const btn = Array.from(document.querySelectorAll('nav button'))
-    .find(b => (b.getAttribute('onclick') || '').includes("'settings'"));
-  showTab('settings', btn);
+  showTab('settings');
   setTimeout(() => {
     const el = document.getElementById(fieldId);
     if (!el) return;
@@ -3088,18 +3194,253 @@ async function loadActivity() {
   el.innerHTML = html + '</div></div>';
 }
 
+// ── Calendar: what goes out, day by day ──
+//
+// The Outbox holds every email with the time it is due. This lays a week of
+// it out by day: what is approved and scheduled, what still waits for you,
+// what went. The engine records that a meeting was agreed, not its time, so
+// meetings are a list under the week, not blocks inside it.
+
+let _calOffset = 0;   // weeks from today
+
+function calStart() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 7 * _calOffset);   // today first: what goes out next
+  return d;
+}
+
+function isoDay(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function calMove(n) { _calOffset = n === 0 ? 0 : _calOffset + n; loadCalendar(); }
+
+async function loadCalendar() {
+  const el = document.getElementById('calendar-body');
+  if (!el) return;
+  const start = calStart();
+  const data = await api('/api/calendar?start=' + isoDay(start) + '&days=7&tz=' + -new Date().getTimezoneOffset());
+  if (!data) { el.innerHTML = offlineState(); return; }
+  if (data.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the calendar', escHtml(data.error)); return; }
+  el.innerHTML = calendarHtml(data, isoDay(new Date()));
+}
+
+function calendarHtml(data, today) {
+  const n = (v, one, many) => v + ' ' + (v === 1 ? one : many);
+  const clock = t => t ? timeOfDay(t) : '';
+  const days = data.days || [];
+  const fmt = iso => new Date(iso + 'T00:00:00');
+  const range = days.length
+    ? fmt(days[0].date).toLocaleDateString('en-US', {month: 'short', day: 'numeric'}) + ' to ' +
+      fmt(days[days.length - 1].date).toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
+    : '';
+  const week = days.map(d => {
+    const dt = fmt(d.date);
+    const evs = [];
+    if (d.waiting) evs.push('<button type="button" class="ev wait" onclick="goTab(\'outbox\')">' +
+      '<span class="time">' + (clock(d.first_waiting) || 'Held') + '</span>' +
+      '<span class="t">' + n(d.waiting, 'email', 'emails') + '</span>' +
+      '<span class="s">Waiting for your approval</span></button>');
+    if (d.scheduled) evs.push('<button type="button" class="ev" onclick="goTab(\'outbox\')">' +
+      '<span class="time">' + (clock(d.first_scheduled) ? 'From ' + clock(d.first_scheduled) : 'Scheduled') + '</span>' +
+      '<span class="t">' + n(d.scheduled, 'email', 'emails') + '</span>' +
+      '<span class="s">Approved and scheduled</span></button>');
+    if (d.sent) evs.push('<button type="button" class="ev sent" onclick="goTab(\'outbox\')">' +
+      '<span class="time">Sent</span>' +
+      '<span class="t">' + n(d.sent, 'email', 'emails') + '</span>' +
+      '<span class="s">' + (d.replies ? n(d.replies, 'reply', 'replies') + ' that day' : 'Went out') + '</span></button>');
+    else if (d.replies) evs.push('<button type="button" class="ev sent" onclick="goTab(\'conversations\')">' +
+      '<span class="time">Replies</span><span class="t">' + n(d.replies, 'reply', 'replies') + '</span>' +
+      '<span class="s">New conversations</span></button>');
+    const cls = d.date === today ? ' today' : d.date < today ? ' past' : '';
+    return '<div class="day' + cls + '"><div class="day-h"><b>' +
+      dt.toLocaleDateString('en-US', {weekday: 'short'}) + ' ' + dt.getDate() + '</b><span>' +
+      (d.date === today ? 'Today' : '') + '</span></div>' +
+      (evs.join('') || '<p class="day-none">Nothing ' + (d.date < today ? 'went out' : 'scheduled') + '</p>') + '</div>';
+  }).join('');
+  const meetings = data.meetings || [];
+  const meetRows = meetings.length
+    ? meetings.map(m => '<div class="row"><span class="who" aria-hidden="true">' + initials(m.first_name, m.last_name) + '</span>' +
+        '<div class="grow"><p class="t">' + (escHtml([m.first_name, m.last_name].filter(Boolean).join(' ')) || escHtml(m.email)) + '</p>' +
+        '<p class="s">' + escHtml([m.title, m.company].filter(Boolean).join(', ')) + '</p></div>' +
+        '<span class="time">' + relTime(m.updated_at) + '</span>' +
+        '<span class="tag good">Meeting</span>' +
+        '<button class="btn btn-secondary btn-sm rowbtn" onclick="goTab(\'conversations\')">Open</button></div>').join('')
+    : '<div class="row"><div class="grow"><p class="t">No meetings agreed yet</p>' +
+      '<p class="s">When a reply turns into a meeting, the person shows up here.</p></div></div>';
+  return (data.paused ? '<div class="banner bad">' + icon('alert') + '<div><b>Sending is paused</b><p>' +
+      escHtml(data.paused) + '. Scheduled mail stays queued until you resume it in the Outbox.</p></div></div>' : '') +
+    '<div class="cal-bar"><b>' + escHtml(range) + '</b>' +
+      '<button class="btn btn-secondary btn-sm" onclick="calMove(-1)">Earlier</button>' +
+      '<button class="btn btn-secondary btn-sm" onclick="calMove(0)"' + (_calOffset === 0 ? ' disabled' : '') + '>Today</button>' +
+      '<button class="btn btn-secondary btn-sm" onclick="calMove(1)">Later</button></div>' +
+    '<div class="week">' + week + '</div>' +
+    '<div class="keyrow"><span><i class="dot" style="background:var(--wait)"></i>Waiting for you</span>' +
+      '<span><i class="dot d1"></i>Scheduled</span><span><i class="dot" style="background:var(--good)"></i>Sent</span></div>' +
+    '<div class="secs" style="margin-top:24px"><section class="sec"><h2>Meetings agreed</h2><div class="w">' + meetRows +
+      '<p class="w-f">Sellbird records that a meeting was agreed. The time lives on your own calendar.</p></div></section></div>';
+}
+
+// ── Numbers: what the work brought in ──
+
+let _numbersWeeks = 6;
+function setNumbersWeeks(n) { _numbersWeeks = n; loadNumbers(); }
+
+// Daily counts folded into whole weeks, oldest first, the last one ending today.
+function weekly(days, values, weeks) {
+  const out = [];
+  for (let w = 0; w < weeks; w++) {
+    const end = days.length - 7 * (weeks - 1 - w);
+    const slice = (values || []).slice(Math.max(0, end - 7), end);
+    const first = days[Math.max(0, end - 7)];
+    out.push({total: slice.reduce((x, y) => x + (Number(y) || 0), 0), label: first ? first.slice(5).replace('-', '/') : ''});
+  }
+  return out;
+}
+
+function columnChart(title, series) {
+  const max = Math.max(...series.map(s => s.total), 1);
+  return '<div class="w chartbox"><div class="w-h"><h3>' + title + '</h3></div>' +
+    '<div class="chart" role="img" aria-label="' + title + ': ' + series.map(s => s.total).join(', ') + '">' +
+    series.map(s => '<div class="col2"><span class="tot">' + s.total + '</span>' +
+      '<div class="stack' + (s.total ? '' : ' zero') + '" style="--h:' + (s.total / max).toFixed(3) + '"></div>' +
+      '<span class="lab">' + escHtml(s.label) + '</span></div>').join('') + '</div></div>';
+}
+
+async function loadNumbers() {
+  const el = document.getElementById('numbers-body');
+  if (!el) return;
+  const weeks = _numbersWeeks;
+  const [trend, stats, campaigns, inboxes] = await Promise.all([
+    api('/api/trend?days=' + weeks * 7 + '&tz=' + -new Date().getTimezoneOffset()),
+    api('/api/stats'), api('/api/campaigns'), api('/api/inboxes'),
+  ]);
+  if (!trend || !Array.isArray(trend.days)) { el.innerHTML = offlineState(); return; }
+  el.innerHTML = numbersHtml(weeks, trend, stats, campaigns, inboxes);
+}
+
+function numbersHtml(weeks, trend, stats, campaigns, inboxes) {
+  const sum = a => (a || []).reduce((x, y) => x + (Number(y) || 0), 0);
+  const found = sum(trend.found), sent = sum(trend.sent), replies = sum(trend.replies);
+  const pipe = (stats && stats.pipeline) || {};
+  const stat = (label, value, note) => '<div class="stat"><span>' + label + '</span>' +
+    '<div class="stat-main"><b class="v' + (value ? '' : ' zero') + '">' + value + '</b></div><span>' + note + '</span></div>';
+  const rate = sent ? (100 * replies / sent).toFixed(1) + '%' : 0;
+  let html = '<div class="chips" style="margin-bottom:18px" role="group" aria-label="Period">' +
+    [[2, 'Last 2 weeks'], [6, 'Last 6 weeks'], [12, 'Last 12 weeks']].map(c =>
+      '<button type="button" class="chip-btn' + (c[0] === weeks ? ' on' : '') + '" aria-pressed="' + (c[0] === weeks) +
+      '" onclick="setNumbersWeeks(' + c[0] + ')">' + c[1] + '</button>').join('') + '</div>' +
+    '<div class="stats">' +
+      stat('People found', found, 'in ' + weeks + ' weeks') +
+      stat('Emails sent', sent, 'approved and sent') +
+      stat('Replies', replies, 'new conversations') +
+      stat('Reply rate', rate, sent ? 'replies per email sent' : 'nothing sent yet') +
+      stat('Ready to meet', pipe.ready_to_meet || 0, 'right now') +
+    '</div>';
+
+  const camps = Array.isArray(campaigns) ? campaigns : [];
+  const campRows = camps.map(c => {
+    const rs = c.recipients || [];
+    const replied = rs.filter(r => ['replied', 'interested', 'meeting', 'accepted_offer'].includes(r.status)).length;
+    const reached = rs.filter(r => r.status !== 'new' && r.status !== 'queued').length;
+    const pct = reached ? Math.round(1000 * replied / reached) / 10 : 0;
+    return '<div class="row"><div class="grow"><p class="t">' + escHtml(c.name || 'Untitled campaign') + '</p>' +
+      '<p class="s">' + rs.length + (rs.length === 1 ? ' person, ' : ' people, ') + reached + ' emailed, ' +
+      replied + (replied === 1 ? ' reply' : ' replies') + '</p></div>' +
+      '<div class="hbar"><i style="width:' + Math.min(100, pct * 4) + '%"></i></div>' +
+      '<span class="tag' + (pct >= 5 ? ' good' : '') + '">' + pct + '%</span></div>';
+  }).join('');
+  const total = (stats && stats.prospects && stats.prospects.total) || 0;
+  const stages = [['To write', pipe.to_write], ['Contacted', pipe.contacted], ['Replied', pipe.replied],
+                  ['Interested', pipe.interested], ['Ready to meet', pipe.ready_to_meet], ['Closed out', pipe.closed_out]];
+  const stageRows = stages.map(s => '<div class="row"><div class="grow"><p class="t">' + s[0] + '</p></div>' +
+    '<div class="hbar"><i style="width:' + (total ? Math.round(100 * (s[1] || 0) / total) : 0) + '%"></i></div>' +
+    '<span class="tag">' + (s[1] || 0) + '</span></div>').join('');
+  const boxes = (inboxes && inboxes.native && inboxes.inboxes) || [];
+  const boxRows = boxes.map(ib => {
+    const cap = Math.max(1, Number(ib.cold_cap) || 0), n = Number(ib.cold_sent_today) || 0;
+    return '<div class="row"><div class="grow"><p class="t">' + escHtml(ib.address || 'Main mailbox') + '</p>' +
+      '<p class="s">' + n + ' of ' + Number(ib.cold_cap) + ' cold emails today</p></div>' +
+      '<div class="hbar"><i style="width:' + Math.min(100, Math.round(100 * n / cap)) + '%"></i></div>' + inboxBadge(ib) + '</div>';
+  }).join('');
+
+  html += '<div class="secs">' +
+    '<section class="sec"><h2>Each week</h2>' + columnChart('Emails sent each week', weekly(trend.days, trend.sent, weeks)) + '</section>' +
+    '<section class="sec"><h2>&nbsp;</h2>' + columnChart('Replies each week', weekly(trend.days, trend.replies, weeks)) + '</section>' +
+    '<section class="sec"><h2>By campaign</h2><div class="w">' +
+      (campRows || '<div class="row"><div class="grow"><p class="t">No campaigns yet</p>' +
+        '<p class="s">Reply share shows here once a campaign has gone out.</p></div></div>') +
+      '<p class="w-f">Share of people emailed who replied.</p></div></section>' +
+    '<section class="sec"><h2>Where people stand</h2><div class="w">' + stageRows +
+      '<p class="w-f">' + total + (total === 1 ? ' person' : ' people') + ' in all.</p></div></section>' +
+    (boxRows ? '<section class="sec"><h2>By inbox, today</h2><div class="w">' + boxRows + '</div></section>' : '') +
+    '</div>' +
+    '<p class="ask">Ask your coding agent: <b>"Which Sellbird campaign has the best reply rate, and why?"</b></p>';
+  return html;
+}
+
+// ── Set up: everything built and connected, one row each ──
+
+async function loadSetup() {
+  const el = document.getElementById('setup-body');
+  if (!el) return;
+  const [today, engine, mode, setup] = await Promise.all([
+    api('/api/today'), api('/api/sellbird/status'), api('/api/sending-mode'), api('/api/setup-status'),
+  ]);
+  if (!today && !engine) { el.innerHTML = offlineState(); return; }
+  if (today && !today.error) { applyCounts(today); _todayStats = today.stats || {}; }
+  el.innerHTML = setupHtml(_todayStats, engine, mode, setup);
+  applyTheme(currentTheme());
+}
+
+function setupHtml(st, engine, mode, setup) {
+  st = st || {};
+  const row = (to, title, sub, tag, tone) => '<button type="button" class="row" onclick="goTab(' + jsq(to) + ')">' +
+    '<span class="who" aria-hidden="true">' + icon(SETUP_ICONS[to] || 'settings') + '</span>' +
+    '<div class="grow"><p class="t">' + title + '</p><p class="s">' + sub + '</p>' +
+    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>' + icon('chevron', 'chev') + '</button>';
+  const left = setup && setup.checks ? setup.checks.filter(c => c.required && !c.done).length : 0;
+  const auto = mode && mode.mode === 'autopilot';
+  const running = !!(engine && engine.running);
+  return '<div class="secs">' +
+    '<section class="sec"><h2>Outbound</h2><div class="w">' +
+      row('company', 'Your company', 'What you sell, who you sell to, and the offer every first email ends with', '', '') +
+      row('campaigns', 'Campaigns', 'The sequences Sellbird wrote, and how far each one has got', '', '') +
+      row('signals', 'Signals', 'What Sellbird looks for in a business. Nothing is collected until you confirm it.',
+          st.signals_proposed ? st.signals_proposed + ' to confirm' : (st.signals_confirmed || 0) + ' on',
+          st.signals_proposed ? 'wait' : st.signals_confirmed ? 'good' : '') +
+      row('discover', 'Find businesses', 'Search for companies that match your ICP. It prices every run first.',
+          (st.companies || 0) + (st.companies === 1 ? ' company' : ' companies'), '') +
+      row('inboxes', 'Inboxes', 'The addresses Sellbird sends from, and how much each has sent today', '', '') +
+    '</div></section>' +
+    '<section class="sec"><h2>Sending and the engine</h2><div class="w">' +
+      row('settings', 'Sending and keys', 'Approval or autopilot, your email provider, and the keys for checking addresses',
+          left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
+      row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
+          engine ? (running ? 'Running' : 'Stopped') : '', running ? 'good' : '') +
+      row('activity', 'Activity', 'Every action Sellbird took, newest first', '', '') +
+      row('help', 'Help', 'How it works, where files live, and fixes for the usual problems', '', '') +
+    '</div></section>' +
+    '<section class="sec"><h2>This dashboard</h2><div class="w">' +
+      '<div class="row"><div class="grow"><p class="t">Appearance</p><p class="s">Match your computer, or pick light or dark</p></div>' +
+      '<div class="theme-switch" role="group" aria-label="Appearance">' +
+        [['auto', 'Match your computer', 'monitor'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']].map(t =>
+          '<button type="button" data-theme-opt="' + t[0] + '" onclick="setTheme(\'' + t[0] + '\')" title="' + t[1] +
+          '" aria-label="' + t[1] + '">' + icon(t[2]) + '</button>').join('') + '</div></div>' +
+      '<div class="row"><div class="grow"><a class="follow-link" href="https://x.com/sellbirdagent" target="_blank" rel="noopener" ' +
+        'title="News and updates on X">' + icon('x') + '<span>Follow @sellbirdagent for releases and the roadmap</span></a></div></div>' +
+    '</div></section></div>' +
+    '<p class="ask">Your coding agent can do most of this for you. Ask it: <b>"Check my Sellbird setup and tell me what is left."</b></p>';
+}
+
+const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
+                     inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help'};
+
 // ── Init & live refresh ──
 
-loadRenameNotice();
-loadToday();
-loadTrend();
-loadFunnel();
-loadSetupStatus();
-loadRuns();
-loadTodayActivity();
+showTab((window.location.hash || '').slice(1) || 'today', {fromHash: true, focus: false});
 loadSellbirdStatus();
-
-loadLiveStatus();
 
 // Agent status: quick poll (not while locked: it would only be refused)
 setInterval(() => { if (!_locked) loadSellbirdStatus(); }, 8000);
@@ -3114,9 +3455,8 @@ setInterval(() => {
 setInterval(async () => {
   if (document.hidden || _locked || currentTab === 'today') return;
   const data = await api('/api/today');
-  if (!data) return;
-  navCount('nav-today', (data.items || []).filter(i => i.tone !== 'good').length);
-  navCount('nav-outbox', (data.stats || {}).outbox_pending || 0);
+  if (!data || data.error) return;
+  applyCounts(data);
 }, 20000);
 
 // Data tabs: auto-refresh live views without clobbering anything in progress.
@@ -3126,6 +3466,8 @@ setInterval(() => {
   if (document.hidden || _locked) return;
   switch (currentTab) {
     case 'today': loadToday(); loadTrend(); loadFunnel(); loadRuns(); loadTodayActivity(); break;
+    case 'calendar': loadCalendar(); break;
+    case 'numbers': loadNumbers(); break;
     case 'companies': if (!companyDrill) loadCompanies(); break;
     case 'prospects': loadProspects(); break;
     case 'campaigns': loadCampaigns(); break;

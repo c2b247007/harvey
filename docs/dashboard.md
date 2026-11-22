@@ -19,29 +19,24 @@ Plain HTML, CSS and JavaScript served from `sellbird/web/`. No build step, no fr
   <img alt="The Today screen: four headline figures with 14-day trends, the list of things waiting on you, contacts by stage, and collector runs" src="screenshots/today-light.png">
 </picture>
 
-The sidebar is grouped by what you're doing: **Work** (what needs you), **Pipeline** (what Sellbird is building) and **System** (how it's running). Counts next to a tab mean something is waiting there.
+There is no sidebar and no top bar. A dock floats at the bottom with six places, and the page fills the width it is given. A count on a place means something is waiting there. The layout reads the size of its own frame, not the window, so it works the same in a browser, on a phone, and inside the 320 to 420 pixel panel an agent such as Codex can show beside its chat.
 
-**Work**
-- **Today** — four headline figures with 14-day trends (contacts found, emails sent, conversations, waiting on you), then everything that needs a decision, contacts by stage, collector runs and what the pipeline is doing right now. Setup shows here until it's finished, then disappears.
-- **Outbox** — the decisions desk. Each email sits next to what Sellbird knew when it wrote it: the company, how the address was found and verified, and the signals the email draws on. `J`/`K` to move, `A` approve, `E` edit, `R` reject.
-- **Conversations** — every reply in the context of the emails that led to it. Threads Sellbird handed to you (a contract request, a reply it had no safe answer for) come first, with **Hand back to Sellbird**, **Close** and **Reopen**.
+- **Today**: four headline figures with 14-day trends, then everything that needs a decision, what the pipeline is doing right now, recent activity, people by stage and collector runs. Setup shows here until it is finished, then disappears.
+- **Inbox**: two views. **Replies** is every reply in the context of the emails that led to it; threads Sellbird handed to you come first, with **Hand back to Sellbird**, **Close** and **Reopen**. **Outbox** is the decisions desk: each email sits next to what Sellbird knew when it wrote it. `J`/`K` to move, `A` approve, `E` edit, `R` reject.
+- **People**: everyone found, by stage, searchable, with CSV export. **Companies** is the second view, sorted by a 0-100 fit score, with each company's status (emailed, draft waiting, or why not contacted); open one for its details, or export the whole register.
+- **Calendar**: the next seven days of the Outbox by day (waiting for you, approved and scheduled, sent), and the people who agreed to meet. Sellbird records that a meeting was agreed; the time lives on your own calendar.
+- **Numbers**: people found, emails sent, replies and reply rate over 2, 6 or 12 weeks, by campaign and by inbox. **Model usage** is the second view: Claude or Codex quota gauges and per-agent token counts, with no dollar figures, because a subscription is not billed per token.
+- **Set up**: one row each for **Your company**, **Campaigns**, **Signals** (the confirmation gate and the cohort builder), **Find businesses** (the provider menu with prices side by side, an estimate, then a run), **Inboxes**, **Sending and keys**, **Engine** (start, stop, log), **Activity** and **Help**. Each opens with a way back.
 
-**Pipeline**
-- **Signals** — the confirmation gate and the cohort builder
-- **Discover** — the provider menu with prices side by side, an estimate, then a run; plus reading the sites of companies found but not yet looked at
-- **Companies / Contacts** — everything found, searchable, with CSV export. Companies are sorted by a 0-100 fit score and show their status (emailed, draft waiting, or why not contacted); click one for its details card, or export the whole company register
-- **Campaigns** — each sequence Sellbird wrote, who it's going to, and per-campaign feedback for the writer
-
-**System**
-- **Activity**, **Usage**, **Controls**, **Settings**, **Help**. Usage shows Claude or Codex quota gauges and per-agent token counts, with no dollar figures: you're on a subscription and aren't billed per token, so showing costs would be made up.
+Addresses work as links: `#outbox`, `#signals`, `#calendar` and so on open that screen.
 
 | Outbox | Conversations |
 |---|---|
 | <picture><source media="(prefers-color-scheme: dark)" srcset="screenshots/outbox-dark.png"><img alt="The outbox decisions desk: a drafted reply to an objection, with the company, contact, verification and signals beside it" src="screenshots/outbox-light.png"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="screenshots/conversations-dark.png"><img alt="A conversation that needs you: the two emails Sellbird sent and the prospect's reply, marked Objection and Needs you" src="screenshots/conversations-light.png"></picture> |
 
-Colour is kept for meaning. The chrome is neutral and a single blue marks what you can act on. Status (waiting on you, done, failed, running) uses the same small set of tones in every tab, so "waiting on you" looks the same wherever it shows up. Figures are tabular, so columns line up and a changing number doesn't shift the layout.
+Colour is kept for meaning. The surface is neutral and a single accent, Pale Harbor, marks what you can act on and where you are. Status (waiting on you, done, failed, running) uses the same small set of tones on every screen. Figures are tabular, so columns line up and a changing number does not shift the layout. The logo is the real signature file, `sellbird/web/sellbird-signature.svg`, drawn as a mask so it takes the text colour.
 
-Appearance has three states: `auto` follows your OS and is the default, or pick light or dark from the button at the bottom of the sidebar. Dark mode uses the same layout with a different set of colour tokens.
+Appearance has three states: `auto` follows your OS and is the default, or pick light or dark under Set up. Dark mode uses the same layout with a different set of colour tokens.
 
 ---
 

@@ -19,6 +19,8 @@ const AUTH_TOKEN_RE = /^[A-Za-z0-9_-]{43,128}$/;
   const hash = window.location.hash || '';
   if (!hash) return;
   const token = new URLSearchParams(hash.slice(1)).get('token');
+  // A fragment with no token names a screen ("#outbox"): leave it for app.js.
+  if (token === null) return;
   history.replaceState(null, '', window.location.pathname + window.location.search);
   if (token && AUTH_TOKEN_RE.test(token)) setAuthToken(token);
 })();

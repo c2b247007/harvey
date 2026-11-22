@@ -245,7 +245,7 @@ async def get_setup_status():
         "id": "env_file", "label": "Environment file (.env)",
         "done": env_exists,
         "required": True,
-        "help": "Go to the Settings tab to enter your API keys.",
+        "help": "Open Set up, then Sending and keys, to enter your API keys.",
     })
 
     # 3. Email provider configured (matches channels.email.provider)
@@ -257,16 +257,16 @@ async def get_setup_status():
     if provider == "gmail":
         provider_done = _has("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET") and \
             (PROJECT_ROOT / "data" / "gmail_token.json").is_file()
-        provider_help = ("Add your Google OAuth client ID and secret in Settings, then sign "
-                         "in on the Inboxes tab (or run 'sellbird gmail auth').")
+        provider_help = ("Add your Google OAuth client ID and secret in Sending and keys, then sign "
+                         "in under Set up, Inboxes (or run 'sellbird gmail auth').")
     elif provider == "microsoft":
         provider_done = _has("M365_CLIENT_ID") and \
             (PROJECT_ROOT / "data" / "m365_token.json").is_file()
-        provider_help = ("Add your Microsoft 365 client and tenant IDs in Settings, then sign "
-                         "in on the Inboxes tab (or run 'sellbird microsoft auth').")
+        provider_help = ("Add your Microsoft 365 client and tenant IDs in Sending and keys, then sign "
+                         "in under Set up, Inboxes (or run 'sellbird microsoft auth').")
     elif provider == "smtp":
         provider_done = _has("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD")
-        provider_help = "Enter your SMTP host, username, and password in Settings."
+        provider_help = "Enter your SMTP host, username, and password in Sending and keys."
     else:
         instantly_key = env_vars.get("INSTANTLY_API_KEY", "") or os.getenv("INSTANTLY_API_KEY", "")
         provider_done = bool(instantly_key) and instantly_key != "your_instantly_api_key_here"
@@ -284,8 +284,8 @@ async def get_setup_status():
         "id": "verifier", "label": "Email verification key",
         "done": verifier_set,
         "required": True,
-        "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Settings — "
-                "without one, found emails stay 'guess' and are never sent.",
+        "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Sending and keys. "
+                "Without one, found emails stay 'guess' and are never sent.",
     })
 
     # 5. Config valid
@@ -1956,6 +1956,59 @@ async def get_trend(days: int = 14, tz: int = 0):
         "sent": await per_day("outbox", "sent_at", "AND status = 'sent'"),
         "replies": await per_day("conversations", "created_at"),
     }
+
+
+@app.get("/api/calendar")
+async def get_calendar(start: str = "", days: int = 7, tz: int = 0):
+    """What goes out, day by day, for the Calendar place.
+
+    `start` is the first local day (YYYY-MM-DD, default today), `days` how
+    many, `tz` minutes east of UTC (stored times are UTC). Each day counts the
+    emails waiting for approval and the ones approved, by the time they are
+    due, the ones sent, and new replies. Meetings carry no time: the engine
+    records that one was agreed, not when it is."""
+    from datetime import datetime, timedelta, timezone
+    days = max(1, min(42, days))
+    tz = max(-840, min(840, tz))
+    shift = f"{tz:+d} minutes"
+    try:
+        first = date.fromisoformat(start) if start else (
+            datetime.now(timezone.utc) + timedelta(minutes=tz)).date()
+    except ValueError:
+        return JSONResponse({"error": "start must be a date like 2026-01-31"}, status_code=400)
+    labels = [(first + timedelta(days=n)).isoformat() for n in range(days)]
+    try:
+        out = {day: {"date": day, "waiting": 0, "scheduled": 0, "sent": 0, "replies": 0,
+                     "first_waiting": None, "first_scheduled": None} for day in labels}
+        due = await query_db(
+            "SELECT date(send_at, ?) AS d, status, COUNT(*) AS n, MIN(send_at) AS first "
+            "FROM outbox WHERE status IN ('pending_review', 'approved', 'sending') "
+            "AND date(send_at, ?) BETWEEN ? AND ? GROUP BY d, status",
+            (shift, shift, labels[0], labels[-1]))
+        for r in due:
+            key = "waiting" if r["status"] == "pending_review" else "scheduled"
+            day = out[r["d"]]
+            day[key] += r["n"]
+            if r["first"] and (day[f"first_{key}"] is None or r["first"] < day[f"first_{key}"]):
+                day[f"first_{key}"] = r["first"]
+        for r in await query_db(
+                "SELECT date(sent_at, ?) AS d, COUNT(*) AS n FROM outbox WHERE status = 'sent' "
+                "AND date(sent_at, ?) BETWEEN ? AND ? GROUP BY d",
+                (shift, shift, labels[0], labels[-1])):
+            out[r["d"]]["sent"] = r["n"]
+        for r in await query_db(
+                "SELECT date(created_at, ?) AS d, COUNT(*) AS n FROM conversations "
+                "WHERE date(created_at, ?) BETWEEN ? AND ? GROUP BY d",
+                (shift, shift, labels[0], labels[-1])):
+            out[r["d"]]["replies"] = r["n"]
+        meetings = await query_db(
+            "SELECT id, first_name, last_name, email, title, company, updated_at FROM prospects "
+            "WHERE status = 'meeting' ORDER BY updated_at DESC LIMIT 50")
+        paused = await query_db("SELECT value FROM settings WHERE key = 'sending_paused'")
+        return {"days": [out[day] for day in labels], "meetings": meetings,
+                "paused": (paused[0]["value"] if paused else "") or ""}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/api/activity")

@@ -112,7 +112,7 @@ sellbird inboxes list                                           # each inbox and
 - Replies are read from every inbox each cycle. If one can't be read,
   nothing is sent that cycle, as with one inbox, and the Today page says
   which inbox.
-- The dashboard's **Inboxes** tab shows every inbox with today's cold sends
+- The dashboard's **Inboxes** screen (under Set up) shows every inbox with today's cold sends
   against its cap. Click one to pause, resume, cap, rename, check or remove
   it. **Add inbox** connects one: Gmail and Microsoft 365 open their sign-in
   in the browser on the computer running Sellbird (it needs the same
