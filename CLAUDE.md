@@ -331,6 +331,7 @@ Users will come back with questions and tasks. Common ones:
 - **"I want to change what Sellbird says"** → Skills are in `skills/`, prompts are in `prompts/`. Both are plain markdown files. Edit them directly.
 - **"Train Sellbird on a different product"** → `sellbird train <new-url>`
 - **"How do I see the database?"** → It's at `data/sellbird.db`. They can open it with any SQLite tool, or ask you to query it.
+- **"Can it tell my CRM / Zapier / Slack?"** → Yes: every reply, new lead, booking and stage change is an event. Add an address under `webhooks:` in the config file Sellbird reads, put the signing secret in `.env`, and check Set up → Events and webhooks (`docs/events.md`). Have the user add the secret themselves; don't ask them to paste it into this chat.
 - **"I just want the prospect list"** → `sellbird export` writes a sequencer-ready CSV (verified/risky emails only; `--all` for everything). Also available as Export buttons on the dashboard's People place. Sellbird is valuable purely as a list-builder even if the user never lets it send.
 
 ---

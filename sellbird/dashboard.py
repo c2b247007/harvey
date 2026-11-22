@@ -1198,6 +1198,74 @@ async def get_prospects():
     return rows
 
 
+# ── Events other tools can listen to (sellbird.events) ──
+
+
+def _events_config():
+    from sellbird.config import load_config
+    try:
+        return load_config(str(_resolve_config_file()))
+    except Exception:
+        return None
+
+
+def _deliver_events_soon(state) -> None:
+    """After a change made here, tell the listeners now instead of at the
+    next heartbeat. Best-effort: the heartbeat's pass is the one that counts."""
+    from sellbird.events import deliver_soon
+    config = _events_config()
+    if config is not None:
+        deliver_soon(config, state)
+
+
+@app.get("/api/events")
+async def get_events_api():
+    """The event types, the endpoints that hear them (never a secret), and
+    the most recent events with how each delivery went."""
+    from sellbird import events
+    try:
+        state = _state()
+        await state.init_db()
+        config = _events_config()
+        return {
+            "types": list(events.EVENT_TYPES),
+            "endpoints": events.describe_endpoints(config) if config is not None else [],
+            "signature_header": events.SIGNATURE_HEADER,
+            "config_file": _resolve_config_file().name,
+            "events": await state.get_events(limit=50),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/events/test")
+async def send_test_event():
+    """Send one signed test.ping to every endpoint, now, and say how each
+    answered. Nothing about a real person is in it."""
+    from sellbird import events
+    config = _events_config()
+    endpoints = events.endpoints_of(config) if config is not None else []
+    if not endpoints:
+        return _refuse("No webhook endpoint is set. Add one under webhooks: in "
+                       f"{_resolve_config_file().name} first.", 409)
+    import httpx
+    payload = {"id": "evt_test_" + uuid.uuid4().hex[:12], "type": events.TEST_EVENT,
+               "created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+               "api_version": events.API_VERSION,
+               "data": {"message": "A test event from your Sellbird dashboard."}}
+    results = []
+    async with httpx.AsyncClient(timeout=events.TIMEOUT_SECONDS, follow_redirects=False) as client:
+        for ep, shown in zip(endpoints, events.describe_endpoints(config)):
+            if shown["problem"]:
+                results.append({"host": shown["host"], "ok": False, "detail": shown["problem"]})
+                continue
+            status, error = await events._post(client, str(ep.url).strip(),
+                                               os.environ[ep.secret_env].strip(), payload)
+            results.append({"host": shown["host"], "ok": not error,
+                            "detail": f"answered {status}" if status else "no answer (" + error + ")"})
+    return {"success": True, "results": results}
+
+
 # ── Where each person stands (sellbird.deals) ──
 
 
@@ -1262,6 +1330,8 @@ async def set_prospect_stage(prospect_id: str, request: Request):
         return _refuse("No such person.", 404)
     change = await state.set_stage(prospect_id, stage, by=_who(request),
                                    reason=str(body.get("reason") or "")[:300], manual=True)
+    if change is not None:
+        _deliver_events_soon(state)
     return {"success": True, "stage": stage, "changed": change is not None, "change": change}
 
 
@@ -1290,6 +1360,8 @@ async def record_prospect_meeting(prospect_id: str, request: Request):
         return _refuse("They opted out, so no meeting is recorded for them.", 409)
     meeting = await state.record_booking(prospect_id, starts_at=starts_at or None,
                                          note=str(body.get("note") or ""), by=_who(request))
+    if meeting is not None:
+        _deliver_events_soon(state)
     return {"success": True, "meeting": meeting}
 
 

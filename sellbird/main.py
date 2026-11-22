@@ -471,6 +471,16 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             except Exception as e:
                 logger.warning(f"Failed to log action '{action}': {e}")
 
+            # 6b. Events for other tools (sellbird.events): send whatever this
+            # cycle, or the dashboard since the last one, has queued.
+            try:
+                from sellbird.events import deliver_pending
+                sent = await asyncio.wait_for(deliver_pending(config, state), timeout=120)
+                if sent["delivered"] or sent["failed"]:
+                    logger.info(f"Events: {sent['delivered']} delivered, {sent['failed']} to retry.")
+            except Exception as e:
+                logger.warning(f"Events: delivery pass failed: {type(e).__name__}")
+
             # 7. Extensions' tick steps (sellbird.extensions). Each is
             # isolated: a failing step is logged and never stops the loop.
             await run_tick_steps(config, state)

@@ -429,6 +429,7 @@ const SCREENS = {
   settings:      {place: 'setup', parent: 'setup'},
   controls:      {place: 'setup', parent: 'setup'},
   activity:      {place: 'setup', parent: 'setup'},
+  events:        {place: 'setup', parent: 'setup'},
   help:          {place: 'setup', parent: 'setup'},
 };
 // The dock's own names, and the old tab names links may still carry.
@@ -509,6 +510,7 @@ function loadCurrentTab() {
     case 'calendar': loadCalendar(); break;
     case 'numbers': loadNumbers(); break;
     case 'setup': loadSetup(); break;
+    case 'events': loadEvents(); break;
     case 'today': loadLiveStatus(); loadRenameNotice(); loadToday(); loadTrend(); loadFunnel(); loadSetupStatus(); loadRuns(); loadTodayActivity(); break;
     case 'signals': loadSignals(); break;
     case 'discover': loadDiscoverProviders(); break;
@@ -3503,6 +3505,7 @@ function setupHtml(st, engine, mode, setup) {
           left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
       row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
           engine ? (running ? 'Running' : 'Stopped') : '', running ? 'good' : '') +
+      row('events', 'Events and webhooks', 'Send every reply, new lead, booking and stage change to the tools you already use', '', '') +
       row('activity', 'Activity', 'Every action Sellbird took, newest first', '', '') +
       row('help', 'Help', 'How it works, where files live, and fixes for the usual problems', '', '') +
     '</div></section>' +
@@ -3519,7 +3522,74 @@ function setupHtml(st, engine, mode, setup) {
 }
 
 const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
-                     inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help'};
+                     inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
+                     events: 'arrow'};
+
+// ── Events and webhooks: what other tools can listen to ──
+
+const EVENT_NAMES = {'lead.created': 'New lead', 'reply.received': 'Reply', 'meeting.booked': 'Meeting booked',
+                     'stage.changed': 'Stage change'};
+
+async function loadEvents() {
+  const el = document.getElementById('events-body');
+  if (!el) return;
+  const data = await api('/api/events');
+  if (!data) { el.innerHTML = offlineState(); return; }
+  if (data.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the events', escHtml(data.error)); return; }
+  el.innerHTML = eventsHtml(data);
+}
+
+function eventsHtml(data) {
+  const eps = data.endpoints || [];
+  const hosts = {};
+  eps.forEach(e => { hosts[e.key] = e.host; });
+  const epRows = eps.length
+    ? eps.map(e => '<div class="row"><div class="grow"><p class="t">' + escHtml(e.host) + '</p>' +
+        '<p class="s">' + (e.events || []).map(t => escHtml(own(EVENT_NAMES, t) || t)).join(', ') + '</p>' +
+        (e.problem ? '<p class="s" style="color:var(--bad)">Not sending: ' + escHtml(e.problem) + '.</p>' : '') + '</div>' +
+        '<span class="tag ' + (e.problem ? 'bad' : 'good') + '">' + (e.problem ? 'Not sending' : 'Signed with ' + escHtml(e.secret_env)) + '</span></div>').join('')
+    : '<div class="row"><div class="grow"><p class="t">No endpoint yet</p>' +
+      '<p class="s">Events are still recorded below. Add an address and Sellbird starts sending to it.</p></div></div>';
+  const tone = {delivered: 'good', retrying: 'wait', failed: 'bad', skipped: ''};
+  const word = {delivered: 'Delivered', retrying: 'Retrying', failed: 'Gave up', skipped: 'Not wanted'};
+  const evRows = (data.events || []).map(ev => {
+    const p = (ev.data && ev.data.person) || {};
+    const who = p.name || p.email || '';
+    const what = ev.type === 'stage.changed' ? String(ev.data.from || '').replace(/_/g, ' ') + ' to ' + String(ev.data.to || '').replace(/_/g, ' ')
+      : ev.type === 'reply.received' ? String(ev.data.intent || '').replace(/_/g, ' ')
+      : ev.type === 'meeting.booked' ? ((ev.data.meeting || {}).starts_at ? formatDate(ev.data.meeting.starts_at) : 'no time given')
+      : (p.company || '');
+    return '<div class="row"><span class="time">' + relTime(ev.created_at) + '</span>' +
+      '<div class="grow"><p class="t">' + escHtml(own(EVENT_NAMES, ev.type) || ev.type) + (who ? ': ' + escHtml(who) : '') + '</p>' +
+      '<p class="s">' + escHtml(what) + '</p></div>' +
+      ((ev.deliveries || []).map(d => '<span class="tag ' + (tone[d.status] || '') + '" title="' +
+        escHtml((hosts[d.endpoint] || 'an endpoint') + (d.error ? ': ' + d.error : '')) + '">' +
+        (word[d.status] || escHtml(d.status)) + (d.attempts > 1 ? ' (' + d.attempts + ')' : '') + '</span>').join('') ||
+        (eps.length ? '<span class="tag">Queued</span>' : '')) + '</div>';
+  }).join('');
+  const sample = 'webhooks:\n  - url: https://hooks.example.com/sellbird\n    secret_env: SELLBIRD_WEBHOOK_SECRET\n    events: [reply.received, meeting.booked]   # leave out for all four';
+  return '<div class="secs">' +
+    '<section class="sec"><h2>Where events go</h2><div class="w">' + epRows +
+      '<p class="w-f">Set in ' + escHtml(data.config_file || 'sellbird.yaml') + '. The secret lives in .env, never in that file.</p></div>' +
+      '<div class="w pad"><p class="t">Add an endpoint</p>' +
+      '<p class="s" style="margin:4px 0 10px">Put this in ' + escHtml(data.config_file || 'sellbird.yaml') + ' and a long random value for the secret in .env. ' +
+      'Each request carries a <code>' + escHtml(data.signature_header || 'Sellbird-Signature') + '</code> header: an HMAC-SHA256 of the time and the body, made with your secret.</p>' +
+      '<pre class="code-block">' + escHtml(sample) + '</pre></div></section>' +
+    '<section class="sec"><h2>Recent events</h2><div class="w">' +
+      (evRows || '<div class="row"><div class="grow"><p class="t">Nothing has happened yet</p>' +
+        '<p class="s">A new lead, a reply, a booking or a stage change shows up here the moment it happens.</p></div></div>') +
+      '<p class="w-f">A failed delivery is retried for about two days, then left alone.</p></div></section></div>';
+}
+
+async function testEvents(btn) {
+  btn.disabled = true;
+  const res = await api('/api/events/test', {method: 'POST'});
+  btn.disabled = false;
+  if (!res || !res.success) { showToast(failMsg(res, 'Could not send a test event.'), 'error'); return; }
+  const bad = (res.results || []).filter(r => !r.ok);
+  showToast(bad.length ? bad[0].host + ': ' + bad[0].detail : 'Test event delivered to ' + res.results.length +
+    (res.results.length === 1 ? ' endpoint.' : ' endpoints.'), bad.length ? 'error' : 'success');
+}
 
 // Wide tables become stacked rows in a narrow frame (app.css). Each cell
 // carries its column's name so a bare "3" still reads as "Contacts 3".

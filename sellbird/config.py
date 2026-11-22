@@ -835,6 +835,16 @@ class HandoffConfig(BaseModel):
     arguments: dict = {}
 
 
+class WebhookConfig(BaseModel):
+    """One address that hears about events (sellbird.events): a reply, a new
+    lead, a booking, a stage change. Every request is signed with the secret
+    in the environment variable ``secret_env`` (never written in this file).
+    ``events`` empty means all four."""
+    url: str
+    secret_env: str = "SELLBIRD_WEBHOOK_SECRET"
+    events: list[str] = []
+
+
 class SellbirdConfig(BaseModel):
     persona: PersonaConfig
     product: ProductConfig
@@ -845,6 +855,7 @@ class SellbirdConfig(BaseModel):
     compliance: ComplianceConfig = ComplianceConfig()
     writer: WriterConfig = WriterConfig()
     handoff: HandoffConfig = HandoffConfig()
+    webhooks: list[WebhookConfig] = []
     # The file it was loaded from, so a running Sellbird can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)

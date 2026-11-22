@@ -583,6 +583,18 @@ MIGRATIONS: list[str] = [
       status TEXT DEFAULT 'booked', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE INDEX IF NOT EXISTS idx_meetings_prospect ON meetings(prospect_id);
     """,
+    # ── v18: events other tools can listen to (sellbird.events) ──
+    # An event is written in the same transaction as the change it describes.
+    # event_deliveries tracks each endpoint's copy: delivered, retrying or failed.
+    """
+    CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL,
+      payload_json TEXT DEFAULT '{}', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+    CREATE TABLE IF NOT EXISTS event_deliveries (event_id TEXT NOT NULL, endpoint TEXT NOT NULL,
+      status TEXT DEFAULT 'retrying', attempts INTEGER DEFAULT 0, response_status INTEGER DEFAULT 0,
+      error TEXT DEFAULT '', next_attempt_at TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (event_id, endpoint));
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -859,6 +871,12 @@ class StateManager:
                     prospect.updated_at.isoformat(),
                 ),
             )
+            if cursor.rowcount == 1:
+                await self._insert_event(db, "lead.created", {"person": {
+                    "id": prospect.id, "email": prospect.email,
+                    "name": " ".join(x for x in (prospect.first_name, prospect.last_name) if x),
+                    "title": prospect.title, "company": prospect.company, "stage": "new",
+                    "source": deals.DEFAULT_SOURCE}, "found_via": prospect.source})
             await db.commit()
             if cursor.rowcount == 0:
                 # Unique-constraint conflict: resolve to the existing record.
@@ -923,6 +941,99 @@ class StateManager:
         if implied:
             await self.set_stage(prospect_id, implied, reason=f"status: {status}")
 
+    # ── Events (sellbird.events) ──
+
+    @staticmethod
+    async def _insert_event(db, event_type: str, data: dict) -> str:
+        """Write one event on an open connection, inside the caller's transaction."""
+        event_id = "evt_" + _new_id().replace("-", "")
+        await db.execute("INSERT INTO events (id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+                         (event_id, event_type, json.dumps(data, default=str), _utcnow().isoformat()))
+        return event_id
+
+    async def record_event(self, event_type: str, data: dict) -> str:
+        async with self._connect() as db:
+            event_id = await self._insert_event(db, event_type, data)
+            await db.commit()
+        return event_id
+
+    async def person_for_event(self, prospect_id: str) -> dict:
+        """The person block every event carries."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT id, first_name, last_name, email, title, company, stage, lead_source "
+                    "FROM prospects WHERE id = ?", (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+        if row is None:
+            return {"id": prospect_id}
+        return {"id": row["id"], "email": row["email"],
+                "name": " ".join(x for x in (row["first_name"], row["last_name"]) if x),
+                "title": row["title"], "company": row["company"],
+                "stage": deals.clean_stage(row["stage"]) or "new",
+                "source": row["lead_source"] or deals.DEFAULT_SOURCE}
+
+    async def get_events(self, limit: int = 50) -> list[dict]:
+        """Recent events, newest first, each with its deliveries."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM events ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                                  (limit,)) as cursor:
+                events = [dict(r) for r in await cursor.fetchall()]
+            if not events:
+                return []
+            marks = ",".join("?" * len(events))
+            async with db.execute(
+                    f"SELECT * FROM event_deliveries WHERE event_id IN ({marks})",
+                    [e["id"] for e in events]) as cursor:
+                deliveries = [dict(r) for r in await cursor.fetchall()]
+        for e in events:
+            try:
+                e["data"] = json.loads(e.pop("payload_json") or "{}")
+            except (TypeError, ValueError):
+                e["data"] = {}
+            e["deliveries"] = [d for d in deliveries if d["event_id"] == e["id"]]
+        return events
+
+    async def webhook_first_seen(self, endpoint: str) -> str:
+        """When this endpoint was first configured (now, the first time it is asked)."""
+        key = "webhook_seen:" + endpoint
+        seen = await self.get_setting(key)
+        if not seen:
+            seen = _utcnow().isoformat()
+            await self.set_setting(key, seen)
+        return seen
+
+    async def events_due_for(self, endpoint: str, *, since: str = "", limit: int = 50) -> list[dict]:
+        """Events this endpoint has not had yet and is due to be sent, oldest first."""
+        now = _utcnow()
+        floor = max(since or "", (now - timedelta(hours=72)).isoformat())
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT e.*, COALESCE(d.attempts, 0) AS attempts FROM events e "
+                    "LEFT JOIN event_deliveries d ON d.event_id = e.id AND d.endpoint = ? "
+                    "WHERE e.created_at >= ? AND (d.event_id IS NULL OR "
+                    "  (d.status = 'retrying' AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= ?))) "
+                    "ORDER BY e.created_at, e.rowid LIMIT ?",
+                    (endpoint, floor, now.isoformat(), limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def record_delivery(self, event_id: str, endpoint: str, *, status: str, attempts: int,
+                              response_status: int = 0, error: str = "",
+                              next_attempt_at: str | None = None) -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO event_deliveries (event_id, endpoint, status, attempts, response_status, "
+                "error, next_attempt_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(event_id, endpoint) DO UPDATE SET status = excluded.status, "
+                "attempts = excluded.attempts, response_status = excluded.response_status, "
+                "error = excluded.error, next_attempt_at = excluded.next_attempt_at, "
+                "updated_at = excluded.updated_at",
+                (event_id, endpoint, status, attempts, response_status, error[:200],
+                 next_attempt_at, _utcnow().isoformat()))
+            await db.commit()
+
     # ── Stages and meetings (sellbird.deals) ──
 
     async def set_stage(self, prospect_id: str, stage: str, *, by: str = "sellbird",
@@ -961,6 +1072,12 @@ class StateManager:
                 (_new_id(), "stage_change", "user" if manual else "main", json.dumps({
                     "prospect_id": prospect_id, "prospect_email": row["email"],
                     "from": current, "to": stage, "by": by, "reason": reason[:300]})))
+            await self._insert_event(db, "stage.changed", {
+                "person": {"id": prospect_id, "email": row["email"],
+                           "name": " ".join(x for x in (row["first_name"], row["last_name"]) if x),
+                           "company": row["company"], "stage": stage,
+                           "source": row["lead_source"] or deals.DEFAULT_SOURCE},
+                "from": current, "to": stage, "by": by, "reason": reason[:300]})
             await db.commit()
         return {"prospect_id": prospect_id, "email": row["email"],
                 "name": " ".join(x for x in (row["first_name"], row["last_name"]) if x),
@@ -1013,6 +1130,10 @@ class StateManager:
             await db.commit()
         change = await self.set_stage(prospect_id, "meeting_booked", by=by, reason="meeting booked",
                                       manual=by != "sellbird")
+        await self.record_event("meeting.booked", {
+            "person": await self.person_for_event(prospect_id),
+            "meeting": {"id": meeting_id, "starts_at": starts_at or None, "note": note[:500]},
+            "by": by, "emails_cancelled": cancelled})
         await self.log_action("meeting_booked", "user" if by != "sellbird" else "handler", {
             "prospect_id": prospect_id, "meeting_id": meeting_id, "starts_at": starts_at or "",
             "cancelled": cancelled, "by": by})

@@ -314,6 +314,13 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
         return await read(f"/api/calendar?start={quote(start, safe='')}&days={int(days)}")
 
     @server.tool()
+    async def events_list() -> dict:
+        """Recent events (lead.created, reply.received, meeting.booked, stage.changed),
+        the webhook endpoints that hear them and how each delivery went. Endpoints are
+        set by the user under webhooks: in sellbird.yaml."""
+        return await read("/api/events")
+
+    @server.tool()
     async def person_stage(prospect_id: str) -> dict:
         """One person's stage, source and every stage change so far."""
         return await read(f"/api/prospects/{quote(prospect_id, safe='')}/stage")

@@ -957,6 +957,15 @@ class Handler:
             await self.state.update_conversation(convo.id, mailbox_id=reply_meta["mailbox_id"])
         if convo.stage != old_stage:
             logger.info(f"Handler: Stage for {lead_email}: {old_stage} -> {convo.stage}")
+        # Tell whoever is listening (sellbird.events). Never stops the reply.
+        try:
+            await self.state.record_event("reply.received", {
+                "person": await self.state.person_for_event(prospect.id),
+                "conversation_id": convo.id, "campaign_id": campaign_id or "",
+                "intent": intent, "text": (reply_text or "")[:4000],
+                "needs_you": bool(handed_off or escalate)})
+        except Exception as e:
+            logger.warning(f"Handler: could not record the reply event: {type(e).__name__}")
 
         # 2d. They wrote that they booked a time: record it, which stops every
         # follow-up to them and to colleagues at their company.

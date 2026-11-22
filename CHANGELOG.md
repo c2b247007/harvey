@@ -34,6 +34,12 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Events other tools can listen to.** Every reply, new lead, booking and
+  stage change is recorded as an event and, when you add an address under
+  `webhooks:`, sent there as a signed POST (`Sellbird-Signature`, HMAC-SHA256)
+  with retries. Works with Zapier, n8n, Make or your own code. See
+  `docs/events.md` and Set up → Events and webhooks.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no
