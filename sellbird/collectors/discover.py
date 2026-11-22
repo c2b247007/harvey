@@ -543,7 +543,7 @@ class DataForSEOListings(DiscoveryProvider):
     free_tier = "$1 signup credit; $50 minimum deposit to go live"
     signup_url = "https://app.dataforseo.com/api-access"
     env_keys = ("dataforseo_login", "dataforseo_password")
-    caveat = "No email addresses — Sellbird resolves those in a later stage."
+    caveat = "No email addresses. Sellbird resolves those in a later stage."
 
     TASK_COST = 0.012
     ITEM_COST = 0.00036
@@ -629,14 +629,14 @@ class DataForSEOSerp(DiscoveryProvider):
     blurb = ("Search '<service> <city>' from the city centre and record where "
              "each business ranks, plus who holds the local 3-pack. Discovers "
              "businesses you didn't have AND scores the ones you did.")
-    cost_note = "$0.002 per 10 results (Live) — depth 30 costs $0.006 a search"
+    cost_note = "$0.002 per 10 results (Live). Depth 30 costs $0.006 a search"
     free_tier = "$1 signup credit; free sandbox; $50 minimum deposit to go live"
     signup_url = "https://app.dataforseo.com/api-access"
     env_keys = ("dataforseo_login", "dataforseo_password")
     caveat = ("Google removed 100-results-per-page in September 2025, so depth "
               "100 now costs 10x depth 10. Depth 20-30 is the sweet spot; "
               "below rank 30 it is mostly directories anyway. Rank depends on "
-              "where the searcher stands — this is the view from the city centre.")
+              "where the searcher stands. This is the view from the city centre.")
 
     # Live mode. The standard queue is $0.0006 but asynchronous (post a task,
     # poll for it minutes later); the run loop checks the spend cap between
@@ -732,7 +732,7 @@ class DataForSEOMaps(DataForSEOSerp):
     label = "DataForSEO Google Maps (map rank)"
     kind = "serp"
     blurb = ("Search Google Maps for '<service> <city>' and record each "
-             "business's map position, rating, category and claimed status — "
+             "business's map position, rating, category and claimed status, "
              "including businesses with no website at all.")
     cost_note = "$0.002 per search of up to 100 results (Live)"
     caveat = ("Map rank depends heavily on where the searcher stands; Sellbird "
@@ -1040,7 +1040,7 @@ class OpenStreetMap(DiscoveryProvider):
     free_tier = "unlimited, within community rate etiquette"
     signup_url = "https://www.openstreetmap.org"
     env_keys = ()
-    caveat = ("Coverage is thin for any trade without a storefront — OSM maps "
+    caveat = ("Coverage is thin for any trade without a storefront. OSM maps "
               "premises, so it holds under 2,000 roofers for the entire US. "
               "Great for a free trial run or as a cross-reference; not a "
               "complete list.")
@@ -1740,7 +1740,7 @@ async def run_discovery(
     if report.estimated_cost > max_spend:
         report.errors.append(
             f"estimated ${report.estimated_cost:.2f} exceeds the ${max_spend:.2f} "
-            f"cap — raise the cap or run fewer queries")
+            f"cap. Raise the cap or run fewer queries")
         report.stopped = "over budget"
         return report
 
@@ -1748,7 +1748,7 @@ async def run_discovery(
     confirmed = await state.confirmed_signal_codes()
     if not confirmed:
         report.errors.append(
-            "no signals confirmed — confirm signals first (dashboard → Signals, "
+            "no signals confirmed. Confirm signals first (dashboard → Signals, "
             "or `sellbird signals --confirm free`) or discovery has nothing to record")
         report.stopped = "no confirmed signals"
         return report

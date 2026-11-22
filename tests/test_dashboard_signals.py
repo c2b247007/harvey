@@ -446,7 +446,7 @@ vm.runInThisContext("const _cohort = {require: new Set(['A']), exclude: new Set(
     assert data['links'][0]['clicked'] and data['links'][0]['removed']
     assert data['revoked'] == ['blob:local']
     assert data['success'] == {'disabled': False, 'textContent': 'Export CSV'}
-    assert data['failure'] == {'disabled': False, 'textContent': 'Export failed — retry'}
+    assert data['failure'] == {'disabled': False, 'textContent': 'Export failed. Retry'}
     assert data['refused'] == data['failure']
     assert len(data['locks']) == 1 and 'saved token was not accepted' in data['locks'][0]
 

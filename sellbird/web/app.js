@@ -384,7 +384,7 @@ async function downloadCsv(path, filename, btn) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(href), 10000);
   } catch {
-    showToast('Export failed — is the dashboard still running?', 'error');
+    showToast('Export failed. Is the dashboard still running?', 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -590,7 +590,7 @@ async function loadLiveStatus() {
   if (!d || !Array.isArray(d.steps)) {
     // Keep the last good numbers on screen, but never let them pass for live.
     const flag = el.querySelector('.live-flag');
-    if (flag) flag.textContent = "Can't reach Sellbird right now — numbers below may be old.";
+    if (flag) flag.textContent = "Can't reach Sellbird right now. The numbers below may be old.";
     else el.innerHTML = '<p class="muted live-flag">Can\'t reach Sellbird right now. ' +
       'Is the dashboard window still open?</p>';
     return;
@@ -955,7 +955,7 @@ async function setSignals(codes, status) {
     showToast(
       status === 'confirmed'
         ? 'Confirmed ' + data.changed + ' signal' + (data.changed === 1 ? '' : 's') +
-          ' — Sellbird will collect ' + (data.changed === 1 ? 'it' : 'them') + ' from now on.'
+          '. Sellbird will collect ' + (data.changed === 1 ? 'it' : 'them') + ' from now on.'
         : data.changed + ' signal' + (data.changed === 1 ? '' : 's') + ' turned off.',
       'success');
   } else {
@@ -1067,7 +1067,7 @@ async function estimateDiscovery() {
   const btn = document.getElementById('disc-run');
   btn.disabled = over;
   btn.textContent = over ? 'Over cap'
-    : (data.free ? 'Run — free' : 'Run — spend up to $' + data.estimated_cost.toFixed(2));
+    : (data.free ? 'Run, free' : 'Run, spend up to $' + data.estimated_cost.toFixed(2));
 }
 
 async function runDiscovery() {
@@ -1079,7 +1079,7 @@ async function runDiscovery() {
     body: JSON.stringify(discoverBody()),
   });
   if (data && data.success) {
-    showToast('Discovery started — ' + data.queries + ' queries.', 'success');
+    showToast('Discovery started: ' + data.queries + ' queries.', 'success');
   } else {
     showToast((data && data.message) || 'Could not start.', 'error');
     btn.disabled = false;
@@ -1208,16 +1208,16 @@ function renderCohortBuilder() {
   const rangeCol = numeric.length ?
     '<div style="height:18px"></div><div><div class="subhead" style="margin-top:0">In range ' +
       '<span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">' +
-      '&mdash; e.g. organic rank 11 to 30; leave a side blank for no limit</span></div>' +
+      'for example organic rank 11 to 30; leave a side blank for no limit</span></div>' +
       '<div class="cohort-grid">' +
       numeric.map(s =>
         '<div class="cohort-pick cohort-range"><span>' + escHtml(s.label || s.code) + '</span>' +
           bound(s.code, 'min') + '<span class="muted">to</span>' + bound(s.code, 'max') + '</div>'
       ).join('') + '</div></div>' : '';
 
-  el.innerHTML = col('Must have', 'require', '&mdash; every company in the cohort carries all of these') +
+  el.innerHTML = col('Must have', 'require', 'every company in the cohort carries all of these') +
     '<div style="height:18px"></div>' +
-    col('Must not have', 'exclude', '&mdash; disqualifiers') + rangeCol;
+    col('Must not have', 'exclude', 'disqualifiers') + rangeCol;
 }
 
 function setCohortRange(code, side, value) {
@@ -1330,7 +1330,7 @@ async function exportCohort(button) {
     link.click();
     button.textContent = 'Export CSV';
   } catch (error) {
-    button.textContent = 'Export failed — retry';
+    button.textContent = 'Export failed. Retry';
   } finally {
     if (link) link.remove();
     // Give the browser time to start consuming the download before revoking.
@@ -1467,7 +1467,7 @@ async function saveEnv(payload, okMsg) {
     body: JSON.stringify(payload)
   });
   if (data && data.success) showToast(okMsg, 'success');
-  else showToast((data && data.message) || 'Save failed — is the dashboard still running?', 'error');
+  else showToast((data && data.message) || 'Save failed. Is the dashboard still running?', 'error');
 }
 
 // Secrets are only sent when typed: an empty box means "keep the saved one".
@@ -2107,7 +2107,7 @@ document.addEventListener('keydown', e => {
 async function outboxAct(id, action) {
   if (deskBusy()) return;
   const data = await api('/api/outbox/' + encodeURIComponent(id) + '/' + action, {method: 'POST'});
-  if (data && data.success) showToast(action === 'approve' ? 'Approved — will send on schedule.' : 'Rejected.', 'success');
+  if (data && data.success) showToast(action === 'approve' ? 'Approved. It will send on schedule.' : 'Rejected.', 'success');
   else showToast(failMsg(data, 'Action failed.'), 'error');
   loadOutbox();
 }
@@ -2220,7 +2220,7 @@ function companyInfoCard(company, profile) {
     row('Area', escHtml(c.location)) +
     row('Why selected', escHtml(reg.why_selected || (company.fit_reasons || []).join(' · '))) +
     row('Status', '<b>' + escHtml(reg.status || company.register_status || '') + '</b>' +
-      (reg.why_not_contacted || company.register_why ? ' — ' + escHtml(reg.why_not_contacted || company.register_why) : '')) +
+      (reg.why_not_contacted || company.register_why ? ': ' + escHtml(reg.why_not_contacted || company.register_why) : '')) +
     row('People named on site', list(people, 8)) +
     row('Contact form', form ? link(form.value_text, form.value_text) : '') +
     row('Hiring', list(by('HIRING_ROLE'), 6)) +
@@ -2660,7 +2660,7 @@ async function loadConversations() {
   _convos = data;
   if (!data.length) {
     el.innerHTML = emptyState(icon('conversations'), 'No conversations yet',
-      'No prospects have replied so far. When they do, the Handler agent classifies each reply and responds — every thread shows up here.');
+      'No prospects have replied so far. When they do, the Handler agent classifies each reply and responds. Every thread shows up here.');
     return;
   }
   // Open on "Needs you" only when something needs you.
@@ -3436,6 +3436,30 @@ function setupHtml(st, engine, mode, setup) {
 
 const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help'};
+
+// Wide tables become stacked rows in a narrow frame (app.css). Each cell
+// carries its column's name so a bare "3" still reads as "Contacts 3".
+function labelTables(root) {
+  root.querySelectorAll('table:not(.file-table)').forEach(table => {
+    const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    if (!heads.length) return;
+    table.querySelectorAll('tbody tr:not(.detail-row)').forEach(tr => {
+      [...tr.children].forEach((td, i) => {
+        if (heads[i] && td.dataset.label !== heads[i]) td.dataset.label = heads[i];
+      });
+    });
+  });
+}
+(function watchTables() {
+  const inner = document.getElementById('inner');
+  if (!inner || typeof MutationObserver === 'undefined') return;
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; labelTables(inner); });
+  }).observe(inner, {childList: true, subtree: true});
+})();
 
 // ── Init & live refresh ──
 

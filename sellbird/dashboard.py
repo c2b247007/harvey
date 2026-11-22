@@ -2389,9 +2389,9 @@ async def get_live_status():
 
     next_tab = ""   # where the next step is done, when it's done in the dashboard
     if reading or finding:
-        next_up = "Wait — Sellbird is working. This page updates by itself."
+        next_up = "Wait. Sellbird is working. This page updates by itself."
     elif finding_emails:
-        next_up = "Wait — emails are being found."
+        next_up = "Wait. Emails are being found."
     elif stopped:
         next_up, next_tab = "A job stopped before finishing. Run it again.", "discover"
     elif sellbird_sends and awaiting_review:
@@ -2569,7 +2569,7 @@ async def get_today():
                 "key": "discover", "tone": "good",
                 "title": "No companies yet",
                 "detail": ("Signals are confirmed but nothing has been collected. "
-                           "Discovery is free to try — no account needed."),
+                           "Discovery is free to try. No account needed."),
                 "action": "Find businesses", "tab": "discover",
             })
 
@@ -2579,7 +2579,7 @@ async def get_today():
                 "key": "profile", "tone": "good",
                 "title": f"{unprofiled} companies not looked at yet",
                 "detail": ("Reading their websites is free and it is what makes "
-                           "an email specific — who their agency is, what they "
+                           "an email specific: who their agency is, what they "
                            "are missing, whether they are spending on ads."),
                 "action": "Read their sites", "tab": "discover",
             })
@@ -2630,22 +2630,22 @@ async def get_today():
 
 CATEGORY_META = {
     "discovery": {
-        "label": "Discovery — who exists",
+        "label": "Discovery: who exists",
         "blurb": "How Sellbird finds businesses at all, and how visible they are. "
                  "This is the only stage that costs money.",
     },
     "profile": {
-        "label": "Profile — what they are",
+        "label": "Profile: what they are",
         "blurb": "Read from the pages a business already publishes. Free, no AI "
                  "tokens, three HTTP requests per company. These are the signals "
                  "that make an email specific.",
     },
     "people": {
-        "label": "People — who decides",
+        "label": "People: who decides",
         "blurb": "Named humans and whether they're the one who can say yes.",
     },
     "verification": {
-        "label": "Contactability — can you reach them",
+        "label": "Contactability: can you reach them",
         "blurb": "Whether the address will actually deliver, and what to do when "
                  "it won't.",
     },

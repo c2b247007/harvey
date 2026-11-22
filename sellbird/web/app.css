@@ -1269,3 +1269,18 @@ dialog.modal::backdrop { background: rgb(0 0 0 / 0.45); }
   .section-head h1 { font-size: 1.375rem; }
   .pill { padding: 0 11px; }
 }
+
+/* Tables as stacked rows in an agent panel or on a phone: one block per
+   record, each value under its column's name (labelTables in app.js). */
+@container app (max-width: 640px) {
+  .table-card > table, .card.flush > table { min-width: 0; }
+  .inner table:not(.file-table) thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .inner table:not(.file-table) tbody tr { display: block; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .inner table:not(.file-table) tbody tr:last-child { border-bottom: 0; }
+  .inner table:not(.file-table) td { display: flex; gap: 12px; align-items: baseline; padding: 3px 0; border: 0; white-space: normal; max-width: none; text-align: left; overflow-wrap: anywhere; }
+  .inner table:not(.file-table) td:empty { display: none; }
+  .inner table:not(.file-table) td[data-label]::before { content: attr(data-label); flex: none; width: 96px; color: var(--fg3); font-size: var(--fs-caption); }
+  .inner table.clip td { max-width: none; overflow: visible; }
+  .file-table td { display: block; width: auto !important; white-space: normal !important; padding: 4px 14px; border: 0; }
+  .file-table tr { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); }
+}

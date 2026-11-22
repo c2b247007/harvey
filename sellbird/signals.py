@@ -25,8 +25,8 @@ SIGNAL_CATALOG: list[dict] = [
         "description": (
             "Where the business ranks organically for a '<service> <city>' "
             "search (the search phrase is stored with it). The most useful "
-            "prospecting signal there is: positions 11-30 are the sweet spot — "
-            "visible enough to be trying, not winning yet. Top 10 are already "
+            "prospecting signal there is: positions 11-30 are the sweet spot. "
+            "Visible enough to be trying, not winning yet. Top 10 are already "
             "winning (harder sell); 31+ are cheaper but less motivated. Rank "
             "depends on where the searcher stands: this is the view from the "
             "city centre."
@@ -43,7 +43,7 @@ SIGNAL_CATALOG: list[dict] = [
         "description": (
             "Holds one of the three map slots above the organic results for a "
             "'<service> <city>' search (value = slot 1-3; ads excluded). These "
-            "businesses are already winning local search — exclude them to "
+            "businesses are already winning local search. Exclude them to "
             "find the ones who aren't, or target them with something else."
         ),
         "category": "discovery",
@@ -70,7 +70,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "FOUND_IN_SERP",
         "label": "Discovered via search",
-        "description": "The business appeared in a target-market search — how Sellbird found it at all.",
+        "description": "The business appeared in a target-market search. This is how Sellbird found it at all.",
         "category": "discovery",
         "value_type": "text",
         "collector": "discover",
@@ -83,7 +83,7 @@ SIGNAL_CATALOG: list[dict] = [
         "label": "No website at all",
         "description": (
             "The business has a listing and a phone number but no site. If you "
-            "sell websites this is the highest-intent signal that exists — and "
+            "sell websites this is the highest-intent signal that exists. And "
             "it is a filter you can query for directly, not something you infer."
         ),
         "category": "discovery",
@@ -142,7 +142,7 @@ SIGNAL_CATALOG: list[dict] = [
             "An agency credited in the site footer ('Website by X'). High-value: "
             "it tells you who you're displacing, and every detection builds a "
             "roster you can target as a whole book of business. Only recorded "
-            "when the credit wording is explicit — a wrong incumbent is worse "
+            "when the credit wording is explicit. A wrong incumbent is worse "
             "than none."
         ),
         "category": "profile",
@@ -154,7 +154,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "RUNNING_GOOGLE_ADS",
         "label": "Running Google Ads",
-        "description": "Google Ads tag on the site — they are spending on acquisition TODAY. Strong budget signal.",
+        "description": "Google Ads tag on the site. They are spending on acquisition TODAY. Strong budget signal.",
         "category": "profile",
         "value_type": "bool",
         "collector": "profile",
@@ -164,7 +164,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "RUNNING_META_ADS",
         "label": "Running Meta/Facebook Ads",
-        "description": "Meta Pixel on the site — actively spending on paid social.",
+        "description": "Meta Pixel on the site. Actively spending on paid social.",
         "category": "profile",
         "value_type": "bool",
         "collector": "profile",
@@ -184,7 +184,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "NO_SCHEMA_MARKUP",
         "label": "Missing structured data",
-        "description": "No JSON-LD schema markup — a concrete, checkable SEO gap you can name in an email.",
+        "description": "No JSON-LD schema markup. A concrete, checkable SEO gap you can name in an email.",
         "category": "profile",
         "value_type": "bool",
         "collector": "profile",
@@ -194,7 +194,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "NO_ONLINE_BOOKING",
         "label": "No online booking/scheduling",
-        "description": "No booking or scheduling widget detected — leads have to phone in, so after-hours demand is lost.",
+        "description": "No booking or scheduling widget detected. Leads have to phone in, so after-hours demand is lost.",
         "category": "profile",
         "value_type": "bool",
         "collector": "profile",
@@ -214,7 +214,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "BLOG_STALE",
         "label": "Content gone stale",
-        "description": "No new content in a long time — content marketing started and abandoned.",
+        "description": "No new content in a long time. Content marketing started and abandoned.",
         "category": "profile",
         "value_type": "num",
         "collector": "profile",
@@ -224,7 +224,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "BLOCKS_AI_CRAWLERS",
         "label": "Blocks AI crawlers",
-        "description": "robots.txt blocks AI crawlers — they'll be invisible in AI search answers.",
+        "description": "robots.txt blocks AI crawlers. They'll be invisible in AI search answers.",
         "category": "profile",
         "value_type": "bool",
         "collector": "profile",
@@ -325,7 +325,7 @@ SIGNAL_CATALOG: list[dict] = [
         "description": (
             "The person was confirmed in an authoritative public registry "
             "(licensing board, professional registry). Also filters out "
-            "scraping artifacts — a name that matches nothing usually wasn't a person."
+            "scraping artifacts. A name that matches nothing usually wasn't a person."
         ),
         "category": "people",
         "value_type": "text",
@@ -375,7 +375,7 @@ SIGNAL_CATALOG: list[dict] = [
         "label": "Contact form available",
         "description": (
             "A contact form on the site. Worth knowing because it reaches the "
-            "business without needing an email address at all — and roughly "
+            "business without needing an email address at all. And roughly "
             "half of domains can't be email-verified."
         ),
         "category": "verification",
