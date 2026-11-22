@@ -3,8 +3,9 @@
 The dashboard accepts two tokens (dashboard_auth): yours, used by the
 dashboard, and the agent's, used by the MCP server (sellbird/mcp_server.py).
 With the agent's token a request may reach only the routes listed here:
-reading, estimating a cost, pausing sending, and suggesting, previewing
-and proposing a first-email offer for you to confirm. Everything else, every
+reading, estimating a cost, pausing sending, suggesting, previewing and
+proposing a first-email offer for you to confirm, moving a person's stage
+and recording a booked meeting (which can only stop email, never send it). Everything else, every
 approval, setting, key, purchase, resume or deletion, is yours alone and
 answers 403 to the agent.
 
@@ -48,6 +49,11 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", r"/api/offer/preview"),       # writes a sample, saves and sends nothing
     ("POST", r"/api/offer/propose"),       # you confirm it on Your company
     ("POST", r"/api/inboxes/[^/]+/pause"), # one inbox; resuming is yours too
+    ("GET", r"/api/calendar"),
+    ("GET", r"/api/pipeline"),
+    ("GET", r"/api/prospects/[^/]+/stage"),
+    ("POST", r"/api/prospects/[^/]+/stage"),    # where a person stands; sends nothing
+    ("POST", r"/api/prospects/[^/]+/meeting"),  # a booking only ever stops follow-ups
 )
 
 USER_ONLY = {

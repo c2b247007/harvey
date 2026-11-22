@@ -94,13 +94,44 @@ PERSONAL_SHAPE = f"""- 60 words at most, and aim for 30-50. Every word you cut r
 - Write the actual text (no merge variables: you know their name/company).
 - No sign-off and no name at the end: Sellbird adds the sender's first name.
 - Subject: lowercase, 2-5 words."""
-SEQUENCE_SHAPE = f"""- Email 1: One specific finding about them, what it costs them, then YOUR OFFER below as
-  the one question. {FIRST_EMAIL_MAX_WORDS} words at most, aim for 30-50. Don't name the product.
-- Email 2: 3 days later. A different angle: one concrete proof point or result from the
-  product info, then the offer again or a short call as the ask. {FOLLOW_UP_MAX_WORDS} words at most, aim for 20-40.
-- Email 3: 4 days after that. Close the loop in one or two plain sentences, and leave
-  the offer open. {BREAKUP_MAX_WORDS} words at most, aim for 10-20. No guilt.
-- No sign-off and no name at the end of any email: Sellbird adds the sender's first name."""
+DEFAULT_SEQUENCE_LENGTH = 3
+
+
+def follow_up_delay(step: int) -> int:
+    """Days to wait before sequence step ``step`` (1-based) when nobody set one."""
+    return 0 if step <= 1 else 3 if step == 2 else 4
+
+
+def sequence_shape(length: int = DEFAULT_SEQUENCE_LENGTH) -> str:
+    """The built-in "how" lines for a sequence of ``length`` emails.
+
+    There is no fixed length. Email 1 is the observation and the offer. Every
+    follow-up brings something new, never a nudge. From three emails up, the
+    last one closes the loop in a sentence or two."""
+    lines = [
+        "- Email 1: One specific finding about them, what it costs them, then YOUR OFFER below as\n"
+        f"  the one question. {FIRST_EMAIL_MAX_WORDS} words at most, aim for 30-50. Don't name the product."]
+    for step in range(2, length + 1):
+        when = "3 days later" if step == 2 else f"{follow_up_delay(step)} days after that"
+        if step == length and length >= 3:
+            lines.append(
+                f"- Email {step}: {when}. Close the loop in one or two plain sentences, and leave\n"
+                f"  the offer open. {BREAKUP_MAX_WORDS} words at most, aim for 10-20. No guilt.")
+        elif step == 2:
+            lines.append(
+                f"- Email {step}: {when}. A different angle: one concrete proof point or result from the\n"
+                "  product info, then the offer again or a short call as the ask. "
+                f"{FOLLOW_UP_MAX_WORDS} words at most, aim for 20-40.")
+        else:
+            lines.append(
+                f"- Email {step}: {when}. Something new again, never a nudge and never a repeat of an\n"
+                "  earlier email: another benefit, a short answer to a likely doubt, or one useful\n"
+                f"  fact. One ask. {FOLLOW_UP_MAX_WORDS} words at most, aim for 20-40.")
+    lines.append("- No sign-off and no name at the end of any email: Sellbird adds the sender's first name.")
+    return "\n".join(lines)
+
+
+SEQUENCE_SHAPE = sequence_shape()
 SEQUENCE_STYLE = """- Never be pushy or salesy. Be consultative and value-driven.
 - Subject lines: lowercase, 2-5 words."""
 # Why the Writer stopped: Today and `sellbird status` show it.
@@ -623,8 +654,17 @@ Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
             return None
         return {"subject": subject[:120], "body": body[:2000]}
 
+    def _sequence_length(self) -> int:
+        """How many emails a sequence has (writer.sequence_length; no upper limit)."""
+        try:
+            return max(1, int(getattr(getattr(self.config, "writer", None), "sequence_length",
+                                      DEFAULT_SEQUENCE_LENGTH)))
+        except (TypeError, ValueError):
+            return DEFAULT_SEQUENCE_LENGTH
+
     async def _write_sequence(self, prospects: list) -> list[EmailStep]:
-        """Ask the brain to write a 3-email sequence."""
+        """Ask the brain to write a sequence of writer.sequence_length emails."""
+        length = self._sequence_length()
         # Build context about the prospects
         prospect_summary = "\n".join(
             f"- {p.full_name()}, {p.title} at {p.company}"
@@ -682,20 +722,26 @@ Pricing: {self.config.product.pricing}"""
         prompt += operator_rules_block(rules)
         if rules:
             shape = (
-                "- Email 1 is the first touch, email 2 a follow-up 3 days later, email 3 a\n"
-                "  last one 4 days after that. Follow the OPERATOR'S EMAIL RULES above for\n"
+                "- Email 1 is the first touch" + (
+                    "." if length == 1 else ", email 2 a follow-up 3 days later." if length == 2 else
+                    f", email 2 a follow-up 3 days later, and each one after that 4 days after\n"
+                    f"  the one before, up to email {length}.") +
+                " Follow the OPERATOR'S EMAIL RULES above for\n"
                 "  each one's length, structure, what it says about the product, links and\n"
                 "  subject line.")
             style = ""
             strict = ("- Follow every rule in the STRICT EMAIL RULES above that the operator's\n"
                       "  rules don't replace.")
         else:
-            shape, style = SEQUENCE_SHAPE, "\n" + SEQUENCE_STYLE
+            shape, style = sequence_shape(length), "\n" + SEQUENCE_STYLE
             strict = "- Follow every rule in the STRICT EMAIL RULES above. No exceptions."
 
+        example = ",\n".join(
+            f'  {{"step": {n}, "subject": "...", "body": "...", "delay_days": {follow_up_delay(n)}}}'
+            for n in range(1, length + 1))
         prompt += f"""
 
-Write a 3-email cold outreach sequence for prospects like these:
+Write a cold outreach sequence of exactly {length} email{"" if length == 1 else "s"} for prospects like these:
 {fence(prospect_summary, "sample prospects")}
 
 {UNTRUSTED_RULE}
@@ -706,11 +752,9 @@ Requirements:
 {footer_rule(self.config, rules)}
 {strict}
 
-Return ONLY a JSON array (no markdown fences, no commentary):
+Return ONLY a JSON array of {length} item{"" if length == 1 else "s"} (no markdown fences, no commentary):
 [
-  {{"step": 1, "subject": "...", "body": "...", "delay_days": 0}},
-  {{"step": 2, "subject": "...", "body": "...", "delay_days": 3}},
-  {{"step": 3, "subject": "...", "body": "...", "delay_days": 4}}
+{example}
 ]"""
 
         result = await self.brain.think_json(
@@ -719,7 +763,7 @@ Return ONLY a JSON array (no markdown fences, no commentary):
         )
         # Read right after the call, before anything else can use the brain.
         self._no_reply = result is None and bool(getattr(self.brain, "last_reply_empty", False))
-        steps = self._parse_sequence(result)
+        steps = self._parse_sequence(result, length)
         if inbox_batch and any(
             PERSON_VAR.search(s.subject + s.body) for s in steps
         ):
@@ -733,7 +777,8 @@ Return ONLY a JSON array (no markdown fences, no commentary):
         )
         names = [n for p in prospects for n in _names(p)]
         for step, draft in zip(steps, polished):
-            kept = await self._keep_to_rules(draft, step=step.step, names=names)
+            kept = await self._keep_to_rules(draft, step=step.step, names=names,
+                                             last=step.step == len(steps))
             if kept is None:
                 # One template goes to the whole batch: a step that can't be
                 # brought within the rules fails the sequence, and the batch
@@ -742,7 +787,8 @@ Return ONLY a JSON array (no markdown fences, no commentary):
             step.subject, step.body = kept["subject"], kept["body"]
         return steps
 
-    async def _keep_to_rules(self, draft: dict, *, step: int, names=()) -> dict | None:
+    async def _keep_to_rules(self, draft: dict, *, step: int, names=(),
+                             last: bool | None = None) -> dict | None:
         """``draft`` tidied, signed and within Sellbird's writing rules
         (sellbird.email_style), after at most one rewrite; None when even
         the rewrite breaks them.
@@ -760,7 +806,7 @@ Return ONLY a JSON array (no markdown fences, no commentary):
 
         def problems(d: dict) -> list[str]:
             return style_problems(d["subject"], d["body"], kind="cold", step=step,
-                                  names=names, shape=shape)
+                                  names=names, shape=shape, last=last)
 
         draft = finish(draft)
         found = problems(draft)
@@ -821,7 +867,7 @@ Return ONLY a JSON object: {{"subject": "...", "body": "..."}}"""
             return None  # a merge variable appeared from nowhere, or all of them went
         return {**draft, "subject": subject[:120], "body": new_body[:2000]}
 
-    def _parse_sequence(self, result) -> list[EmailStep]:
+    def _parse_sequence(self, result, want: int = DEFAULT_SEQUENCE_LENGTH) -> list[EmailStep]:
         """Robustly coerce LLM output into a validated EmailStep list.
 
         Never raises. Tolerates a wrapper dict ({"emails": [...]}), missing
@@ -839,7 +885,8 @@ Return ONLY a JSON object: {{"subject": "...", "body": "..."}}"""
             return []
 
         steps: list[EmailStep] = []
-        for i, raw in enumerate(result[:5]):  # never accept absurdly long sequences
+        # As long as was asked for, and no longer: extra items are dropped.
+        for i, raw in enumerate(result[:max(1, want)]):
             if not isinstance(raw, dict):
                 logger.warning(f"Writer: Skipping non-dict step at index {i}.")
                 continue
@@ -849,9 +896,9 @@ Return ONLY a JSON object: {{"subject": "...", "body": "..."}}"""
                 logger.warning(f"Writer: Skipping step {i + 1} with empty subject/body.")
                 continue
             try:
-                delay = max(0, int(raw.get("delay_days", 3 if steps else 0)))
+                delay = max(0, int(raw.get("delay_days", follow_up_delay(len(steps) + 1))))
             except (TypeError, ValueError):
-                delay = 3 if steps else 0
+                delay = follow_up_delay(len(steps) + 1)
             try:
                 steps.append(
                     EmailStep(
@@ -867,8 +914,8 @@ Return ONLY a JSON object: {{"subject": "...", "body": "..."}}"""
         if steps and steps[0].delay_days != 0:
             steps[0].delay_days = 0  # first email always sends immediately
 
-        if len(steps) < 3:
-            logger.warning(f"Writer: Expected 3 emails, got {len(steps)}.")
+        if len(steps) < want:
+            logger.warning(f"Writer: Expected {want} emails, got {len(steps)}.")
         return steps
 
     def _group_prospects(self, prospects: list) -> dict[str, list]:

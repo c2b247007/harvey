@@ -154,6 +154,7 @@ compliance:
 # every email to 220 words and one link. skills/email_rules.md is gitignored.
 # writer:
 #   email_rules: "skills/email_rules.md"
+#   sequence_length: 3   # emails per sequence; no upper limit. Follow-ups stop on a reply, a booking or an opt-out.
 
 # When someone says yes to your offer, hand them to the system that delivers it:
 # one tool on its MCP server. See sellbird/handoff.py. Leave it out to handle it yourself.

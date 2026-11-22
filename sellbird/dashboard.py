@@ -1198,6 +1198,101 @@ async def get_prospects():
     return rows
 
 
+# ── Where each person stands (sellbird.deals) ──
+
+
+def _who(request: Request) -> str:
+    """"agent" when the coding agent made this call, else "you"."""
+    return "agent" if getattr(request.state, "principal", "user") == "agent" else "you"
+
+
+@app.get("/api/pipeline")
+async def get_pipeline():
+    """People by stage and by source, the stage and source names, and how
+    long a sequence is. The People place and the agent read the same thing."""
+    from sellbird import deals
+    try:
+        state = _state()
+        await state.init_db()
+        counts = await state.count_by_stage_and_source()
+        try:
+            from sellbird.config import load_config
+            length = max(1, int(load_config(str(_resolve_config_file())).writer.sequence_length))
+        except Exception:
+            length = 3
+        return {
+            **counts,
+            "stage_order": list(deals.STAGES), "stage_labels": deals.STAGE_LABELS,
+            "source_labels": deals.SOURCE_LABELS,
+            "sequence_length": length,
+            "stops_on": ["a reply", "a booked meeting", "an opt-out"],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/prospects/{prospect_id}/stage")
+async def get_prospect_stage(prospect_id: str):
+    """One person's stage, source and every stage change, newest first."""
+    state = _state()
+    await state.init_db()
+    rows = await query_db("SELECT stage, lead_source FROM prospects WHERE id = ?", (prospect_id,))
+    if not rows:
+        return _refuse("No such person.", 404)
+    return {"stage": rows[0]["stage"] or "new", "source": rows[0]["lead_source"] or "cold_email",
+            "history": await state.get_stage_events(prospect_id)}
+
+
+@app.post("/api/prospects/{prospect_id}/stage")
+async def set_prospect_stage(prospect_id: str, request: Request):
+    """Move one person to a stage: {"stage": "proposal", "reason": "sent the quote"}.
+    Moving someone sends nothing. Use /meeting for a booking, which also stops
+    their follow-ups."""
+    from sellbird import deals
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    stage = deals.clean_stage(body.get("stage")) if isinstance(body, dict) else ""
+    if not stage:
+        return _refuse("stage must be one of: " + ", ".join(deals.STAGES), 400)
+    state = _state()
+    await state.init_db()
+    if not await query_db("SELECT id FROM prospects WHERE id = ?", (prospect_id,)):
+        return _refuse("No such person.", 404)
+    change = await state.set_stage(prospect_id, stage, by=_who(request),
+                                   reason=str(body.get("reason") or "")[:300], manual=True)
+    return {"success": True, "stage": stage, "changed": change is not None, "change": change}
+
+
+@app.post("/api/prospects/{prospect_id}/meeting")
+async def record_prospect_meeting(prospect_id: str, request: Request):
+    """A meeting was booked with this person: {"starts_at": "2026-03-10T15:00", "note": "..."},
+    both optional. Their follow-ups stop, queued emails to them and to
+    colleagues at their company are cancelled, and they move to "meeting booked"."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    starts_at = str(body.get("starts_at") or "").strip()
+    if starts_at:
+        try:
+            starts_at = datetime.fromisoformat(starts_at.replace("Z", "+00:00")).isoformat()
+        except ValueError:
+            return _refuse("starts_at must be a date and time like 2026-03-10T15:00", 400)
+    state = _state()
+    await state.init_db()
+    rows = await query_db("SELECT status FROM prospects WHERE id = ?", (prospect_id,))
+    if not rows:
+        return _refuse("No such person.", 404)
+    if rows[0]["status"] == "opted_out":
+        return _refuse("They opted out, so no meeting is recorded for them.", 409)
+    meeting = await state.record_booking(prospect_id, starts_at=starts_at or None,
+                                         note=str(body.get("note") or ""), by=_who(request))
+    return {"success": True, "meeting": meeting}
+
+
 def _state():
     from sellbird.state import StateManager
     return StateManager(db_path=str(DB_PATH))
@@ -2001,11 +2096,28 @@ async def get_calendar(start: str = "", days: int = 7, tz: int = 0):
                 "WHERE date(created_at, ?) BETWEEN ? AND ? GROUP BY d",
                 (shift, shift, labels[0], labels[-1])):
             out[r["d"]]["replies"] = r["n"]
+        # Recorded bookings first (they may carry a time); then anyone marked
+        # as meeting before bookings were recorded.
         meetings = await query_db(
-            "SELECT id, first_name, last_name, email, title, company, updated_at FROM prospects "
-            "WHERE status = 'meeting' ORDER BY updated_at DESC LIMIT 50")
+            "SELECT p.id, p.first_name, p.last_name, p.email, p.title, p.company, "
+            "COALESCE(m.created_at, p.updated_at) AS updated_at, m.starts_at, m.note "
+            "FROM prospects p LEFT JOIN meetings m ON m.id = (SELECT id FROM meetings "
+            "  WHERE prospect_id = p.id AND status = 'booked' ORDER BY created_at DESC LIMIT 1) "
+            "WHERE p.stage = 'meeting_booked' OR p.status = 'meeting' "
+            "ORDER BY COALESCE(m.starts_at, m.created_at, p.updated_at) DESC LIMIT 50")
+        for m in meetings:
+            when = (m.get("starts_at") or "")[:10]
+            m["day"] = when if when in out else ""
+        booking_url = ""
+        try:
+            from sellbird.booking import _valid_url
+            from sellbird.config import load_config
+            booking_url = _valid_url(load_config(str(_resolve_config_file())).product.offer.booking_url)
+        except Exception:
+            booking_url = ""
         paused = await query_db("SELECT value FROM settings WHERE key = 'sending_paused'")
         return {"days": [out[day] for day in labels], "meetings": meetings,
+                "booking_url": booking_url,
                 "paused": (paused[0]["value"] if paused else "") or ""}
     except Exception as e:
         return {"error": str(e)}

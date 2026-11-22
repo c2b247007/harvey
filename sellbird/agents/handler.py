@@ -14,7 +14,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 
-from sellbird.booking import booking_instruction
+from sellbird.booking import booking_instruction, said_they_booked
 from sellbird.brain import Brain, BrainUnavailable
 from sellbird.config import (
     DEFAULT_OPT_OUT_LINE, PREVIOUS_DEFAULT_OPT_OUT_LINE, SellbirdConfig, EnvConfig, compliance_of, legacy_sending_held,
@@ -957,6 +957,15 @@ class Handler:
             await self.state.update_conversation(convo.id, mailbox_id=reply_meta["mailbox_id"])
         if convo.stage != old_stage:
             logger.info(f"Handler: Stage for {lead_email}: {old_stage} -> {convo.stage}")
+
+        # 2d. They wrote that they booked a time: record it, which stops every
+        # follow-up to them and to colleagues at their company.
+        if intent not in ("unsubscribe", "not_interested") and said_they_booked(reply_text):
+            booked = await self.state.record_booking(
+                prospect.id, note="They wrote that they booked a time.", by="sellbird")
+            if booked:
+                logger.info(f"Handler: {lead_email} booked a meeting; "
+                            f"{booked['cancelled']} queued email(s) cancelled.")
 
         # 3. Route based on intent
         if intent == "unsubscribe":

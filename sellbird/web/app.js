@@ -277,6 +277,9 @@ function actionText(a) {
     case 'manual_send': return 'You marked a contact as emailed by hand';
     case 'manual_send_undone': return 'You undid a hand-sent mark';
     case 'outbox_edited': return 'You edited a draft';
+    case 'stage_change': return (d.by === 'sellbird' ? 'Moved ' : (d.by === 'agent' ? 'Your agent moved ' : 'You moved ')) +
+      (who || 'someone') + ' to ' + escHtml(String(d.to || '').replace(/_/g, ' ')) + (d.reason ? ' · ' + escHtml(d.reason) : '');
+    case 'meeting_booked': return 'Meeting booked' + (d.cancelled ? ' · ' + n(d.cancelled, 'queued email', 'queued emails') + ' cancelled' : '');
     case 'conversation_status':
       return d.to === 'closed' ? 'You closed a conversation'
         : d.from === 'needs_human' ? 'You handed a conversation back to Sellbird' : 'You reopened a conversation';
@@ -2290,20 +2293,26 @@ function fbCampaign(i) {
 
 // Search and the stage filter live outside the list, so the 15-second refresh
 // re-renders rows without losing what you typed.
-let _contactQuery = '', _contactFilter = 'all';
-const CONTACT_FILTERS = [
-  ['all', 'Everyone', null],
-  ['todo', 'To write', ['new', 'queued']],
-  ['contacted', 'Contacted', ['contacted']],
-  ['replied', 'Replied', ['replied', 'interested', 'meeting']],
-  ['closed', 'Closed out', null],
-];
+let _contactQuery = '', _contactFilter = 'all', _contactSource = 'all';
+let _pipeline = null;   // /api/pipeline: stage and source names, sequence length
+const STAGE_FALLBACK = {new: 'New', talking: 'Talking', meeting_booked: 'Meeting booked',
+                        proposal: 'Proposal', won: 'Won', lost: 'Lost'};
+const STAGE_TONES = {talking: 'acc', meeting_booked: 'good', proposal: 'wait', won: 'good', lost: ''};
+
+function stageNames() { return (_pipeline && _pipeline.stage_labels) || STAGE_FALLBACK; }
+function stageOf(p) { return own(stageNames(), p.stage) ? p.stage : 'new'; }
+function sourceOf(p) { return p.lead_source || 'cold_email'; }
+function sourceName(key) {
+  const names = (_pipeline && _pipeline.source_labels) || {};
+  return own(names, key) || String(key || '').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+}
 
 async function loadProspects() {
   const el = document.getElementById('prospects-table');
-  const data = await api('/api/prospects');
+  const [data, pipe] = await Promise.all([api('/api/prospects'), api('/api/pipeline')]);
   if (!data) { el.innerHTML = offlineState(); return; }
   _prospects = data;
+  if (pipe && !pipe.error) _pipeline = pipe;
   if (!data.length) {
     el.innerHTML = emptyState(icon('contacts'), 'No one here yet',
       'Sellbird hasn\'t found any prospects. Once it\'s running, the Scout agent searches the web for people matching your ideal customer profile in <b>sellbird.yaml</b>.');
@@ -2315,6 +2324,7 @@ async function loadProspects() {
       '<label class="search">' + icon('discover') +
         '<input class="form-input" id="contact-search" type="search" placeholder="Search name, company, email" ' +
         'aria-label="Search people" oninput="_contactQuery=this.value;renderContacts()"></label>' +
+      '<div class="chips" id="contact-sources" role="group" aria-label="Filter by source"></div>' +
       '</div><div id="contact-rows"></div>';
     // A rebuild after an offline blip must show the search still applied.
     document.getElementById('contact-search').value = _contactQuery;
@@ -2323,14 +2333,47 @@ async function loadProspects() {
 }
 
 function contactMatches(p, f) {
-  const known = ['new', 'queued', 'contacted', 'replied', 'interested', 'meeting'];
-  if (f === 'all') return true;
-  if (f === 'closed') return !known.includes(p.status);
-  const hit = CONTACT_FILTERS.find(x => x[0] === f);
-  return !!(hit && hit[2] && hit[2].includes(p.status));
+  return f === 'all' || stageOf(p) === f;
 }
 
 function setContactFilter(f) { _contactFilter = f; renderContacts(); }
+function setContactSource(s) { _contactSource = s; renderContacts(); }
+
+// Move someone to another stage. It sends nothing; a booking goes through
+// markMeeting, which also stops their follow-ups.
+async function setStage(i, stage) {
+  const p = _prospects[i];
+  if (!p || !stage) return;
+  if (stage === 'meeting_booked') { markMeeting(i); return; }
+  const res = await api('/api/prospects/' + encodeURIComponent(p.id) + '/stage', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({stage}),
+  });
+  if (res && res.success) showToast('Moved to ' + (own(stageNames(), stage) || stage) + '.', 'success');
+  else showToast(failMsg(res, 'Could not move them.'), 'error');
+  loadProspects();
+}
+
+async function markMeeting(i) {
+  const p = _prospects[i];
+  if (!p) return;
+  const when = prompt('A meeting is booked with ' + ([p.first_name, p.last_name].filter(Boolean).join(' ') || p.email) +
+    '. Their follow-ups stop.\n\nWhen is it? Optional, for example 2026-03-10 15:00', '');
+  if (when === null) { loadProspects(); return; }
+  let starts = '';
+  if (when.trim()) {
+    const dt = new Date(when.trim().replace(' ', 'T'));
+    if (isNaN(dt)) { showToast('That time was not understood. Try 2026-03-10 15:00.', 'error'); return; }
+    starts = dt.toISOString();
+  }
+  const res = await api('/api/prospects/' + encodeURIComponent(p.id) + '/meeting', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({starts_at: starts}),
+  });
+  if (res && res.success) {
+    const n = (res.meeting && res.meeting.cancelled) || 0;
+    showToast('Meeting recorded.' + (n ? ' ' + n + ' queued email' + (n === 1 ? '' : 's') + ' cancelled.' : ' Follow-ups stop.'), 'success');
+  } else showToast(failMsg(res, 'Could not record the meeting.'), 'error');
+  loadProspects();
+}
 
 // One person as a row: who they are, where they stand, what you can do.
 function contactRow(p, i) {
@@ -2351,8 +2394,15 @@ function contactRow(p, i) {
       (role ? '<p class="s">' + role + '</p>' : '') +
       (reach ? '<p class="s">' + reach + '</p>' : '') +
       '<p class="time">' + meta + '</p></div>' +
+    '<span class="tag' + (STAGE_TONES[stageOf(p)] ? ' ' + STAGE_TONES[stageOf(p)] : '') + '" title="Stage">' +
+      escHtml(stageNames()[stageOf(p)]) + '</span>' +
+    '<span class="tag" title="Where they came from">' + escHtml(sourceName(sourceOf(p))) + '</span>' +
     badge(p.status) +
     '<div class="row-acts">' + optOut +
+      (p.status === 'opted_out' ? '' :
+        '<select class="form-input stage-move" aria-label="Move ' + name + ' to a stage" onchange="setStage(' + i + ',this.value)">' +
+        '<option value="">Move to</option>' + Object.keys(stageNames()).filter(k => k !== stageOf(p)).map(k =>
+          '<option value="' + k + '">' + escHtml(stageNames()[k]) + '</option>').join('') + '</select>') +
       '<button class="btn btn-ghost btn-sm" onclick="fbProspect(' + i + ')" ' +
       'title="Tell Sellbird something before it writes to this person">Feedback</button></div>' +
     '</div>' +
@@ -2367,13 +2417,21 @@ function renderContacts() {
   if (!rowsEl) return;
   const q = _contactQuery.trim().toLowerCase();
   const found = p => !q || [p.first_name, p.last_name, p.company, p.email, p.title].join(' ').toLowerCase().includes(q);
-  filtersEl.innerHTML = CONTACT_FILTERS.map(f =>
+  const inSource = p => _contactSource === 'all' || sourceOf(p) === _contactSource;
+  const stages = [['all', 'Everyone']].concat(Object.keys(stageNames()).map(k => [k, stageNames()[k]]));
+  filtersEl.innerHTML = stages.map(f =>
     '<button type="button" class="stage' + (f[0] === _contactFilter ? ' on' : '') + '" aria-pressed="' + (f[0] === _contactFilter) +
       '" onclick="setContactFilter(\'' + f[0] + '\')"><b>' +
-      _prospects.filter(p => contactMatches(p, f[0]) && found(p)).length + '</b><span>' + f[1] + '</span></button>'
+      _prospects.filter(p => contactMatches(p, f[0]) && found(p) && inSource(p)).length + '</b><span>' + escHtml(f[1]) + '</span></button>'
   ).join('');
+  const sources = [...new Set(_prospects.map(sourceOf))].sort();
+  const sourcesEl = document.getElementById('contact-sources');
+  if (sourcesEl) sourcesEl.innerHTML = [['all', 'All sources']].concat(sources.map(s => [s, sourceName(s)])).map(s =>
+    '<button type="button" class="chip-btn' + (s[0] === _contactSource ? ' on' : '') + '" aria-pressed="' + (s[0] === _contactSource) +
+      '" onclick="setContactSource(' + jsq(s[0]) + ')">' + escHtml(s[1]) + ' <b>' +
+      _prospects.filter(p => (s[0] === 'all' || sourceOf(p) === s[0]) && found(p)).length + '</b></button>').join('');
 
-  const rows = _prospects.map((p, i) => [p, i]).filter(([p]) => contactMatches(p, _contactFilter) && found(p));
+  const rows = _prospects.map((p, i) => [p, i]).filter(([p]) => contactMatches(p, _contactFilter) && found(p) && inSource(p));
   if (!rows.length) {
     rowsEl.innerHTML = '<div class="w">' + emptyState(icon('discover'), 'No matches',
       'Nothing matches that search and filter.') + '</div>';
@@ -2583,7 +2641,12 @@ async function loadCampaigns() {
       'The Writer agent hasn\'t drafted any sequences. It kicks in automatically once Sellbird has scored prospects to write for.');
     return;
   }
-  let html = '';
+  const pipe = await api('/api/pipeline');
+  if (pipe && !pipe.error) _pipeline = pipe;
+  const len = (_pipeline && _pipeline.sequence_length) || 3;
+  let html = '<p class="ask" style="margin:0 0 16px">New sequences are <b>' + len + ' email' + (len === 1 ? '' : 's') +
+    '</b> long. There is no fixed limit: set <code>writer.sequence_length</code> in sellbird.yaml, or ask your coding agent. ' +
+    'Follow-ups to a person stop on a reply, a booked meeting or an opt-out.</p>';
   data.forEach((c, i) => {
     let stepsHtml = '';
     (c.sequence || []).forEach((step, s) => {
@@ -3253,6 +3316,11 @@ function calendarHtml(data, today) {
     else if (d.replies) evs.push('<button type="button" class="ev sent" onclick="goTab(\'conversations\')">' +
       '<span class="time">Replies</span><span class="t">' + n(d.replies, 'reply', 'replies') + '</span>' +
       '<span class="s">New conversations</span></button>');
+    (data.meetings || []).filter(m => m.day === d.date).forEach(m => evs.unshift(
+      '<button type="button" class="ev meet" onclick="goTab(\'prospects\')">' +
+      '<span class="time">' + clock(m.starts_at) + '</span>' +
+      '<span class="t">' + (escHtml([m.first_name, m.last_name].filter(Boolean).join(' ')) || escHtml(m.email)) + '</span>' +
+      '<span class="s">Meeting' + (m.company ? ', ' + escHtml(m.company) : '') + '</span></button>'));
     const cls = d.date === today ? ' today' : d.date < today ? ' past' : '';
     return '<div class="day' + cls + '"><div class="day-h"><b>' +
       dt.toLocaleDateString('en-US', {weekday: 'short'}) + ' ' + dt.getDate() + '</b><span>' +
@@ -3264,11 +3332,17 @@ function calendarHtml(data, today) {
     ? meetings.map(m => '<div class="row"><span class="who" aria-hidden="true">' + initials(m.first_name, m.last_name) + '</span>' +
         '<div class="grow"><p class="t">' + (escHtml([m.first_name, m.last_name].filter(Boolean).join(' ')) || escHtml(m.email)) + '</p>' +
         '<p class="s">' + escHtml([m.title, m.company].filter(Boolean).join(', ')) + '</p></div>' +
-        '<span class="time">' + relTime(m.updated_at) + '</span>' +
-        '<span class="tag good">Meeting</span>' +
-        '<button class="btn btn-secondary btn-sm rowbtn" onclick="goTab(\'conversations\')">Open</button></div>').join('')
-    : '<div class="row"><div class="grow"><p class="t">No meetings agreed yet</p>' +
-      '<p class="s">When a reply turns into a meeting, the person shows up here.</p></div></div>';
+        '<span class="time">' + (m.starts_at ? escHtml(formatDate(m.starts_at)) : 'Booked ' + relTime(m.updated_at)) + '</span>' +
+        '<span class="tag good">' + (m.starts_at ? 'Meeting' : 'Booked, no time given') + '</span>' +
+        '<button class="btn btn-secondary btn-sm rowbtn" onclick="goTab(\'prospects\')">Open</button></div>').join('')
+    : '<div class="row"><div class="grow"><p class="t">No meetings booked yet</p>' +
+      '<p class="s">When someone books, mark it on People or let your agent record it. Their follow-ups stop.</p></div></div>';
+  const link = safeHref(data.booking_url);
+  const linkRow = '<div class="row"><div class="grow"><p class="t">Your booking link</p><p class="s">' +
+    (link ? '<a href="' + link + '" target="_blank" rel="noopener noreferrer">' + escHtml(data.booking_url) + '</a>. ' +
+            'Replies to interested people offer it.'
+          : 'None set. Add <code>product.offer.booking_url</code> to sellbird.yaml and replies will offer it.') +
+    '</p></div></div>';
   return (data.paused ? '<div class="banner bad">' + icon('alert') + '<div><b>Sending is paused</b><p>' +
       escHtml(data.paused) + '. Scheduled mail stays queued until you resume it in the Outbox.</p></div></div>' : '') +
     '<div class="cal-bar"><b>' + escHtml(range) + '</b>' +
@@ -3277,9 +3351,11 @@ function calendarHtml(data, today) {
       '<button class="btn btn-secondary btn-sm" onclick="calMove(1)">Later</button></div>' +
     '<div class="week">' + week + '</div>' +
     '<div class="keyrow"><span><i class="dot" style="background:var(--wait)"></i>Waiting for you</span>' +
-      '<span><i class="dot d1"></i>Scheduled</span><span><i class="dot" style="background:var(--good)"></i>Sent</span></div>' +
-    '<div class="secs" style="margin-top:24px"><section class="sec"><h2>Meetings agreed</h2><div class="w">' + meetRows +
-      '<p class="w-f">Sellbird records that a meeting was agreed. The time lives on your own calendar.</p></div></section></div>';
+      '<span><i class="dot d1"></i>Scheduled</span><span><i class="dot" style="background:var(--good)"></i>Sent</span>' +
+      '<span><i class="dot d4"></i>Meeting</span></div>' +
+    '<div class="secs" style="margin-top:24px"><section class="sec"><h2>Meetings booked</h2><div class="w">' + meetRows +
+      '<p class="w-f">A booking stops that person\'s follow-ups. The meeting itself lives on your own calendar.</p></div></section>' +
+      '<section class="sec"><h2>Booking</h2><div class="w">' + linkRow + '</div></section></div>';
 }
 
 // ── Numbers: what the work brought in ──
@@ -3312,11 +3388,12 @@ async function loadNumbers() {
   const el = document.getElementById('numbers-body');
   if (!el) return;
   const weeks = _numbersWeeks;
-  const [trend, stats, campaigns, inboxes] = await Promise.all([
+  const [trend, stats, campaigns, inboxes, pipe] = await Promise.all([
     api('/api/trend?days=' + weeks * 7 + '&tz=' + -new Date().getTimezoneOffset()),
-    api('/api/stats'), api('/api/campaigns'), api('/api/inboxes'),
+    api('/api/stats'), api('/api/campaigns'), api('/api/inboxes'), api('/api/pipeline'),
   ]);
   if (!trend || !Array.isArray(trend.days)) { el.innerHTML = offlineState(); return; }
+  if (pipe && !pipe.error) _pipeline = pipe;
   el.innerHTML = numbersHtml(weeks, trend, stats, campaigns, inboxes);
 }
 
@@ -3336,9 +3413,10 @@ function numbersHtml(weeks, trend, stats, campaigns, inboxes) {
       stat('Emails sent', sent, 'approved and sent') +
       stat('Replies', replies, 'new conversations') +
       stat('Reply rate', rate, sent ? 'replies per email sent' : 'nothing sent yet') +
-      stat('Ready to meet', pipe.ready_to_meet || 0, 'right now') +
+      stat('Meetings booked', ((_pipeline && _pipeline.stages) || {}).meeting_booked || 0, 'right now') +
     '</div>';
 
+  const total = (stats && stats.prospects && stats.prospects.total) || 0;
   const camps = Array.isArray(campaigns) ? campaigns : [];
   const campRows = camps.map(c => {
     const rs = c.recipients || [];
@@ -3351,9 +3429,13 @@ function numbersHtml(weeks, trend, stats, campaigns, inboxes) {
       '<div class="hbar"><i style="width:' + Math.min(100, pct * 4) + '%"></i></div>' +
       '<span class="tag' + (pct >= 5 ? ' good' : '') + '">' + pct + '%</span></div>';
   }).join('');
-  const total = (stats && stats.prospects && stats.prospects.total) || 0;
-  const stages = [['To write', pipe.to_write], ['Contacted', pipe.contacted], ['Replied', pipe.replied],
-                  ['Interested', pipe.interested], ['Ready to meet', pipe.ready_to_meet], ['Closed out', pipe.closed_out]];
+  const byStage = (_pipeline && _pipeline.stages) || {};
+  const stages = Object.keys(stageNames()).map(k => [escHtml(stageNames()[k]), byStage[k] || 0]);
+  const bySource = (_pipeline && _pipeline.sources) || {};
+  const sourceRows = Object.keys(bySource).sort((a, b) => bySource[b] - bySource[a]).map(k =>
+    '<div class="row"><div class="grow"><p class="t">' + escHtml(sourceName(k)) + '</p></div>' +
+    '<div class="hbar"><i style="width:' + (total ? Math.round(100 * bySource[k] / total) : 0) + '%"></i></div>' +
+    '<span class="tag">' + bySource[k] + '</span></div>').join('');
   const stageRows = stages.map(s => '<div class="row"><div class="grow"><p class="t">' + s[0] + '</p></div>' +
     '<div class="hbar"><i style="width:' + (total ? Math.round(100 * (s[1] || 0) / total) : 0) + '%"></i></div>' +
     '<span class="tag">' + (s[1] || 0) + '</span></div>').join('');
@@ -3374,6 +3456,8 @@ function numbersHtml(weeks, trend, stats, campaigns, inboxes) {
       '<p class="w-f">Share of people emailed who replied.</p></div></section>' +
     '<section class="sec"><h2>Where people stand</h2><div class="w">' + stageRows +
       '<p class="w-f">' + total + (total === 1 ? ' person' : ' people') + ' in all.</p></div></section>' +
+    (sourceRows ? '<section class="sec"><h2>By source</h2><div class="w">' + sourceRows +
+      '<p class="w-f">Where each person came from.</p></div></section>' : '') +
     (boxRows ? '<section class="sec"><h2>By inbox, today</h2><div class="w">' + boxRows + '</div></section>' : '') +
     '</div>' +
     '<p class="ask">Ask your coding agent: <b>"Which Sellbird campaign has the best reply rate, and why?"</b></p>';

@@ -335,6 +335,8 @@ button.row { width: 100%; border: 0; background: transparent; color: inherit; fo
 .s { color: var(--fg2); font-size: var(--fs-ui); overflow-wrap: anywhere; }
 .time { color: var(--fg3); font-size: var(--fs-caption); white-space: nowrap; }
 .rowbtn { flex: none; }
+select.stage-move { width: auto; min-height: 36px; font-size: var(--fs-ui); border-radius: var(--r-sm); border-color: var(--line2); color: var(--fg2); }
+.toolbar .chips { flex: 1 1 auto; }
 .row .chev { color: var(--fg3); }
 .grow > .tag { margin-top: 6px; }
 .row-acts { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }

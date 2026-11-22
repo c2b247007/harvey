@@ -302,6 +302,39 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
         return await guarded(lambda c: c.post("/api/discover/estimate", body))
 
     @server.tool()
+    async def pipeline() -> dict:
+        """People by stage (new, talking, meeting_booked, proposal, won, lost) and by
+        source, plus how many emails a sequence has and what stops it."""
+        return await read("/api/pipeline")
+
+    @server.tool()
+    async def calendar(start: str = "", days: int = 7) -> dict:
+        """What is due to send day by day (waiting for approval, scheduled, sent),
+        and the meetings booked. `start` is YYYY-MM-DD, default today."""
+        return await read(f"/api/calendar?start={quote(start, safe='')}&days={int(days)}")
+
+    @server.tool()
+    async def person_stage(prospect_id: str) -> dict:
+        """One person's stage, source and every stage change so far."""
+        return await read(f"/api/prospects/{quote(prospect_id, safe='')}/stage")
+
+    @server.tool()
+    async def person_set_stage(prospect_id: str, stage: str, reason: str = "") -> dict:
+        """Move one person to a stage: new, talking, meeting_booked, proposal, won or
+        lost. Say why in `reason` (the user sees it in Activity). Sends nothing. For a
+        booking use meeting_record, which also stops their follow-ups."""
+        return await guarded(lambda c: c.post(
+            f"/api/prospects/{quote(prospect_id, safe='')}/stage", {"stage": stage, "reason": reason}))
+
+    @server.tool()
+    async def meeting_record(prospect_id: str, starts_at: str = "", note: str = "") -> dict:
+        """Record that a meeting was booked with someone. Their follow-ups stop, emails
+        queued for them and colleagues at their company are cancelled, and they move to
+        meeting_booked. `starts_at` is optional (2026-03-10T15:00)."""
+        return await guarded(lambda c: c.post(
+            f"/api/prospects/{quote(prospect_id, safe='')}/meeting", {"starts_at": starts_at, "note": note}))
+
+    @server.tool()
     async def sending_status() -> dict:
         """Whether sending is paused and why, and whether email waits for approval."""
         async def call(c: CoreClient) -> dict:

@@ -9,6 +9,21 @@ minor versions can still change behaviour.
 
 ### Changed
 
+- **Sequences have no fixed length.** `writer.sequence_length` (default 3) sets
+  how many emails a sequence has, with no upper limit; the Writer used to ask
+  for exactly three and drop anything past five. Follow-ups to a person stop
+  on a reply, a booked meeting or an opt-out.
+- **Every person has a stage and a source.** Stages are new, talking, meeting
+  booked, proposal, won and lost. Sellbird moves people forward as things
+  happen and never backwards; you or your agent set proposal and won. Source
+  says where they came from (cold email, import and so on). People, Numbers
+  and the new `/api/pipeline` show both.
+- **A booking stops follow-ups.** Mark a meeting on People, let your agent
+  record it (`meeting_record`), or let Sellbird catch a reply that says "I
+  booked a time": queued emails to that person and their colleagues are
+  cancelled and they move to meeting booked. Calendar shows timed meetings
+  and your booking link.
+
 - **The dashboard has a new frame.** The 15-tab sidebar is replaced by a dock
   with six places (Today, Inbox, People, Calendar, Numbers, Set up), in the
   Pale Harbor colours with the real Sellbird logo. Every earlier tab is still

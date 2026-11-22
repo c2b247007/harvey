@@ -136,8 +136,11 @@ def test_the_users_token_still_reaches_everything(core):
 
 def test_the_allowlist_is_reads_estimates_pause_and_offer_proposals_only():
     # The offer routes write a sample or a proposal; none changes what's sent.
+    # Moving a person's stage sends nothing, and recording a booking can only
+    # stop email: neither lets the agent cause a send.
     allowed_posts = ("/api/discover/estimate", "/api/sending/pause", "/api/inboxes/[^/]+/pause",
-                     "/api/offer/suggest", "/api/offer/preview", "/api/offer/propose")
+                     "/api/offer/suggest", "/api/offer/preview", "/api/offer/propose",
+                     "/api/prospects/[^/]+/stage", "/api/prospects/[^/]+/meeting")
     for method, pattern in agent_policy.AGENT_ROUTES:
         assert method == "GET" or pattern in allowed_posts
     assert not agent_policy.agent_may("POST", "/api/offer")

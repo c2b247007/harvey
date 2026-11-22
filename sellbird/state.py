@@ -29,6 +29,7 @@ from sellbird.startups import parse_funding
 DB_PATH = PROJECT_ROOT / "data" / "sellbird.db"
 
 # How long (seconds) a connection waits on a locked database before failing.
+from sellbird import deals  # noqa: E402
 from sellbird import storage  # noqa: E402
 from sellbird.storage import BUSY_TIMEOUT_SECONDS  # noqa: E402,F401 (re-exported)
 
@@ -53,6 +54,8 @@ SENDS_HELD_KEY = "sends_held"
 # Outbox error on a sequence email cancelled because someone else at the
 # company replied: one answer from a company stops the cold email to all of it.
 COLLEAGUE_REPLIED = "a colleague replied"
+# Why queued emails were cancelled when a meeting was booked.
+MEETING_BOOKED = "meeting booked"
 # Setting set (to their name) when someone's reply stops their company.
 # An out-of-office or a "wrong person" doesn't set it.
 COMPANY_STOP_KEY = "company_stop:"
@@ -558,6 +561,28 @@ MIGRATIONS: list[str] = [
     ALTER TABLE conversations ADD COLUMN mailbox_id TEXT DEFAULT '';
     CREATE INDEX IF NOT EXISTS idx_outbox_mailbox_sent ON outbox(mailbox_id, status, sent_at);
     """,
+    # ── v17: where each person stands, and where they came from ──
+    # stage is one of sellbird.deals.STAGES and lead_source one of its
+    # SOURCES. Every stage change is kept in stage_events, with who made it.
+    # A meeting is a row of its own: the time is optional, because a booking
+    # made on your own calendar link may only be known as "they booked".
+    """
+    ALTER TABLE prospects ADD COLUMN stage TEXT DEFAULT 'new';
+    ALTER TABLE prospects ADD COLUMN stage_changed_at TIMESTAMP;
+    ALTER TABLE prospects ADD COLUMN lead_source TEXT DEFAULT 'cold_email';
+    UPDATE prospects SET stage = 'talking' WHERE status IN ('replied', 'interested', 'accepted_offer');
+    UPDATE prospects SET stage = 'meeting_booked' WHERE status = 'meeting';
+    UPDATE prospects SET stage = 'lost' WHERE status IN ('not_interested', 'opted_out', 'lost', 'bounced');
+    CREATE INDEX IF NOT EXISTS idx_prospects_stage ON prospects(stage);
+    CREATE TABLE IF NOT EXISTS stage_events (id TEXT PRIMARY KEY, prospect_id TEXT NOT NULL,
+      from_stage TEXT DEFAULT '', to_stage TEXT NOT NULL, changed_by TEXT DEFAULT 'sellbird',
+      reason TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_stage_events_prospect ON stage_events(prospect_id, created_at);
+    CREATE TABLE IF NOT EXISTS meetings (id TEXT PRIMARY KEY, prospect_id TEXT NOT NULL,
+      starts_at TIMESTAMP, note TEXT DEFAULT '', recorded_by TEXT DEFAULT 'you',
+      status TEXT DEFAULT 'booked', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_meetings_prospect ON meetings(prospect_id);
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -887,10 +912,138 @@ class StateManager:
         async with self._connect() as db:
             await db.execute(
                 "UPDATE prospects SET status = ?, updated_at = ? "
-                "WHERE id = ? AND status IS NOT 'opted_out'",
-                (status, _utcnow().isoformat(), prospect_id),
+                "WHERE id = ? AND status IS NOT 'opted_out' "
+                # A booked meeting outlives a later reply: they stay booked.
+                "AND NOT (status = 'meeting' AND ? IN ('new', 'queued', 'contacted', 'replied', 'interested'))",
+                (status, _utcnow().isoformat(), prospect_id, status),
             )
             await db.commit()
+        # A status that says where they stand moves their stage with it.
+        implied = deals.STAGE_FOR_STATUS.get(status)
+        if implied:
+            await self.set_stage(prospect_id, implied, reason=f"status: {status}")
+
+    # ── Stages and meetings (sellbird.deals) ──
+
+    async def set_stage(self, prospect_id: str, stage: str, *, by: str = "sellbird",
+                        reason: str = "", manual: bool = False) -> dict | None:
+        """Move one person to ``stage``. Returns the change, or None when
+        nothing changed.
+
+        Sellbird's own moves (``manual`` False) only go forward and never
+        leave "won" or "lost"; a person, or their agent, may set any stage."""
+        stage = deals.clean_stage(stage)
+        if not stage:
+            return None
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT stage, email, first_name, last_name, company, lead_source "
+                    "FROM prospects WHERE id = ?", (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
+                return None
+            current = deals.clean_stage(row["stage"]) or "new"
+            if current == stage:
+                return None
+            if not manual and not deals.automatic_move_allowed(current, stage):
+                return None
+            now = _utcnow().isoformat()
+            await db.execute(
+                "UPDATE prospects SET stage = ?, stage_changed_at = ?, updated_at = ? WHERE id = ?",
+                (stage, now, now, prospect_id))
+            await db.execute(
+                "INSERT INTO stage_events (id, prospect_id, from_stage, to_stage, changed_by, reason) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (_new_id(), prospect_id, current, stage, by, reason[:300]))
+            await db.execute(
+                "INSERT INTO actions (id, action_type, agent, details_json) VALUES (?, ?, ?, ?)",
+                (_new_id(), "stage_change", "user" if manual else "main", json.dumps({
+                    "prospect_id": prospect_id, "prospect_email": row["email"],
+                    "from": current, "to": stage, "by": by, "reason": reason[:300]})))
+            await db.commit()
+        return {"prospect_id": prospect_id, "email": row["email"],
+                "name": " ".join(x for x in (row["first_name"], row["last_name"]) if x),
+                "company": row["company"], "source": row["lead_source"] or deals.DEFAULT_SOURCE,
+                "from": current, "to": stage, "by": by, "reason": reason}
+
+    async def get_stage_events(self, prospect_id: str, limit: int = 50) -> list[dict]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT * FROM stage_events WHERE prospect_id = ? "
+                    "ORDER BY created_at DESC, rowid DESC LIMIT ?", (prospect_id, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def set_lead_source(self, prospect_id: str, source: str) -> str:
+        source = deals.clean_source(source)
+        async with self._connect() as db:
+            await db.execute("UPDATE prospects SET lead_source = ?, updated_at = ? WHERE id = ?",
+                             (source, _utcnow().isoformat(), prospect_id))
+            await db.commit()
+        return source
+
+    async def record_booking(self, prospect_id: str, *, starts_at: str | None = None,
+                             note: str = "", by: str = "you") -> dict | None:
+        """A meeting was booked with this person. Their follow-ups stop, and
+        so do the sequence emails queued for colleagues at their company;
+        they move to "meeting booked".
+
+        Returns the meeting with how many queued emails were cancelled, or
+        None when there is no such person or they have opted out (an opt-out
+        is never overwritten)."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT status FROM prospects WHERE id = ?",
+                                  (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+        if row is None or row["status"] == "opted_out":
+            return None
+        meeting_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO meetings (id, prospect_id, starts_at, note, recorded_by) VALUES (?, ?, ?, ?, ?)",
+                (meeting_id, prospect_id, starts_at or None, note[:500], by))
+            await db.commit()
+        cancelled = await self.cancel_pending_outbox_for_prospect(prospect_id, reason=MEETING_BOOKED)
+        cancelled += await self.stop_company(prospect_id)
+        async with self._connect() as db:
+            await db.execute("UPDATE prospects SET status = 'meeting', updated_at = ? WHERE id = ?",
+                             (_utcnow().isoformat(), prospect_id))
+            await db.commit()
+        change = await self.set_stage(prospect_id, "meeting_booked", by=by, reason="meeting booked",
+                                      manual=by != "sellbird")
+        await self.log_action("meeting_booked", "user" if by != "sellbird" else "handler", {
+            "prospect_id": prospect_id, "meeting_id": meeting_id, "starts_at": starts_at or "",
+            "cancelled": cancelled, "by": by})
+        return {"id": meeting_id, "prospect_id": prospect_id, "starts_at": starts_at or "",
+                "note": note[:500], "by": by, "cancelled": cancelled, "stage_change": change}
+
+    async def get_meetings(self, limit: int = 100) -> list[dict]:
+        """Booked meetings, newest first, with who they are with."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT m.*, p.first_name, p.last_name, p.email, p.title, p.company "
+                    "FROM meetings m JOIN prospects p ON p.id = m.prospect_id "
+                    "WHERE m.status = 'booked' ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?",
+                    (limit,)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def count_by_stage_and_source(self) -> dict:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT COALESCE(NULLIF(stage, ''), 'new') AS stage, "
+                    "COALESCE(NULLIF(lead_source, ''), 'cold_email') AS source, COUNT(*) AS n "
+                    "FROM prospects GROUP BY 1, 2") as cursor:
+                rows = await cursor.fetchall()
+        stages = dict.fromkeys(deals.STAGES, 0)
+        sources: dict[str, int] = {}
+        for r in rows:
+            stages[deals.clean_stage(r["stage"]) or "new"] += r["n"]
+            sources[r["source"]] = sources.get(r["source"], 0) + r["n"]
+        return {"stages": stages, "sources": sources}
 
     async def undo_opt_out(self, prospect_id: str, details: dict | None = None) -> bool:
         """A human's undo of an opt-out: the one way off 'opted_out'.
@@ -932,7 +1085,9 @@ class StateManager:
                  json.dumps({"prospect_id": prospect_id, **(details or {})})),
             )
             await db.commit()
-            return True
+        # A person decided they are back in the conversation.
+        await self.set_stage(prospect_id, "talking", by="you", reason="opt-out undone", manual=True)
+        return True
 
     async def opt_out_history(self, prospect_id: str) -> list[dict]:
         """Every opt-out and undo recorded for this person, oldest first."""

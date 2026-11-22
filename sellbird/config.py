@@ -15,7 +15,7 @@ import yaml
 from sellbird.textio import read_user_text
 from dotenv import load_dotenv
 from pydantic import (
-    BaseModel, PrivateAttr, TypeAdapter, ValidationError, field_validator, model_validator,
+    BaseModel, Field, PrivateAttr, TypeAdapter, ValidationError, field_validator, model_validator,
 )
 
 from sellbird.paths import PROJECT_ROOT
@@ -775,6 +775,11 @@ class WriterConfig(BaseModel):
     # written for, instead of getting a draft that says it has no advice. Put
     # them back with `sellbird retry-writes --no-tip`, once more is known.
     require_tip: bool = False
+    # How many emails a sequence has: the first email plus follow-ups. There
+    # is no upper limit; choose what suits the people you write to. Whatever
+    # the length, follow-ups to someone stop the moment they reply, book a
+    # meeting or opt out. 1 means a first email and no follow-ups.
+    sequence_length: int = Field(default=3, ge=1)
 
     @field_validator("email_rules", mode="before")
     @classmethod
