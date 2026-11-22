@@ -471,6 +471,16 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             except Exception as e:
                 logger.warning(f"Failed to log action '{action}': {e}")
 
+            # 6a. Texts (sellbird.texting): read what arrived, then send what a
+            # person approved and the consent check allows. Off unless turned on.
+            try:
+                from sellbird import texting
+                texts = await asyncio.wait_for(texting.tick(state, config), timeout=120)
+                if any(texts.values()):
+                    logger.info(f"Texts: {texts}")
+            except Exception as e:
+                logger.warning(f"Texts: this cycle's pass failed: {type(e).__name__}")
+
             # 6b. Events for other tools (sellbird.events): send whatever this
             # cycle, or the dashboard since the last one, has queued.
             try:

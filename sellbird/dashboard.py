@@ -1198,6 +1198,169 @@ async def get_prospects():
     return rows
 
 
+# ── Consent for calls and texts, and texts (sellbird.consent, sellbird.texting) ──
+
+
+async def _json_body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+async def _phone_from(body: dict, state, config) -> tuple[str, str]:
+    """(E.164 number, prospect id) for a body naming a phone or a person."""
+    from sellbird import consent
+    prospect_id = str(body.get("prospect_id") or "").strip()
+    phone = str(body.get("phone") or "").strip()
+    if prospect_id and not phone:
+        person = await state.get_prospect(prospect_id)
+        phone = person.phone if person is not None else ""
+    country = getattr(getattr(config, "texting", None), "default_country_code", "1")
+    number = consent.normalise_phone(phone, country)
+    if number and not prospect_id:
+        prospect_id = await state.prospect_id_for_phone(number)
+    return number, prospect_id
+
+
+@app.get("/api/texting")
+async def get_texting():
+    """Everything the Texts and Texting screens show: whether texting is on
+    and connected, the rules in force, texts waiting and recent, every
+    consent record and the do-not-contact numbers."""
+    from sellbird import texting
+    try:
+        state = _state()
+        await state.init_db()
+        config = _events_config()
+        texts = await state.get_texts(limit=100)
+        return {
+            **(texting.status(config) if config is not None else {"enabled": False, "connected": False}),
+            "config_file": _resolve_config_file().name,
+            "pending": [t for t in texts if t["status"] == "pending_review"][::-1],
+            "texts": texts,
+            "consents": await state.get_consents(),
+            "blocked": await state.get_phone_blocks(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/texts")
+async def draft_text(request: Request):
+    """Draft one text: {"prospect_id": ..., "body": ...} or {"phone": ..., "body": ...}.
+    It waits for a person's approval. Refused when there is no stored yes."""
+    from sellbird import texting
+    body = await _json_body(request)
+    state = _state()
+    await state.init_db()
+    config = _events_config()
+    if config is None:
+        return _refuse("The config file could not be read.", 409)
+    result = await texting.draft(state, config, prospect_id=str(body.get("prospect_id") or ""),
+                                 phone=str(body.get("phone") or ""), body=str(body.get("body") or ""),
+                                 by=_who(request))
+    return result if result["success"] else JSONResponse(result, status_code=409)
+
+
+@app.post("/api/texts/{text_id}/approve")
+async def approve_text(text_id: str):
+    """Approve one drafted text. It is sent once the consent check allows:
+    at once, or when quiet hours end."""
+    from sellbird import texting
+    state = _state()
+    await state.init_db()
+    if not await state.set_text_status(text_id, "approved", only_from=("pending_review",)):
+        return _refuse("That text is not waiting for approval.", 409)
+    await state.log_action("text_approved", "user", {"text_id": text_id})
+    config = _events_config()
+    report = await texting.send_approved(state, config) if config is not None else {}
+    after = await state.get_text(text_id) or {}
+    return {"success": True, "status": after.get("status"), "note": after.get("error") or "", "report": report}
+
+
+@app.post("/api/texts/{text_id}/reject")
+async def reject_text(text_id: str):
+    state = _state()
+    await state.init_db()
+    if not await state.set_text_status(text_id, "rejected", only_from=("pending_review", "approved")):
+        return _refuse("That text can no longer be rejected.", 409)
+    return {"success": True}
+
+
+@app.post("/api/consent")
+async def record_consent(request: Request):
+    """Record a yes or a no: {"phone" or "prospect_id", "channel": "sms"|"call",
+    "status": "granted"|"revoked", "source": "form", "evidence": "what they agreed to"}.
+    A yes needs evidence: it is what you would show if anyone asked."""
+    from sellbird import consent
+    body = await _json_body(request)
+    channel = str(body.get("channel") or "sms")
+    status_ = str(body.get("status") or "granted")
+    if channel not in consent.CHANNELS or status_ not in ("granted", "revoked"):
+        return _refuse('channel is "sms" or "call"; status is "granted" or "revoked".', 400)
+    evidence = str(body.get("evidence") or "").strip()
+    if status_ == "granted" and len(evidence) < 8:
+        return _refuse("Say how they agreed (where, and to what), in a sentence.", 400)
+    state = _state()
+    await state.init_db()
+    number, prospect_id = await _phone_from(body, state, _events_config())
+    if not number:
+        return _refuse("There is no valid phone number.", 400)
+    if status_ == "granted" and await state.phone_blocked(number) == "opted_out":
+        return _refuse("They replied STOP. Only they can opt back in, by texting START to your number "
+                       "and telling you so.", 409)
+    await state.add_consent(phone=number, channel=channel, status=status_, prospect_id=prospect_id,
+                            source=str(body.get("source") or "other"), evidence=evidence, recorded_by="you")
+    if status_ == "revoked":
+        await state.cancel_texts_for(number, "consent taken back")
+    await state.log_action("consent_recorded", "user",
+                           {"prospect_id": prospect_id, "channel": channel, "status": status_})
+    return {"success": True, "phone": number, "channel": channel, "status": status_}
+
+
+@app.post("/api/consent/check")
+async def check_consent(request: Request):
+    """Would a call or a text to this person pass the check right now?
+    {"channel": "sms"|"call", "phone" or "prospect_id"}. Sends nothing."""
+    from sellbird import consent
+    body = await _json_body(request)
+    state = _state()
+    await state.init_db()
+    config = _events_config()
+    number, prospect_id = await _phone_from(body, state, config)
+    decision = await consent.check(state, config, channel=str(body.get("channel") or "sms"),
+                                   phone=number, prospect_id=prospect_id)
+    return {"success": True, "phone": number, **decision.as_dict()}
+
+
+@app.post("/api/phone-blocks")
+async def add_phone_block(request: Request):
+    """Never call or text this number: {"phone": ...}. Cancels texts queued for it."""
+    body = await _json_body(request)
+    state = _state()
+    await state.init_db()
+    number, _ = await _phone_from(body, state, _events_config())
+    if not number:
+        return _refuse("There is no valid phone number.", 400)
+    await state.block_phone(number, reason="manual", source=_who(request))
+    cancelled = await state.cancel_texts_for(number, "on your do-not-contact list")
+    return {"success": True, "phone": number, "cancelled": cancelled}
+
+
+@app.post("/api/phone-blocks/remove")
+async def remove_phone_block(request: Request):
+    """Take a number you added off the list. One that replied STOP stays on it."""
+    body = await _json_body(request)
+    state = _state()
+    await state.init_db()
+    number, _ = await _phone_from(body, state, _events_config())
+    if not number or not await state.unblock_phone(number):
+        return _refuse("That number is not one you can take off the list.", 409)
+    return {"success": True, "phone": number}
+
+
 # ── Events other tools can listen to (sellbird.events) ──
 
 

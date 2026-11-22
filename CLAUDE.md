@@ -332,6 +332,7 @@ Users will come back with questions and tasks. Common ones:
 - **"Train Sellbird on a different product"** → `sellbird train <new-url>`
 - **"How do I see the database?"** → It's at `data/sellbird.db`. They can open it with any SQLite tool, or ask you to query it.
 - **"Can it tell my CRM / Zapier / Slack?"** → Yes: every reply, new lead, booking and stage change is an event. Add an address under `webhooks:` in the config file Sellbird reads, put the signing secret in `.env`, and check Set up → Events and webhooks (`docs/events.md`). Have the user add the secret themselves; don't ask them to paste it into this chat.
+- **"Can it text people?"** → Only people who said yes, through the user's own Twilio account, and only texts the user approved (Inbox → Texts). Record each yes under Set up → Texting and consent; you can draft a text (`text_draft`) and ask the gate (`consent_check`), but you can't record consent or approve. Never suggest texting a list or anyone who hasn't opted in: Sellbird refuses it in code. Twilio keys go in `.env`, typed by the user, never pasted into this chat. See `docs/texting.md`.
 - **"I just want the prospect list"** → `sellbird export` writes a sequencer-ready CSV (verified/risky emails only; `--all` for everything). Also available as Export buttons on the dashboard's People place. Sellbird is valuable purely as a list-builder even if the user never lets it send.
 
 ---

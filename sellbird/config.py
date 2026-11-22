@@ -835,6 +835,26 @@ class HandoffConfig(BaseModel):
     arguments: dict = {}
 
 
+class TextQuietHours(BaseModel):
+    start: str = "21:00"
+    end: str = "08:00"
+
+
+class TextingConfig(BaseModel):
+    """Texts through your own Twilio account (sellbird.texting). Off until you
+    turn it on. Whatever is set here, a text goes only to someone with a
+    stored yes, never to a number that said STOP, and never in quiet hours:
+    that check is in code (sellbird.consent) and has no off switch."""
+    enabled: bool = False
+    # Their local time when Sellbird knows their time zone, else yours.
+    quiet_hours: TextQuietHours = TextQuietHours()
+    # Someone who texts your number first may be answered. false = even then
+    # a yes has to be recorded by hand before any reply goes out.
+    reply_to_inbound: bool = True
+    # For numbers written without a country code.
+    default_country_code: str = "1"
+
+
 class WebhookConfig(BaseModel):
     """One address that hears about events (sellbird.events): a reply, a new
     lead, a booking, a stage change. Every request is signed with the secret
@@ -856,6 +876,7 @@ class SellbirdConfig(BaseModel):
     writer: WriterConfig = WriterConfig()
     handoff: HandoffConfig = HandoffConfig()
     webhooks: list[WebhookConfig] = []
+    texting: TextingConfig = TextingConfig()
     # The file it was loaded from, so a running Sellbird can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)

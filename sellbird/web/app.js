@@ -279,6 +279,12 @@ function actionText(a) {
     case 'outbox_edited': return 'You edited a draft';
     case 'stage_change': return (d.by === 'sellbird' ? 'Moved ' : (d.by === 'agent' ? 'Your agent moved ' : 'You moved ')) +
       (who || 'someone') + ' to ' + escHtml(String(d.to || '').replace(/_/g, ' ')) + (d.reason ? ' · ' + escHtml(d.reason) : '');
+    case 'text_sent': return 'Sent a text';
+    case 'text_drafted': return (d.by === 'agent' ? 'Your agent drafted' : 'You drafted') + ' a text';
+    case 'text_approved': return 'You approved a text';
+    case 'text_blocked': return 'Held a text: the consent check said no';
+    case 'text_opt_out': return 'A number replied STOP' + (d.cancelled ? ' · ' + n(d.cancelled, 'queued text', 'queued texts') + ' cancelled' : '');
+    case 'consent_recorded': return 'You recorded consent · ' + escHtml(d.channel === 'call' ? 'calls' : 'texts') + ' · ' + escHtml(d.status === 'granted' ? 'yes' : 'taken back');
     case 'meeting_booked': return 'Meeting booked' + (d.cancelled ? ' · ' + n(d.cancelled, 'queued email', 'queued emails') + ' cancelled' : '');
     case 'conversation_status':
       return d.to === 'closed' ? 'You closed a conversation'
@@ -415,6 +421,7 @@ const SCREENS = {
   today:         {place: 'today'},
   conversations: {place: 'inbox', pill: 'Replies', count: 'nav-conversations'},
   outbox:        {place: 'inbox', pill: 'Outbox', count: 'nav-outbox'},
+  texts:         {place: 'inbox', pill: 'Texts', count: 'nav-texts'},
   prospects:     {place: 'people', pill: 'People'},
   companies:     {place: 'people', pill: 'Companies'},
   calendar:      {place: 'calendar'},
@@ -430,6 +437,7 @@ const SCREENS = {
   controls:      {place: 'setup', parent: 'setup'},
   activity:      {place: 'setup', parent: 'setup'},
   events:        {place: 'setup', parent: 'setup'},
+  texting:       {place: 'setup', parent: 'setup'},
   help:          {place: 'setup', parent: 'setup'},
 };
 // The dock's own names, and the old tab names links may still carry.
@@ -511,6 +519,8 @@ function loadCurrentTab() {
     case 'numbers': loadNumbers(); break;
     case 'setup': loadSetup(); break;
     case 'events': loadEvents(); break;
+    case 'texts': loadTexts(); break;
+    case 'texting': loadTexting(); break;
     case 'today': loadLiveStatus(); loadRenameNotice(); loadToday(); loadTrend(); loadFunnel(); loadSetupStatus(); loadRuns(); loadTodayActivity(); break;
     case 'signals': loadSignals(); break;
     case 'discover': loadDiscoverProviders(); break;
@@ -3505,6 +3515,7 @@ function setupHtml(st, engine, mode, setup) {
           left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
       row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
           engine ? (running ? 'Running' : 'Stopped') : '', running ? 'good' : '') +
+      row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') +
       row('events', 'Events and webhooks', 'Send every reply, new lead, booking and stage change to the tools you already use', '', '') +
       row('activity', 'Activity', 'Every action Sellbird took, newest first', '', '') +
       row('help', 'Help', 'How it works, where files live, and fixes for the usual problems', '', '') +
@@ -3523,7 +3534,149 @@ function setupHtml(st, engine, mode, setup) {
 
 const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
-                     events: 'arrow'};
+                     events: 'arrow', texting: 'message'};
+
+// ── Texts and consent ──
+
+let _texting = null;
+
+function textWho(t) {
+  return escHtml([t.first_name, t.last_name].filter(Boolean).join(' ')) || escHtml(t.phone);
+}
+
+function textingBanner(d) {
+  if (!d.enabled) return '<div class="banner mode-banner">' + icon('alert') + '<div><b>Texting is off</b>' +
+    '<p>Turn it on with <code>texting: {enabled: true}</code> in ' + escHtml(d.config_file || 'sellbird.yaml') +
+    ', after connecting Twilio. Drafts can still be written and approved; nothing sends while it is off.</p></div>' +
+    '<button class="btn btn-secondary btn-sm" onclick="goTab(\'texting\')">Set up texting</button></div>';
+  if (!d.connected) return '<div class="banner wait mode-banner">' + icon('alert') + '<div><b>Twilio is not connected</b>' +
+    '<p>' + escHtml(d.problem || '') + '. Approved texts wait until it is.</p></div>' +
+    '<button class="btn btn-secondary btn-sm" onclick="goTab(\'texting\')">Set up texting</button></div>';
+  return '';
+}
+
+async function loadTexts() {
+  const el = document.getElementById('texts-body');
+  if (!el) return;
+  const d = await api('/api/texting');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read your texts', escHtml(d.error)); return; }
+  _texting = d;
+  navCount('nav-texts', (d.pending || []).length);
+  const pending = (d.pending || []).map(t =>
+    '<div class="row"><span class="who" aria-hidden="true">' + icon('message') + '</span>' +
+    '<div class="grow"><p class="t">To ' + textWho(t) + '</p><p class="s">' + escHtml(t.phone) +
+      (t.drafted_by === 'agent' ? ' · drafted by your agent' : '') + '</p>' +
+      '<div class="tb draft">' + escHtml(t.body) + '</div></div>' +
+    '<div class="row-acts"><button class="btn btn-primary btn-sm" onclick="textAct(' + jsq(t.id) + ',\'approve\')">Approve</button>' +
+      '<button class="btn btn-secondary btn-sm" onclick="textAct(' + jsq(t.id) + ',\'reject\')">Reject</button></div></div>').join('');
+  const tone = {sent: 'good', received: 'acc', approved: 'wait', blocked: 'bad', failed: 'bad'};
+  const word = {sent: 'Sent', received: 'Received', approved: 'Approved, waiting', blocked: 'Held', failed: 'Failed',
+                rejected: 'Rejected', cancelled: 'Cancelled', sending: 'Sending'};
+  const rest = (d.texts || []).filter(t => t.status !== 'pending_review').map(t =>
+    '<div class="row"><span class="time">' + relTime(t.sent_at || t.created_at) + '</span>' +
+    '<div class="grow"><p class="t">' + (t.direction === 'in' ? 'From ' : 'To ') + textWho(t) + '</p>' +
+      '<p class="s">' + escHtml(t.body) + '</p>' +
+      (t.error ? '<p class="s" style="color:var(--wait)">' + escHtml(t.error.charAt(0).toUpperCase() + t.error.slice(1)) + '.</p>' : '') + '</div>' +
+    '<span class="tag ' + (tone[t.status] || '') + '">' + (word[t.status] || escHtml(t.status)) + '</span></div>').join('');
+  el.innerHTML = textingBanner(d) + '<div class="secs">' +
+    '<section class="sec"><h2>Waiting for you</h2><div class="w">' +
+      (pending || '<div class="row"><div class="grow"><p class="t">Nothing to approve</p>' +
+        '<p class="s">A text you or your agent drafts shows up here first.</p></div></div>') +
+      '<p class="w-f">Your agent can draft a text. Only you can approve one.</p></div></section>' +
+    '<section class="sec"><h2>Recent</h2><div class="w">' +
+      (rest || '<div class="row"><div class="grow"><p class="t">No texts yet</p>' +
+        '<p class="s">Texts in and out are listed here.</p></div></div>') + '</div></section></div>';
+}
+
+async function textAct(id, action) {
+  const res = await api('/api/texts/' + encodeURIComponent(id) + '/' + action, {method: 'POST'});
+  if (res && res.success) showToast(action === 'reject' ? 'Rejected.'
+    : res.status === 'sent' ? 'Approved and sent.'
+    : res.status === 'blocked' ? 'Held: ' + (res.note || 'the consent check said no') + '.'
+    : 'Approved. ' + (res.note ? 'It waits: ' + res.note + '.' : 'It sends on the next cycle.'), 'success');
+  else showToast(failMsg(res, 'That did not work.'), 'error');
+  loadTexts();
+}
+
+async function loadTexting() {
+  const el = document.getElementById('texting-body');
+  if (!el) return;
+  const d = await api('/api/texting');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read texting', escHtml(d.error)); return; }
+  _texting = d;
+  const q = d.quiet_hours || {};
+  const r = (t, s, tag, tone) => '<div class="row"><div class="grow"><p class="t">' + t + '</p><p class="s">' + s + '</p></div>' +
+    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>';
+  const consents = (d.consents || []).map(c =>
+    '<div class="row"><span class="time">' + relTime(c.created_at) + '</span><div class="grow"><p class="t">' +
+    (escHtml([c.first_name, c.last_name].filter(Boolean).join(' ')) || escHtml(c.phone)) + '</p>' +
+    '<p class="s">' + escHtml(c.phone) + ' · ' + escHtml(c.evidence || c.source || '') + '</p></div>' +
+    '<span class="tag">' + (c.channel === 'call' ? 'Calls' : 'Texts') + '</span>' +
+    '<span class="tag ' + (c.status === 'granted' ? 'good' : 'bad') + '">' + (c.status === 'granted' ? 'Yes' : 'Took it back') + '</span></div>').join('');
+  const blocked = (d.blocked || []).map(b =>
+    '<div class="row"><div class="grow"><p class="t">' + escHtml(b.phone) + '</p><p class="s">' +
+    (b.reason === 'opted_out' ? 'Replied STOP' : 'Added by ' + escHtml(b.source || 'you')) + ' · ' + relTime(b.created_at) + '</p></div>' +
+    (b.reason === 'opted_out' ? '<span class="tag bad">STOP</span>'
+      : '<button class="btn btn-secondary btn-sm rowbtn" onclick="unblockPhone(' + jsq(b.phone) + ')">Remove</button>') + '</div>').join('');
+  el.innerHTML = '<div class="secs">' +
+    '<section class="sec"><h2>Your Twilio account</h2><div class="w">' +
+      r('Texting', d.enabled ? 'On. Approved texts go out each cycle.' : 'Off. Set <code>texting: {enabled: true}</code> in ' + escHtml(d.config_file || 'sellbird.yaml') + '.',
+        d.enabled ? 'On' : 'Off', d.enabled ? 'good' : '') +
+      r('Twilio', d.connected ? 'Connected. Texts go out as ' + escHtml(d.from || 'your number') + ', on your own carrier registration.'
+        : 'Twilio is ' + escHtml(d.problem || 'not connected') + '. Add the values to .env yourself; never paste them into a chat.',
+        d.connected ? 'Connected' : 'Not connected', d.connected ? 'good' : 'wait') +
+      '<p class="w-f">Sellbird registers no numbers of its own. Inbound texts are read from Twilio each cycle, so nothing has to be reachable from the internet.</p></div></section>' +
+    '<section class="sec"><h2>Rules in force</h2><div class="w">' +
+      r('Only to people who said yes', 'No stored yes, no first text. A yes to texts is not a yes to calls.', 'Always', 'good') +
+      r('Quiet hours', 'Nothing between ' + escHtml(q.start || '21:00') + ' and ' + escHtml(q.end || '08:00') + ', their time when Sellbird knows it, else yours.', 'Always', 'good') +
+      r('STOP means stop', 'A reply of STOP opts the number out at once and cancels anything queued. Only they can undo it.', 'Always', 'good') +
+      r('Email opt-outs count too', 'Someone who opted out of email is not texted or called.', 'Always', 'good') +
+      r('You approve every text', 'Your agent can draft. It cannot approve or send.', 'Always', 'good') +
+      (d.inbound_counts_as_consent ? r('Someone who texts you first may be answered', 'Their message is kept as the record. Turn off with <code>texting.reply_to_inbound: false</code>.', 'On', 'acc') : '') +
+      '<p class="w-f">These are checked in code at the moment of sending. There is no setting that turns them off.</p></div></section>' +
+    '<section class="sec"><h2>Record a yes</h2><div class="w pad">' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="cs-phone">Phone number</label>' +
+        '<input class="form-input" id="cs-phone" type="tel" autocomplete="off" placeholder="(303) 555-0119"></div>' +
+      '<div class="form-group"><label class="form-label" for="cs-channel">For</label>' +
+        '<select class="form-input" id="cs-channel"><option value="sms">Texts</option><option value="call">Calls</option></select></div></div>' +
+      '<div class="form-group"><label class="form-label" for="cs-evidence">How they agreed</label>' +
+        '<input class="form-input" id="cs-evidence" maxlength="300" placeholder="Ticked the box on the quote form on March 3"></div>' +
+      '<div class="btn-group" style="margin-top:0"><button class="btn btn-primary btn-sm" onclick="recordConsent(\'granted\')">Record their yes</button>' +
+        '<button class="btn btn-secondary btn-sm" onclick="recordConsent(\'revoked\')">They took it back</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="blockPhone()">Never contact this number</button></div>' +
+      '<p class="form-hint">Write what you would show if anyone asked. A record is never edited: a later no is added after it.</p></div></section>' +
+    '<section class="sec"><h2>Consent records</h2><div class="w">' +
+      (consents || '<div class="row"><div class="grow"><p class="t">No one has said yes yet</p><p class="s">Until someone does, no text can be drafted or sent.</p></div></div>') + '</div></section>' +
+    '<section class="sec"><h2>Never contact</h2><div class="w">' +
+      (blocked || '<div class="row"><div class="grow"><p class="t">No numbers on the list</p><p class="s">Numbers that reply STOP land here by themselves.</p></div></div>') +
+      '<p class="w-f">Checked before every text, and before every call.</p></div></section></div>';
+}
+
+async function recordConsent(status) {
+  const body = {phone: document.getElementById('cs-phone').value.trim(), channel: document.getElementById('cs-channel').value,
+                status, source: 'other', evidence: document.getElementById('cs-evidence').value.trim()};
+  const res = await api('/api/consent', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (res && res.success) showToast(status === 'granted' ? 'Recorded their yes for ' + res.phone + '.' : 'Recorded. Nothing more goes to ' + res.phone + ' on that channel.', 'success');
+  else showToast(failMsg(res, 'Could not record that.'), 'error');
+  loadTexting();
+}
+
+async function blockPhone() {
+  const res = await api('/api/phone-blocks', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({phone: document.getElementById('cs-phone').value.trim()})});
+  if (res && res.success) showToast(res.phone + ' will never be called or texted.', 'success');
+  else showToast(failMsg(res, 'Could not add that number.'), 'error');
+  loadTexting();
+}
+
+async function unblockPhone(phone) {
+  const res = await api('/api/phone-blocks/remove', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({phone})});
+  if (res && res.success) showToast('Removed from the list.', 'success');
+  else showToast(failMsg(res, 'Could not remove that number.'), 'error');
+  loadTexting();
+}
 
 // ── Events and webhooks: what other tools can listen to ──
 

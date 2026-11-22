@@ -52,6 +52,10 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", r"/api/calendar"),
     ("GET", r"/api/pipeline"),
     ("GET", r"/api/events"),
+    ("GET", r"/api/texting"),
+    ("POST", r"/api/texts"),            # a draft; only you approve it
+    ("POST", r"/api/consent/check"),    # asks the gate, sends nothing
+    ("POST", r"/api/phone-blocks"),     # can only stop contact
     ("GET", r"/api/prospects/[^/]+/stage"),
     ("POST", r"/api/prospects/[^/]+/stage"),    # where a person stands; sends nothing
     ("POST", r"/api/prospects/[^/]+/meeting"),  # a booking only ever stops follow-ups

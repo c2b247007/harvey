@@ -140,7 +140,9 @@ def test_the_allowlist_is_reads_estimates_pause_and_offer_proposals_only():
     # stop email: neither lets the agent cause a send.
     allowed_posts = ("/api/discover/estimate", "/api/sending/pause", "/api/inboxes/[^/]+/pause",
                      "/api/offer/suggest", "/api/offer/preview", "/api/offer/propose",
-                     "/api/prospects/[^/]+/stage", "/api/prospects/[^/]+/meeting")
+                     "/api/prospects/[^/]+/stage", "/api/prospects/[^/]+/meeting",
+                     # A text draft waits for the user; the check and a block send nothing.
+                     "/api/texts", "/api/consent/check", "/api/phone-blocks")
     for method, pattern in agent_policy.AGENT_ROUTES:
         assert method == "GET" or pattern in allowed_posts
     assert not agent_policy.agent_may("POST", "/api/offer")

@@ -156,6 +156,12 @@ compliance:
 #   email_rules: "skills/email_rules.md"
 #   sequence_length: 3   # emails per sequence; no upper limit. Follow-ups stop on a reply, a booking or an opt-out.
 
+# Texts through your own Twilio account (keys go in .env). Off by default.
+# Only to people with a stored yes, never in quiet hours. See docs/texting.md.
+# texting:
+#   enabled: true
+#   quiet_hours: {start: "21:00", end: "08:00"}
+
 # Tell another tool about every reply, new lead, booking and stage change.
 # Each request is signed with the secret in .env. See docs/events.md.
 # webhooks:

@@ -595,6 +595,27 @@ MIGRATIONS: list[str] = [
       error TEXT DEFAULT '', next_attempt_at TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (event_id, endpoint));
     """,
+    # ── v19: consent for calls and texts, and texts themselves ──
+    # consents is a record, never edited: a later no is a new row, and the
+    # newest row for a phone and channel is the answer (sellbird.consent).
+    # phone_blocks is the do-not-contact list for numbers. texts holds every
+    # text in and out; an outbound one waits as pending_review until a
+    # person approves it.
+    """
+    CREATE TABLE IF NOT EXISTS consents (id TEXT PRIMARY KEY, prospect_id TEXT DEFAULT '',
+      phone TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL, source TEXT DEFAULT '',
+      evidence TEXT DEFAULT '', recorded_by TEXT DEFAULT 'you',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_consents_phone ON consents(phone, channel, created_at);
+    CREATE TABLE IF NOT EXISTS phone_blocks (phone TEXT PRIMARY KEY, reason TEXT DEFAULT 'manual',
+      source TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY, prospect_id TEXT DEFAULT '',
+      phone TEXT NOT NULL, direction TEXT NOT NULL, body TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending_review', error TEXT DEFAULT '', provider_sid TEXT DEFAULT '',
+      drafted_by TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, sent_at TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_texts_status ON texts(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_texts_phone ON texts(phone, created_at);
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -940,6 +961,159 @@ class StateManager:
         implied = deals.STAGE_FOR_STATUS.get(status)
         if implied:
             await self.set_stage(prospect_id, implied, reason=f"status: {status}")
+
+    # ── Consent, the do-not-contact list for numbers, and texts ──
+
+    async def add_consent(self, *, phone: str, channel: str, status: str, prospect_id: str = "",
+                          source: str = "", evidence: str = "", recorded_by: str = "you") -> str:
+        consent_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO consents (id, prospect_id, phone, channel, status, source, evidence, "
+                "recorded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (consent_id, prospect_id or "", phone, channel, status, source[:60], evidence[:500],
+                 recorded_by, _utcnow().isoformat()))
+            await db.commit()
+        return consent_id
+
+    async def current_consent(self, phone: str, channel: str) -> dict | None:
+        """The newest record for this number and channel, or None when there is none."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT * FROM consents WHERE phone = ? AND channel = ? "
+                    "ORDER BY created_at DESC, rowid DESC LIMIT 1", (phone, channel)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_consents(self, limit: int = 200) -> list[dict]:
+        """Every consent record, newest first, with the person's name when known."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT c.*, p.first_name, p.last_name, p.company FROM consents c "
+                    "LEFT JOIN prospects p ON p.id = c.prospect_id "
+                    "ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?", (limit,)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def block_phone(self, phone: str, reason: str = "manual", source: str = "") -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO phone_blocks (phone, reason, source, created_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(phone) DO NOTHING", (phone, reason, source[:120], _utcnow().isoformat()))
+            await db.commit()
+
+    async def unblock_phone(self, phone: str) -> bool:
+        """Take a number you added off the list. One that said STOP stays."""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "DELETE FROM phone_blocks WHERE phone = ? AND reason != 'opted_out'", (phone,))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def phone_blocked(self, phone: str) -> str:
+        """Why this number may not be contacted ('opted_out', 'manual', ...), or ''."""
+        async with self._connect() as db:
+            async with db.execute("SELECT reason FROM phone_blocks WHERE phone = ?", (phone,)) as cursor:
+                row = await cursor.fetchone()
+        return (row[0] or "manual") if row else ""
+
+    async def get_phone_blocks(self, limit: int = 200) -> list[dict]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM phone_blocks ORDER BY created_at DESC LIMIT ?",
+                                  (limit,)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def prospect_id_for_phone(self, phone: str) -> str:
+        """The person this number belongs to, matched on its last ten digits."""
+        tail = "".join(ch for ch in phone if ch.isdigit())[-10:]
+        if len(tail) < 7:
+            return ""
+        async with self._connect() as db:
+            async with db.execute("SELECT id, phone FROM prospects WHERE phone != ''") as cursor:
+                for pid, stored in await cursor.fetchall():
+                    if "".join(ch for ch in (stored or "") if ch.isdigit())[-10:] == tail:
+                        return pid
+        return ""
+
+    async def add_text(self, *, phone: str, direction: str, body: str, status: str,
+                       prospect_id: str = "", drafted_by: str = "", provider_sid: str = "",
+                       created_at: str | None = None) -> str:
+        text_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO texts (id, prospect_id, phone, direction, body, status, drafted_by, "
+                "provider_sid, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (text_id, prospect_id or "", phone, direction, body, status, drafted_by, provider_sid,
+                 created_at or _utcnow().isoformat()))
+            await db.commit()
+        return text_id
+
+    async def get_texts(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        """Texts, newest first (oldest first for one status, so a queue drains in order)."""
+        where, params, order = "", [], "t.created_at DESC, t.rowid DESC"
+        if status:
+            where, params, order = "WHERE t.status = ?", [status], "t.created_at, t.rowid"
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT t.*, p.first_name, p.last_name, p.company FROM texts t "
+                    f"LEFT JOIN prospects p ON p.id = t.prospect_id {where} ORDER BY {order} LIMIT ?",
+                    (*params, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_text(self, text_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM texts WHERE id = ?", (text_id,)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_text(self, text_id: str, **fields) -> None:
+        allowed = {"status", "error", "body", "provider_sid", "sent_at"}
+        cols = [k for k in fields if k in allowed]
+        if not cols:
+            return
+        async with self._connect() as db:
+            await db.execute(f"UPDATE texts SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                             (*[fields[c] for c in cols], text_id))
+            await db.commit()
+
+    async def set_text_status(self, text_id: str, new: str, *, only_from: tuple[str, ...]) -> bool:
+        """Move one text between statuses, only when it is in one of ``only_from``."""
+        marks = ",".join("?" * len(only_from))
+        async with self._connect() as db:
+            cursor = await db.execute(
+                f"UPDATE texts SET status = ?, error = '' WHERE id = ? AND direction = 'out' "
+                f"AND status IN ({marks})", (new, text_id, *only_from))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def claim_text(self, text_id: str) -> bool:
+        """approved -> sending, once: the caller that wins sends it."""
+        return await self.set_text_status(text_id, "sending", only_from=("approved",))
+
+    async def has_texted(self, phone: str) -> bool:
+        async with self._connect() as db:
+            async with db.execute(
+                    "SELECT 1 FROM texts WHERE phone = ? AND direction = 'out' AND status = 'sent' LIMIT 1",
+                    (phone,)) as cursor:
+                return await cursor.fetchone() is not None
+
+    async def text_exists(self, provider_sid: str) -> bool:
+        async with self._connect() as db:
+            async with db.execute("SELECT 1 FROM texts WHERE provider_sid = ? LIMIT 1",
+                                  (provider_sid,)) as cursor:
+                return await cursor.fetchone() is not None
+
+    async def cancel_texts_for(self, phone: str, reason: str) -> int:
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "UPDATE texts SET status = 'cancelled', error = ? WHERE phone = ? AND direction = 'out' "
+                "AND status IN ('pending_review', 'approved')", (reason, phone))
+            await db.commit()
+            return cursor.rowcount
 
     # ── Events (sellbird.events) ──
 

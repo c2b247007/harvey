@@ -34,6 +34,14 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **A consent check for calls and texts, and texts through your own Twilio.**
+  One gate in code (`sellbird/consent.py`): a stored yes for that channel, not
+  opted out, not on the do-not-contact list, not in quiet hours. There is no
+  first text to someone who has not opted in, and no setting turns the check
+  off. Texts are drafted by you or your agent, approved by you under Inbox →
+  Texts, then sent through the Twilio account you connect. STOP opts a number
+  out at once. Off by default. See `docs/texting.md`.
+
 - **Events other tools can listen to.** Every reply, new lead, booking and
   stage change is recorded as an event and, when you add an address under
   `webhooks:`, sent there as a signed POST (`Sellbird-Signature`, HMAC-SHA256)

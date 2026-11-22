@@ -314,6 +314,35 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
         return await read(f"/api/calendar?start={quote(start, safe='')}&days={int(days)}")
 
     @server.tool()
+    async def texts_list() -> dict:
+        """Texting at a glance: whether it is on and connected, texts waiting for the
+        user's approval, recent texts in and out, consent records and do-not-contact numbers."""
+        return await read("/api/texting")
+
+    @server.tool()
+    async def consent_check(channel: str, prospect_id: str = "", phone: str = "") -> dict:
+        """Would a call or a text to this person be allowed right now? `channel` is "sms"
+        or "call". Answers allowed true or false with the reason (no stored yes, opted
+        out, do-not-contact, quiet hours). Sends nothing. You cannot record a yes: only
+        the user can, in the dashboard."""
+        return await guarded(lambda c: c.post("/api/consent/check",
+                                              {"channel": channel, "prospect_id": prospect_id, "phone": phone}))
+
+    @server.tool()
+    async def text_draft(body: str, prospect_id: str = "", phone: str = "") -> dict:
+        """Draft one text to a person who has said yes to texts. It waits for the user's
+        approval in the dashboard (Inbox, Texts); you cannot send it. Refused when there is
+        no stored yes for that number: never try to text someone who has not opted in."""
+        return await guarded(lambda c: c.post("/api/texts",
+                                              {"body": body, "prospect_id": prospect_id, "phone": phone}))
+
+    @server.tool()
+    async def do_not_contact_number(phone: str) -> dict:
+        """Put a phone number on the do-not-contact list: no calls, no texts, and anything
+        queued for it is cancelled. Only the user can take it off."""
+        return await guarded(lambda c: c.post("/api/phone-blocks", {"phone": phone}))
+
+    @server.tool()
     async def events_list() -> dict:
         """Recent events (lead.created, reply.received, meeting.booked, stage.changed),
         the webhook endpoints that hear them and how each delivery went. Endpoints are
