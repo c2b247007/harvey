@@ -279,6 +279,10 @@ function actionText(a) {
     case 'outbox_edited': return 'You edited a draft';
     case 'stage_change': return (d.by === 'sellbird' ? 'Moved ' : (d.by === 'agent' ? 'Your agent moved ' : 'You moved ')) +
       (who || 'someone') + ' to ' + escHtml(String(d.to || '').replace(/_/g, ' ')) + (d.reason ? ' · ' + escHtml(d.reason) : '');
+    case 'lead_added': return (d.via === 'agent' ? 'Your agent added a lead' : d.via === 'form_email' ? 'A form email became a lead'
+      : 'You added a lead') + (d.held ? ' · on your never-email list, no answer drafted' : d.new_person ? ' · a new person' : '');
+    case 'lead_answer_drafted': return 'A first answer to a lead was drafted · it waits in the Outbox';
+    case 'lead_dismissed': return 'You set a lead aside';
     case 'text_sent': return 'Sent a text';
     case 'text_drafted': return (d.by === 'agent' ? 'Your agent drafted' : 'You drafted') + ' a text';
     case 'text_approved': return 'You approved a text';
@@ -421,6 +425,7 @@ const SCREENS = {
   today:         {place: 'today'},
   conversations: {place: 'inbox', pill: 'Replies', count: 'nav-conversations'},
   outbox:        {place: 'inbox', pill: 'Outbox', count: 'nav-outbox'},
+  leads:         {place: 'inbox', pill: 'Leads', count: 'nav-leads'},
   texts:         {place: 'inbox', pill: 'Texts', count: 'nav-texts'},
   prospects:     {place: 'people', pill: 'People'},
   companies:     {place: 'people', pill: 'Companies'},
@@ -539,6 +544,7 @@ function loadCurrentTab() {
     case 'numbers': loadNumbers(); break;
     case 'setup': loadSetup(); break;
     case 'events': loadEvents(); break;
+    case 'leads': loadLeads(); break;
     case 'texts': loadTexts(); break;
     case 'texting': loadTexting(); break;
     case 'records': loadRecords(); break;
@@ -617,7 +623,8 @@ function applyCounts(data) {
   navCount('nav-today', ((data && data.items) || []).filter(i => i.tone !== 'good').length);
   navCount('nav-outbox', st.outbox_pending || 0);
   navCount('nav-conversations', st.needs_human || 0);
-  navCount('nav-inbox', (st.outbox_pending || 0) + (st.needs_human || 0));
+  navCount('nav-leads', st.leads_needing_you || 0);
+  navCount('nav-inbox', (st.outbox_pending || 0) + (st.needs_human || 0) + (st.leads_needing_you || 0));
   navCount('nav-signals', st.signals_proposed || 0);
 }
 
@@ -3568,6 +3575,118 @@ const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signa
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
                      events: 'arrow', texting: 'message', records: 'check', neveremail: 'flag',
                      limits: 'alert', agent: 'sparkle'};
+
+// ── Leads: people who came to you ──
+
+const LEAD_VIA = {form_email: 'From a form email', agent: 'Added by your agent', cli: 'Added on the command line', you: 'Added by you'};
+const LEAD_SOURCE = {form: 'Form', call: 'Call', text: 'Text', mention: 'Mention', referral: 'Referral', other: 'Other'};
+
+function leadWho(l) {
+  return escHtml(l.name || [l.first_name, l.last_name].filter(Boolean).join(' ') || l.email || l.phone) || 'Nobody found';
+}
+
+// Where a lead's first answer stands: [words, tone].
+function leadAnswer(l) {
+  if (l.status === 'unreadable') return ['Read it yourself', 'wait'];
+  if (l.status === 'held') return ['Held', 'bad'];
+  if (l.status === 'dismissed') return ['Set aside', ''];
+  switch (l.answer_status) {
+    case 'pending_review': return ['Answer waits for you', 'acc'];
+    case 'approved': case 'sending': return ['Answer approved', 'wait'];
+    case 'sent': return ['Answered', 'good'];
+    case 'rejected': return ['Answer rejected', ''];
+    case 'cancelled': return ['Answer cancelled', ''];
+  }
+  return l.email ? ['No answer yet', 'wait'] : ['No address', ''];
+}
+
+function leadRow(l) {
+  const a = leadAnswer(l);
+  const fields = Object.keys(l.fields || {}).filter(k => l.fields[k] && String(l.fields[k]) !== l.message)
+    .map(k => '<p class="s"><b>' + escHtml(k) + '</b> ' + escHtml(l.fields[k]) + '</p>').join('');
+  const open = l.status !== 'dismissed' && l.status !== 'held';
+  return '<div class="row lead-row"><span class="who" aria-hidden="true">' + icon(l.source === 'form' ? 'pen' : 'message') + '</span>' +
+    '<div class="grow"><p class="t">' + leadWho(l) + ' <span class="tag ' + a[1] + '">' + a[0] + '</span></p>' +
+      '<p class="s">' + escHtml(LEAD_SOURCE[l.source] || 'Other') + (l.form_name ? ' · ' + escHtml(l.form_name) : '') +
+        ' · ' + (LEAD_VIA[l.via] || 'Added') + ' · ' + relTime(l.created_at) +
+        (l.email && l.name ? ' · ' + escHtml(l.email) : '') + (l.phone ? ' · ' + escHtml(l.phone) : '') + '</p>' +
+      (l.message ? '<div class="tb lead-words">' + escHtml(l.message) + '</div>' : '') +
+      (fields ? '<div class="lead-fields">' + fields + '</div>' : '') +
+      (l.note ? '<p class="s" style="color:var(--wait)">' + escHtml(l.note) + '</p>' : '') + '</div>' +
+    '<div class="row-acts">' +
+      (l.answer_status === 'pending_review' ? '<button class="btn btn-primary btn-sm" onclick="goTab(\'outbox\')">Review answer</button>' : '') +
+      (l.prospect_id ? '<button class="btn btn-secondary btn-sm" onclick="openPerson(' + jsq(l.prospect_id) + ')">Open person</button>' : '') +
+      (open && l.answer_status !== 'sent' ? '<button class="btn btn-ghost btn-sm" onclick="dismissLead(' + jsq(l.id) + ')">Set aside</button>' : '') +
+    '</div></div>';
+}
+
+async function loadLeads() {
+  const el = document.getElementById('leads-body');
+  if (!el) return;
+  const d = await api('/api/leads');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read your leads', escHtml(d.error)); return; }
+  navCount('nav-leads', d.needs_you || 0);
+  const leads = d.leads || [];
+  const waiting = l => (l.status === 'new' || l.status === 'unreadable' || l.status === 'answered') &&
+    l.answer_status !== 'sent' && l.answer_status !== 'rejected' && l.answer_status !== 'cancelled';
+  const open = leads.filter(waiting), rest = leads.filter(l => !waiting(l));
+  const file = escHtml(d.config_file || 'sellbird.yaml');
+  const r = (t, sub, tag, tone) => '<div class="row"><div class="grow"><p class="t">' + t + '</p><p class="s">' + sub + '</p></div>' +
+    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>';
+  const senders = (d.form_senders || []).map(escHtml).join(', ');
+  el.innerHTML = '<div class="secs">' +
+    '<section class="sec"><h2>Open</h2><div class="w">' +
+      (open.map(leadRow).join('') || '<div class="row"><div class="grow"><p class="t">No open leads</p>' +
+        '<p class="s">A form fill or a lead your agent adds shows up here, with the answer drafted for it.</p></div></div>') +
+      '<p class="w-f">What a lead typed is shown as they typed it. Sellbird never acts on it, and nothing is sent until you approve the answer.</p></div></section>' +
+    '<section class="sec"><h2>Add a lead</h2><div class="w pad">' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="lead-email">Email</label>' +
+        '<input class="form-input" id="lead-email" type="email" autocomplete="off" placeholder="pat@example.com"></div>' +
+      '<div class="form-group"><label class="form-label" for="lead-name">Name</label>' +
+        '<input class="form-input" id="lead-name" autocomplete="off"></div>' +
+      '<div class="form-group"><label class="form-label" for="lead-phone">Phone</label>' +
+        '<input class="form-input" id="lead-phone" type="tel" autocomplete="off"></div></div>' +
+      '<div class="form-group"><label class="form-label" for="lead-message">What they said or asked</label>' +
+        '<textarea class="form-input" id="lead-message" rows="3"></textarea></div>' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="lead-source">Where they came from</label>' +
+        '<select class="form-input" id="lead-source">' + Object.keys(LEAD_SOURCE).map(k => '<option value="' + k + '">' + LEAD_SOURCE[k] + '</option>').join('') + '</select></div>' +
+      '<button class="btn btn-primary btn-sm" onclick="addLead()">Add lead</button></div>' +
+      '<p class="form-hint">An email or a phone is enough. Adding a lead emails nobody: the first answer is drafted and waits in the Outbox.</p></div></section>' +
+    '<section class="sec"><h2>How leads arrive</h2><div class="w">' +
+      r('Form emails', !d.reads_inbox ? 'Sellbird reads an inbox only with Gmail, Microsoft 365 or SMTP. On Instantly, add leads by hand or through your agent.'
+          : 'Your form tool emails you each submission. Send those to an inbox Sellbird reads and each one becomes a lead. ' +
+            (senders ? 'Senders you listed: ' + senders + '.' : 'List the address your own site\'s form sends from under <code>inbound.form_senders</code> in ' + file + '.'),
+        d.reads_inbox ? 'Checked each cycle' : 'Off', d.reads_inbox ? 'good' : '') +
+      r('Form tools Sellbird knows', (d.known_senders || []).map(escHtml).join(', ') + '. Turn off with <code>inbound.known_form_tools: false</code>.',
+        d.known_form_tools ? 'On' : 'Off', d.known_form_tools ? 'good' : '') +
+      r('Your agent', 'It can add a lead from anywhere it can read, and draft the answer. Ask it: "Add the leads from my quote form."', 'On', 'good') +
+      r('First answers', d.draft_answers ? 'Sellbird drafts one on its next cycle, up to ' + (d.max_drafts_per_day || 0) + ' a day. Turn off with <code>inbound.draft_answers: false</code>.'
+          : 'Off. Leads are recorded and the answer is left to you or your agent.', d.draft_answers ? 'On' : 'Off', d.draft_answers ? 'good' : '') +
+      r('Approval', d.answers_wait_for_approval ? 'A first answer always waits for you, even on autopilot: the address was typed by a stranger.'
+          : 'First answers follow your sending mode (<code>inbound.answers_wait_for_approval: false</code>).',
+        d.answers_wait_for_approval ? 'Always waits' : 'Sending mode', d.answers_wait_for_approval ? 'acc' : 'wait') +
+      '<p class="w-f">Sellbird hosts no forms and needs no public address. It checks in; nothing has to reach it.</p></div></section>' +
+    (rest.length ? '<section class="sec"><h2>Earlier</h2><div class="w">' + rest.map(leadRow).join('') + '</div></section>' : '') +
+    '</div>';
+}
+
+async function addLead() {
+  const v = id => document.getElementById(id).value.trim();
+  const res = await api('/api/leads', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: v('lead-email'), name: v('lead-name'), phone: v('lead-phone'),
+                          message: v('lead-message'), source: v('lead-source')})});
+  if (res && res.success) showToast(res.message || 'Added.', 'success');
+  else showToast(failMsg(res, 'Could not add that lead.'), 'error');
+  if (res && res.success) loadLeads();
+}
+
+async function dismissLead(id) {
+  const res = await api('/api/leads/' + encodeURIComponent(id) + '/dismiss', {method: 'POST'});
+  if (res && res.success) showToast('Set aside. No answer will be sent.', 'success');
+  else showToast(failMsg(res, 'That did not work.'), 'error');
+  loadLeads();
+}
 
 // ── Texts and consent ──
 

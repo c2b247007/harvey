@@ -1164,6 +1164,47 @@ def cmd_suppressions(args):
         sys.exit(code)
 
 
+def cmd_leads(args):
+    """Leads that came to you: list them, or add one by hand."""
+    from sellbird import leads
+    from sellbird.config import load_config
+    from sellbird.state import StateManager
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        if args.lead_action == "add":
+            try:
+                config = load_config()
+            except Exception:
+                config = None
+            return await leads.add_lead(
+                state, config, email=args.email, phone=args.phone, name=args.name, company=args.company,
+                message=args.message, form_name=args.form, source=args.source, via="cli")
+        return await state.get_leads(limit=args.limit)
+
+    result = asyncio.run(_run())
+    if args.lead_action == "add":
+        print(f"\n  {result['message']}\n")
+        if not result["success"]:
+            sys.exit(1)
+        return
+    if not result:
+        print("\n  No leads yet. Add one with 'sellbird leads add --email ...', or point your form\n"
+              "  tool's notification emails at an inbox Sellbird reads (docs/inbound-leads.md).\n")
+        return
+    words = {"pending_review": "answer waits for you", "approved": "answer approved", "sent": "answered",
+             "rejected": "answer rejected", "cancelled": "answer cancelled"}
+    print(f"\n  {len(result)} lead(s), newest first:\n")
+    for lead in result:
+        who = lead["name"] or " ".join(x for x in (lead.get("first_name"), lead.get("last_name")) if x) \
+            or lead["email"] or lead["phone"] or "(nobody found)"
+        state_ = words.get(lead.get("answer_status") or "", "") or {
+            "unreadable": "could not be read", "held": "held", "dismissed": "set aside"}.get(lead["status"], "no answer yet")
+        print(f"  {str(lead['created_at'])[:16]}  {leads.source_label(lead['source']):<9} {who[:40]:<40} {state_}")
+    print()
+
+
 def main():
     from sellbird.textio import utf8_stdio
     utf8_stdio()
@@ -1375,6 +1416,18 @@ def main():
                      help="Skip checking each address; every one stays a guess and is never sent to")
     sub.add_argument("--dry-run", action="store_true", help="Count what would be added; change nothing")
     sub.set_defaults(func=cmd_import)
+
+    sub = subparsers.add_parser("leads", help="Leads that came to you; 'leads add' records one (emails nobody)")
+    sub.add_argument("lead_action", nargs="?", default="list", choices=["list", "add"])
+    sub.add_argument("--email", default="")
+    sub.add_argument("--phone", default="")
+    sub.add_argument("--name", default="")
+    sub.add_argument("--company", default="")
+    sub.add_argument("--message", default="", help="What they said or asked")
+    sub.add_argument("--form", default="", help="The form or place they came from")
+    sub.add_argument("--source", default="form", choices=["form", "call", "text", "mention", "referral", "other"])
+    sub.add_argument("--limit", type=int, default=50)
+    sub.set_defaults(func=cmd_leads)
 
     sub = subparsers.add_parser("suppressions", help="Addresses and domains Sellbird never emails")
     sub.add_argument("suppression_action", nargs="?", default="list", choices=["list", "add", "remove"])

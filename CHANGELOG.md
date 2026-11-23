@@ -34,6 +34,16 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Inbound leads, the local way.** Sellbird hosts no forms, so leads arrive
+  by checking in: form notification emails in an inbox Sellbird already reads
+  become leads (`inbound.form_senders`, plus the form tools it knows), your
+  agent can add one from anywhere (`lead_add`, `lead_answer_draft`,
+  `leads_list`), and so can you (Inbox → Leads, or `sellbird leads add`). A
+  new lead is a person with the source "Form", a `lead.created` event, and a
+  first answer drafted for the Outbox. That answer waits for your approval
+  even on autopilot. What a submitter typed is kept as data and never acted
+  on. See `docs/inbound-leads.md`.
+
 - **Five more screens in the dashboard.** *Email records* (Set up) reads MX,
   SPF, DKIM and DMARC on each domain you send from and says what to change;
   Sellbird never writes DNS. *Opt-outs and bounces* is the never-email list

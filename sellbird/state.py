@@ -630,6 +630,23 @@ MIGRATIONS: list[str] = [
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
     CREATE INDEX IF NOT EXISTS idx_agent_requests_time ON agent_requests(created_at);
     """,
+    # ── v21: leads that came to you ──
+    # One row each time someone reaches out: a form they filled in, or a lead
+    # your agent or you added. The person is a prospect like any other; this
+    # is the record of what they sent, kept as they typed it. dedup_key is
+    # the notification email's id, so one email makes one lead.
+    """
+    CREATE TABLE IF NOT EXISTS leads (id TEXT PRIMARY KEY, prospect_id TEXT DEFAULT '',
+      source TEXT DEFAULT 'form', via TEXT DEFAULT '', form_name TEXT DEFAULT '',
+      email TEXT DEFAULT '', phone TEXT DEFAULT '', name TEXT DEFAULT '',
+      message TEXT DEFAULT '', fields_json TEXT DEFAULT '{}', status TEXT DEFAULT 'new',
+      note TEXT DEFAULT '', outbox_id TEXT DEFAULT '', conversation_id TEXT DEFAULT '',
+      mailbox_id TEXT DEFAULT '', draft_tries INTEGER DEFAULT 0, dedup_key TEXT DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_leads_time ON leads(created_at);
+    CREATE INDEX IF NOT EXISTS idx_leads_prospect ON leads(prospect_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_dedup ON leads(dedup_key) WHERE dedup_key != '';
+    """,
 ]
 
 # The deal on a person (set_deal) and the agent's request log.
@@ -880,9 +897,12 @@ class StateManager:
         d["timezone"] = d.get("timezone") or ""
         return Prospect(**d)
 
-    async def add_prospect(self, prospect: Prospect) -> str:
+    async def add_prospect(self, prospect: Prospect, *, lead_source: str = "") -> str:
         """Insert a prospect. Duplicates (same email or LinkedIn URL) are not
-        re-inserted; the existing record's id is returned instead."""
+        re-inserted; the existing record's id is returned instead.
+        ``lead_source`` is where they came from when it isn't cold outreach
+        (a form, a mention): stored and announced in the same write."""
+        lead_source = deals.clean_source(lead_source) if lead_source else deals.DEFAULT_SOURCE
         if not prospect.id:
             prospect.id = _new_id()
         prospect.email = _norm(prospect.email)
@@ -913,11 +933,14 @@ class StateManager:
                 ),
             )
             if cursor.rowcount == 1:
+                if lead_source != deals.DEFAULT_SOURCE:
+                    await db.execute("UPDATE prospects SET lead_source = ? WHERE id = ?",
+                                     (lead_source, prospect.id))
                 await self._insert_event(db, "lead.created", {"person": {
                     "id": prospect.id, "email": prospect.email,
                     "name": " ".join(x for x in (prospect.first_name, prospect.last_name) if x),
                     "title": prospect.title, "company": prospect.company, "stage": "new",
-                    "source": deals.DEFAULT_SOURCE}, "found_via": prospect.source})
+                    "source": lead_source}, "found_via": prospect.source})
             await db.commit()
             if cursor.rowcount == 0:
                 # Unique-constraint conflict: resolve to the existing record.
@@ -1056,6 +1079,89 @@ class StateManager:
                     if "".join(ch for ch in (stored or "") if ch.isdigit())[-10:] == tail:
                         return pid
         return ""
+
+    # ── Leads that came to you (sellbird.leads) ──
+
+    async def add_lead(self, *, prospect_id: str = "", source: str = "form", via: str = "",
+                       form_name: str = "", email: str = "", phone: str = "", name: str = "",
+                       message: str = "", fields: dict | None = None, status: str = "new",
+                       note: str = "", mailbox_id: str = "", dedup_key: str = "") -> str | None:
+        """Record one lead. None when this notification was already recorded."""
+        lead_id = _new_id()
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO leads (id, prospect_id, source, via, form_name, email, phone, "
+                "name, message, fields_json, status, note, mailbox_id, dedup_key, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (lead_id, prospect_id or "", source, via, form_name, _norm(email), phone, name, message,
+                 json.dumps(fields or {}), status, note, mailbox_id or "", dedup_key or "",
+                 _utcnow().isoformat()))
+            await db.commit()
+            return lead_id if cursor.rowcount == 1 else None
+
+    @staticmethod
+    def _lead_from_row(row) -> dict:
+        lead = dict(row)
+        try:
+            lead["fields"] = json.loads(lead.pop("fields_json", None) or "{}")
+        except (TypeError, ValueError):
+            lead["fields"] = {}
+        return lead
+
+    async def get_leads(self, limit: int = 100) -> list[dict]:
+        """Leads, newest first, each with its person's name and stage and how
+        its answer stands in the Outbox."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT l.*, p.first_name, p.last_name, p.company, p.stage, "
+                    "o.status AS answer_status, o.sent_at AS answer_sent_at, o.error AS answer_note "
+                    "FROM leads l LEFT JOIN prospects p ON p.id = l.prospect_id "
+                    "LEFT JOIN outbox o ON o.id = l.outbox_id "
+                    "ORDER BY l.created_at DESC, l.rowid DESC LIMIT ?", (limit,)) as cursor:
+                return [self._lead_from_row(r) for r in await cursor.fetchall()]
+
+    async def get_lead(self, lead_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)) as cursor:
+                row = await cursor.fetchone()
+        return self._lead_from_row(row) if row else None
+
+    async def update_lead(self, lead_id: str, **fields) -> None:
+        allowed = {"status", "note", "outbox_id", "conversation_id", "draft_tries", "prospect_id"}
+        cols = [k for k in fields if k in allowed]
+        if not cols:
+            return
+        async with self._connect() as db:
+            await db.execute(f"UPDATE leads SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                             (*[fields[c] for c in cols], lead_id))
+            await db.commit()
+
+    async def leads_waiting_for_a_draft(self, max_tries: int, limit: int = 20) -> list[dict]:
+        """New leads with a person and an address but no answer drafted yet, oldest first."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT * FROM leads WHERE status = 'new' AND outbox_id = '' AND prospect_id != '' "
+                    "AND email != '' AND draft_tries < ? ORDER BY created_at, rowid LIMIT ?",
+                    (max_tries, limit)) as cursor:
+                return [self._lead_from_row(r) for r in await cursor.fetchall()]
+
+    async def count_lead_answers_since(self, since_iso: str) -> int:
+        async with self._connect() as db:
+            async with db.execute(
+                    "SELECT COUNT(*) FROM leads WHERE outbox_id != '' AND created_at >= ?",
+                    (since_iso,)) as cursor:
+                return (await cursor.fetchone())[0]
+
+    async def count_leads_needing_you(self) -> int:
+        """Leads nobody has answered or set aside: no draft, or one Sellbird could not read."""
+        async with self._connect() as db:
+            async with db.execute(
+                    "SELECT COUNT(*) FROM leads WHERE status IN ('new', 'unreadable') "
+                    "AND outbox_id = ''") as cursor:
+                return (await cursor.fetchone())[0]
 
     async def add_text(self, *, phone: str, direction: str, body: str, status: str,
                        prospect_id: str = "", drafted_by: str = "", provider_sid: str = "",

@@ -162,6 +162,13 @@ compliance:
 #   enabled: true
 #   quiet_hours: {start: "21:00", end: "08:00"}
 
+# Leads from your website form: your form tool emails each submission, and
+# Sellbird reads it from an inbox it already reads. List the address those
+# emails come from. Each lead gets a first answer that waits for you.
+# See docs/inbound-leads.md.
+# inbound:
+#   form_senders: ["forms@example.com"]
+
 # Tell another tool about every reply, new lead, booking and stage change.
 # Each request is signed with the secret in .env. See docs/events.md.
 # webhooks:

@@ -68,6 +68,9 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", r"/api/email-records"),
     ("GET", r"/api/suppressions"),
     ("GET", r"/api/limits"),
+    ("GET", r"/api/leads"),
+    ("POST", r"/api/leads"),                    # a person and a record; sends nothing
+    ("POST", r"/api/leads/[^/]+/answer"),       # a draft; only you approve it
 )
 
 # What each route is, in the words the Your agent screen and its log use.
@@ -115,6 +118,8 @@ ROUTE_WORDS: tuple[tuple[str, str], ...] = (
     (r"/api/email-records", "Read the email records check"),
     (r"/api/suppressions", "Read who is never emailed"),
     (r"/api/limits", "Read limits and rules"),
+    (r"/api/leads", "Read leads, or add one"),
+    (r"/api/leads/[^/]+/answer", "Draft a first answer to a lead for you to approve"),
 )
 _WORDS = [(re.compile(pattern), words) for pattern, words in ROUTE_WORDS]
 

@@ -855,6 +855,28 @@ class TextingConfig(BaseModel):
     default_country_code: str = "1"
 
 
+class InboundConfig(BaseModel):
+    """Leads that come to you (sellbird.leads, sellbird.form_mail). Sellbird
+    hosts no forms: it reads the notification emails your form tool already
+    sends to an inbox Sellbird reads, and your agent can add a lead from
+    anywhere. What a submitter typed is kept as data and never followed."""
+    # Addresses or domains whose mail is a form notification, for example
+    # the address your own website's form plugin sends from.
+    form_senders: list[str] = []
+    # Also recognise mail from the form tools Sellbird knows by their
+    # sending domain (sellbird.form_mail.KNOWN_FORM_SENDERS).
+    known_form_tools: bool = True
+    # Sellbird drafts a first answer to each new lead on its next cycle.
+    # false = the lead is recorded and the answer is left to you or your agent.
+    draft_answers: bool = True
+    # A first answer waits for you even on autopilot: the address was typed
+    # into a form by a stranger. false = it follows your sending mode.
+    answers_wait_for_approval: bool = True
+    # No more first answers than this are drafted in a day; later leads are
+    # still recorded.
+    max_drafts_per_day: int = Field(default=50, ge=0, le=1000)
+
+
 class WebhookConfig(BaseModel):
     """One address that hears about events (sellbird.events): a reply, a new
     lead, a booking, a stage change. Every request is signed with the secret
@@ -877,6 +899,7 @@ class SellbirdConfig(BaseModel):
     handoff: HandoffConfig = HandoffConfig()
     webhooks: list[WebhookConfig] = []
     texting: TextingConfig = TextingConfig()
+    inbound: InboundConfig = InboundConfig()
     # The file it was loaded from, so a running Sellbird can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)
