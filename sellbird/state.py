@@ -647,6 +647,25 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_leads_prospect ON leads(prospect_id);
     CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_dedup ON leads(dedup_key) WHERE dedup_key != '';
     """,
+    # ── v22: brand mentions ──
+    # mention_watches is what to look for: your name, a competitor, or a
+    # question buyers ask. One your agent proposes stays off until you turn
+    # it on. mentions is what a check found, one row per address, with the
+    # reply drafted for it (Sellbird never posts) and what you did about it.
+    """
+    CREATE TABLE IF NOT EXISTS mention_watches (id TEXT PRIMARY KEY, term TEXT NOT NULL,
+      kind TEXT DEFAULT 'brand', active INTEGER DEFAULT 1, added_by TEXT DEFAULT 'you',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_mention_watches_term ON mention_watches(term COLLATE NOCASE);
+    CREATE TABLE IF NOT EXISTS mentions (id TEXT PRIMARY KEY, watch_id TEXT DEFAULT '',
+      term TEXT DEFAULT '', watch_kind TEXT DEFAULT 'brand', source TEXT NOT NULL, url TEXT NOT NULL,
+      title TEXT DEFAULT '', body TEXT DEFAULT '', author TEXT DEFAULT '', posted_at TEXT DEFAULT '',
+      hint TEXT DEFAULT '', kind TEXT DEFAULT '', status TEXT DEFAULT 'new', reply TEXT DEFAULT '',
+      reply_by TEXT DEFAULT '', note TEXT DEFAULT '', prospect_id TEXT DEFAULT '',
+      found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_mentions_url ON mentions(url);
+    CREATE INDEX IF NOT EXISTS idx_mentions_status ON mentions(status, found_at);
+    """,
 ]
 
 # The deal on a person (set_deal) and the agent's request log.
@@ -1161,6 +1180,90 @@ class StateManager:
             async with db.execute(
                     "SELECT COUNT(*) FROM leads WHERE status IN ('new', 'unreadable') "
                     "AND outbox_id = ''") as cursor:
+                return (await cursor.fetchone())[0]
+
+    # ── Brand mentions (sellbird.mentions) ──
+
+    async def add_mention_watch(self, term: str, kind: str = "brand", *, active: bool = True,
+                                added_by: str = "you") -> str | None:
+        """Start watching a term. None when it is already watched."""
+        watch_id = _new_id()
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO mention_watches (id, term, kind, active, added_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (watch_id, term, kind, int(active), added_by, _utcnow().isoformat()))
+            await db.commit()
+            return watch_id if cursor.rowcount == 1 else None
+
+    async def get_mention_watches(self, active_only: bool = False) -> list[dict]:
+        where = "WHERE w.active = 1" if active_only else ""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT w.*, (SELECT COUNT(*) FROM mentions m WHERE m.watch_id = w.id) AS found "
+                    f"FROM mention_watches w {where} ORDER BY w.created_at, w.rowid") as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def set_mention_watch_active(self, watch_id: str, active: bool) -> bool:
+        async with self._connect() as db:
+            cursor = await db.execute("UPDATE mention_watches SET active = ? WHERE id = ?",
+                                      (int(active), watch_id))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def remove_mention_watch(self, watch_id: str) -> bool:
+        """Stop watching a term. What it already found stays."""
+        async with self._connect() as db:
+            cursor = await db.execute("DELETE FROM mention_watches WHERE id = ?", (watch_id,))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def add_mention(self, *, watch_id: str, term: str, watch_kind: str, source: str, url: str,
+                          title: str = "", body: str = "", author: str = "", posted_at: str = "",
+                          hint: str = "") -> str | None:
+        """Record one mention. None when that address was already recorded."""
+        mention_id = _new_id()
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO mentions (id, watch_id, term, watch_kind, source, url, title, body, "
+                "author, posted_at, hint, found_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (mention_id, watch_id, term, watch_kind, source, url, title, body, author, posted_at, hint,
+                 _utcnow().isoformat()))
+            await db.commit()
+            return mention_id if cursor.rowcount == 1 else None
+
+    async def get_mentions(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        where, params = ("WHERE status = ?", [status]) if status else ("", [])
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    f"SELECT * FROM mentions {where} ORDER BY found_at DESC, rowid DESC LIMIT ?",
+                    (*params, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_mention(self, mention_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM mentions WHERE id = ?", (mention_id,)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_mention(self, mention_id: str, **fields) -> bool:
+        allowed = {"kind", "status", "reply", "reply_by", "note", "prospect_id"}
+        cols = [k for k in fields if k in allowed]
+        if not cols:
+            return False
+        async with self._connect() as db:
+            cursor = await db.execute(
+                f"UPDATE mentions SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                (*[fields[c] for c in cols], mention_id))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def count_mentions(self, status: str = "new") -> int:
+        async with self._connect() as db:
+            async with db.execute("SELECT COUNT(*) FROM mentions WHERE status = ?", (status,)) as cursor:
                 return (await cursor.fetchone())[0]
 
     async def add_text(self, *, phone: str, direction: str, body: str, status: str,

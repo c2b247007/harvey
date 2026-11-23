@@ -169,6 +169,13 @@ compliance:
 # inbound:
 #   form_senders: ["forms@example.com"]
 
+# Brand mentions: where Sellbird looks for the terms you watch (add those
+# under Set up, Brand mentions). "web" uses your Serper or TinyFish key.
+# See docs/mentions.md.
+# mentions:
+#   sources: [hackernews, news, reddit, youtube, web]
+#   check_every_hours: 6
+
 # Tell another tool about every reply, new lead, booking and stage change.
 # Each request is signed with the secret in .env. See docs/events.md.
 # webhooks:

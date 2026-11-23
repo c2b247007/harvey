@@ -346,6 +346,9 @@ select.stage-move { width: auto; min-height: 36px; font-size: var(--fs-ui); bord
 .lead-row > .grow { flex: 1 1 0; min-width: 0; }
 .lead-row > .row-acts { flex: 1 1 100%; justify-content: flex-start; }
 .lead-words { white-space: pre-wrap; }
+.mention-label { margin-top: 10px; }
+.mention-edit { margin-top: 10px; }
+.lead-row > .row-acts a.btn { text-decoration: none; }
 .lead-fields { margin-top: 6px; }
 .lead-fields b { font-weight: 600; margin-right: 4px; }
 .row-acts { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }

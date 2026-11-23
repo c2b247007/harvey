@@ -481,6 +481,17 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             except Exception as e:
                 logger.warning(f"Texts: this cycle's pass failed: {type(e).__name__}")
 
+            # 6a2. Brand mentions (sellbird.mentions): search for the watched
+            # terms when a check is due. Nothing runs until a term is watched.
+            try:
+                from sellbird import mentions
+                seen = await asyncio.wait_for(mentions.tick(state, config), timeout=300)
+                if seen:
+                    logger.info(f"Mentions: {seen.get('found', 0)} new from {seen.get('searches', 0)} searches."
+                                + (f" Problems: {'; '.join(seen['problems'])}" if seen.get("problems") else ""))
+            except Exception as e:
+                logger.warning(f"Mentions: this cycle's check failed: {type(e).__name__}")
+
             # 6b. Events for other tools (sellbird.events): send whatever this
             # cycle, or the dashboard since the last one, has queued.
             try:

@@ -34,6 +34,17 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Brand mentions.** Sellbird searches for the names and questions you
+  watch and lists what it finds under Inbox → Mentions: make one a lead (a
+  person with the source "Mention"), copy a drafted reply to post from your
+  own account, note it or skip it. Hacker News and news articles need no
+  key; Reddit and YouTube use your own free keys; a web search uses your
+  Serper or TinyFish key and is off until you add it. It checks every few
+  hours while Sellbird runs, never posts, and scrapes no social site. Agent
+  tools `mentions_list`, `mentions_check`, `mention_watch_propose`,
+  `mention_update` and `mention_to_lead`, with `skills/brand_mentions.md`.
+  See `docs/mentions.md`.
+
 - **Inbound leads, the local way.** Sellbird hosts no forms, so leads arrive
   by checking in: form notification emails in an inbox Sellbird already reads
   become leads (`inbound.form_senders`, plus the form tools it knows), your

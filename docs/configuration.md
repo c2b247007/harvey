@@ -54,6 +54,7 @@ sellbird outbox                # review queued email
 sellbird export                # deliverable prospects → CSV
 sellbird import people.csv     # bring your own list in; checks each address, emails nobody
 sellbird leads [add --email ...]  # leads that came to you; add records one (docs/inbound-leads.md)
+sellbird mentions [watch TERM|check]  # brand mentions: what was found; watch a term; search now (docs/mentions.md)
 sellbird precleared-key        # free key for the cold-email check, saved to .env
 sellbird companies             # company register → CSV: every company, fit, and why it wasn't contacted
 sellbird sending pause|resume  # kill switch

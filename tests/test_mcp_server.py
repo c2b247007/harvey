@@ -146,7 +146,11 @@ def test_the_allowlist_is_reads_estimates_pause_and_offer_proposals_only():
                      # A deal's value, next step and notes: a record, nothing sent.
                      "/api/prospects/[^/]+/deal",
                      # A lead is a person and a record; its answer is a draft the user approves.
-                     "/api/leads", "/api/leads/[^/]+/answer")
+                     "/api/leads", "/api/leads/[^/]+/answer",
+                     # Mentions: a proposed term stays off, a check only searches free
+                     # sources, a reply is a draft to copy. Nothing is posted or sent.
+                     "/api/mentions/watches", "/api/mentions/check",
+                     "/api/mentions/(?!watches$|check$)[^/]+", "/api/mentions/(?!watches/)[^/]+/lead")
     for method, pattern in agent_policy.AGENT_ROUTES:
         assert method == "GET" or pattern in allowed_posts
     assert not agent_policy.agent_may("POST", "/api/offer")

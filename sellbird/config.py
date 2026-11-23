@@ -877,6 +877,24 @@ class InboundConfig(BaseModel):
     max_drafts_per_day: int = Field(default=50, ge=0, le=1000)
 
 
+class MentionsConfig(BaseModel):
+    """Brand mentions (sellbird.mentions): Sellbird searches for the terms
+    you watch and lists what it finds. It only ever searches and reads; it
+    never posts. Nothing runs until at least one term is being watched."""
+    # Where to look. hackernews and news need no key. reddit and youtube use
+    # your own free keys and are skipped without them. "web" (a web search
+    # through your Serper or TinyFish key) is left out until you add it,
+    # because Serper searches are paid for with credits.
+    sources: list[str] = ["hackernews", "news", "reddit", "youtube"]
+    # How often the running engine checks. Each check is one search per
+    # watched term per source.
+    check_every_hours: int = Field(default=6, ge=1, le=168)
+    # Only posts from the last this-many days are brought in.
+    lookback_days: int = Field(default=7, ge=1, le=30)
+    # The most results kept per term per source in one check.
+    max_per_search: int = Field(default=10, ge=1, le=50)
+
+
 class WebhookConfig(BaseModel):
     """One address that hears about events (sellbird.events): a reply, a new
     lead, a booking, a stage change. Every request is signed with the secret
@@ -900,6 +918,7 @@ class SellbirdConfig(BaseModel):
     webhooks: list[WebhookConfig] = []
     texting: TextingConfig = TextingConfig()
     inbound: InboundConfig = InboundConfig()
+    mentions: MentionsConfig = MentionsConfig()
     # The file it was loaded from, so a running Sellbird can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)

@@ -71,6 +71,11 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", r"/api/leads"),
     ("POST", r"/api/leads"),                    # a person and a record; sends nothing
     ("POST", r"/api/leads/[^/]+/answer"),       # a draft; only you approve it
+    ("GET", r"/api/mentions"),
+    ("POST", r"/api/mentions/watches"),         # a proposal; off until you turn it on
+    ("POST", r"/api/mentions/check"),           # searches only; never a source that spends credits
+    ("POST", r"/api/mentions/(?!watches$|check$)[^/]+"),   # sort it, note it, draft a reply to copy
+    ("POST", r"/api/mentions/(?!watches/)[^/]+/lead"),     # a person in People; sends nothing
 )
 
 # What each route is, in the words the Your agent screen and its log use.
@@ -120,6 +125,11 @@ ROUTE_WORDS: tuple[tuple[str, str], ...] = (
     (r"/api/limits", "Read limits and rules"),
     (r"/api/leads", "Read leads, or add one"),
     (r"/api/leads/[^/]+/answer", "Draft a first answer to a lead for you to approve"),
+    (r"/api/mentions", "Read brand mentions"),
+    (r"/api/mentions/watches", "Propose a term to watch (off until you turn it on)"),
+    (r"/api/mentions/check", "Search for new mentions (free sources only)"),
+    (r"/api/mentions/(?!watches$|check$)[^/]+", "Sort a mention, note it, or draft a reply for you to copy"),
+    (r"/api/mentions/(?!watches/)[^/]+/lead", "Make the person behind a mention a lead"),
 )
 _WORDS = [(re.compile(pattern), words) for pattern, words in ROUTE_WORDS]
 

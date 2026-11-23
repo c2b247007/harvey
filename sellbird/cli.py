@@ -1205,6 +1205,58 @@ def cmd_leads(args):
     print()
 
 
+def cmd_mentions(args):
+    """Brand mentions: list what was found, watch a term, or check now."""
+    from sellbird import mentions
+    from sellbird.config import load_config, load_env
+    from sellbird.state import StateManager
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        load_env()
+        if args.mention_action == "watch":
+            return await mentions.add_watch(state, args.term, args.kind, by="you")
+        if args.mention_action == "check":
+            wait = await mentions.minutes_until_allowed(state)
+            if wait:
+                return {"success": False, "message": f"A check ran a moment ago. Try again in {wait} minute(s)."}
+            if not await state.get_mention_watches(active_only=True):
+                return {"success": False, "message": "Nothing is being watched. Add a term: sellbird mentions watch \"Your Company\""}
+            return {"success": True, **await mentions.check(state, load_config())}
+        return {"watches": await state.get_mention_watches(), "mentions": await state.get_mentions(limit=args.limit)}
+
+    result = asyncio.run(_run())
+    if args.mention_action == "watch":
+        print(f"\n  {result['message']}\n")
+        sys.exit(0 if result["success"] else 1)
+    if args.mention_action == "check":
+        if not result["success"]:
+            print(f"\n  {result['message']}\n")
+            sys.exit(1)
+        print(f"\n  {result['found']} new mention(s) from {result['searches']} search(es).")
+        for line in result["skipped"]:
+            print(f"    Skipped {line}")
+        for line in result["problems"]:
+            print(f"    Failed  {line}")
+        print()
+        return
+    watches = result["watches"]
+    if not watches:
+        print("\n  Nothing is being watched. Start with your own name:\n"
+              "    sellbird mentions watch \"Your Company\"\n  See docs/mentions.md.\n")
+        return
+    print("\n  Watching:")
+    for w in watches:
+        print(f"    {'on ' if w['active'] else 'off'}  {mentions.WATCH_KIND_WORDS.get(w['kind'], w['kind']):<22} {w['term']}")
+    print(f"\n  {len(result['mentions'])} mention(s), newest first:\n")
+    for m in result["mentions"]:
+        print(f"  {str(m['found_at'])[:16]}  {m['status']:<8} {mentions.SOURCES.get(m['source'], {}).get('label', m['source']):<14} "
+              f"{(m['title'] or m['body'])[:60]}")
+        print(f"                    {m['url']}")
+    print()
+
+
 def main():
     from sellbird.textio import utf8_stdio
     utf8_stdio()
@@ -1428,6 +1480,13 @@ def main():
     sub.add_argument("--source", default="form", choices=["form", "call", "text", "mention", "referral", "other"])
     sub.add_argument("--limit", type=int, default=50)
     sub.set_defaults(func=cmd_leads)
+
+    sub = subparsers.add_parser("mentions", help="Brand mentions: what was found; 'watch TERM' adds a term; 'check' searches now")
+    sub.add_argument("mention_action", nargs="?", default="list", choices=["list", "watch", "check"])
+    sub.add_argument("term", nargs="?", default="", help="watch: the name or phrase to look for")
+    sub.add_argument("--kind", default="brand", choices=["brand", "competitor", "topic"])
+    sub.add_argument("--limit", type=int, default=30)
+    sub.set_defaults(func=cmd_mentions)
 
     sub = subparsers.add_parser("suppressions", help="Addresses and domains Sellbird never emails")
     sub.add_argument("suppression_action", nargs="?", default="list", choices=["list", "add", "remove"])

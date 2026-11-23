@@ -283,6 +283,10 @@ function actionText(a) {
       : 'You added a lead') + (d.held ? ' · on your never-email list, no answer drafted' : d.new_person ? ' · a new person' : '');
     case 'lead_answer_drafted': return 'A first answer to a lead was drafted · it waits in the Outbox';
     case 'lead_dismissed': return 'You set a lead aside';
+    case 'mentions_checked': return 'Checked for mentions · ' + n(d.found || 0, 'new one', 'new ones') + ' from ' + n(d.searches || 0, 'search', 'searches') +
+      (d.problems ? ' · ' + n(d.problems, 'source failed', 'sources failed') : '');
+    case 'mention_watch_added': return (d.proposed ? 'Your agent proposed a term to watch · off until you turn it on' : 'You started watching a term');
+    case 'mention_became_lead': return 'A mention became a lead';
     case 'text_sent': return 'Sent a text';
     case 'text_drafted': return (d.by === 'agent' ? 'Your agent drafted' : 'You drafted') + ' a text';
     case 'text_approved': return 'You approved a text';
@@ -427,6 +431,7 @@ const SCREENS = {
   outbox:        {place: 'inbox', pill: 'Outbox', count: 'nav-outbox'},
   leads:         {place: 'inbox', pill: 'Leads', count: 'nav-leads'},
   texts:         {place: 'inbox', pill: 'Texts', count: 'nav-texts'},
+  mentions:      {place: 'inbox', pill: 'Mentions', count: 'nav-mentions'},
   prospects:     {place: 'people', pill: 'People'},
   companies:     {place: 'people', pill: 'Companies'},
   person:        {place: 'people', parent: 'prospects'},
@@ -444,6 +449,7 @@ const SCREENS = {
   activity:      {place: 'setup', parent: 'setup'},
   events:        {place: 'setup', parent: 'setup'},
   texting:       {place: 'setup', parent: 'setup'},
+  mentionsetup:  {place: 'setup', parent: 'setup'},
   records:       {place: 'setup', parent: 'setup'},
   neveremail:    {place: 'setup', parent: 'setup'},
   limits:        {place: 'setup', parent: 'setup'},
@@ -546,6 +552,8 @@ function loadCurrentTab() {
     case 'events': loadEvents(); break;
     case 'leads': loadLeads(); break;
     case 'texts': loadTexts(); break;
+    case 'mentions': loadMentions(); break;
+    case 'mentionsetup': loadMentionSetup(); break;
     case 'texting': loadTexting(); break;
     case 'records': loadRecords(); break;
     case 'neveremail': loadNeverEmail(); break;
@@ -624,6 +632,7 @@ function applyCounts(data) {
   navCount('nav-outbox', st.outbox_pending || 0);
   navCount('nav-conversations', st.needs_human || 0);
   navCount('nav-leads', st.leads_needing_you || 0);
+  navCount('nav-mentions', st.mentions_new || 0);
   navCount('nav-inbox', (st.outbox_pending || 0) + (st.needs_human || 0) + (st.leads_needing_you || 0));
   navCount('nav-signals', st.signals_proposed || 0);
 }
@@ -3549,6 +3558,7 @@ function setupHtml(st, engine, mode, setup) {
           left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
       row('limits', 'Limits and rules', 'The stop button, daily limits, quiet hours, and anything that sends without you', '', '') +
       row('neveremail', 'Opt-outs and bounces', 'Everyone Sellbird will never email again, and why', '', '') +
+      row('mentionsetup', 'Brand mentions', 'The names and questions Sellbird searches for, and where it looks', '', '') +
       row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') +
       row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
           engine ? (running ? 'Running' : 'Stopped') : '', running ? 'good' : '') +
@@ -3573,7 +3583,7 @@ function setupHtml(st, engine, mode, setup) {
 
 const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
-                     events: 'arrow', texting: 'message', records: 'check', neveremail: 'flag',
+                     events: 'arrow', mentionsetup: 'signals', texting: 'message', records: 'check', neveremail: 'flag',
                      limits: 'alert', agent: 'sparkle'};
 
 // ── Leads: people who came to you ──
@@ -3590,6 +3600,7 @@ function leadAnswer(l) {
   if (l.status === 'unreadable') return ['Read it yourself', 'wait'];
   if (l.status === 'held') return ['Held', 'bad'];
   if (l.status === 'dismissed') return ['Set aside', ''];
+  if (l.status === 'recorded') return ['Answer where they posted', ''];
   switch (l.answer_status) {
     case 'pending_review': return ['Answer waits for you', 'acc'];
     case 'approved': case 'sending': return ['Answer approved', 'wait'];
@@ -3686,6 +3697,182 @@ async function dismissLead(id) {
   if (res && res.success) showToast('Set aside. No answer will be sent.', 'success');
   else showToast(failMsg(res, 'That did not work.'), 'error');
   loadLeads();
+}
+
+// ── Mentions: what people wrote, and what you do with each ──
+
+const MENTION_SOURCE = {hackernews: 'Hacker News', news: 'News', reddit: 'Reddit', youtube: 'YouTube', web: 'Web'};
+const MENTION_KIND = {buyer: ['A buyer', 'acc'], complaint: ['A complaint', 'bad'], praise: ['Praise', 'good'],
+                      competitor: ['About a competitor', ''], other: ['Other', '']};
+const MENTION_HINT = {question: ['Looks like a question', 'acc'], complaint: ['Looks like a complaint', 'wait']};
+const MENTION_DONE = {replied: ['You replied', 'good'], lead: ['Now a lead', 'good'], noted: ['Noted', ''], skipped: ['Skipped', '']};
+const nWord = (v, one, many) => (Number(v) || 0) + ' ' + ((Number(v) || 0) === 1 ? one : many);
+let _mentions = null;
+let _mentionOpen = '';     // the mention whose reply or note box is open
+let _mentionBox = '';      // 'reply' or 'note'
+
+function mentionRow(m) {
+  const tag = m.status !== 'new' ? MENTION_DONE[m.status] : (own(MENTION_KIND, m.kind) || own(MENTION_HINT, m.hint));
+  const open = _mentionOpen === m.id;
+  const title = escHtml(m.title || (m.body || '').slice(0, 90) || m.url);
+  return '<div class="row lead-row"><span class="who" aria-hidden="true">' + icon('signals') + '</span>' +
+    '<div class="grow"><p class="t">' + title + (tag ? ' <span class="tag ' + tag[1] + '">' + tag[0] + '</span>' : '') + '</p>' +
+      '<p class="s">' + escHtml(MENTION_SOURCE[m.source] || m.source) + (m.author ? ' · ' + escHtml(m.author) : '') +
+        ' · watching "' + escHtml(m.term) + '" · found ' + relTime(m.found_at) + '</p>' +
+      (m.body ? '<div class="tb lead-words">' + escHtml(m.body.length > 420 ? m.body.slice(0, 420) + '...' : m.body) + '</div>' : '') +
+      (m.reply && !(open && _mentionBox === 'reply') ? '<p class="s mention-label">Draft reply, for you to post from your own account' +
+        (m.reply_by === 'agent' ? ' · written by your agent' : '') + '</p><div class="tb draft lead-words">' + escHtml(m.reply) + '</div>' : '') +
+      (m.note && !(open && _mentionBox === 'note') ? '<p class="s"><b>Note</b> ' + escHtml(m.note) + '</p>' : '') +
+      (open ? '<div class="form-group mention-edit"><label class="form-label" for="mention-text">' +
+          (_mentionBox === 'reply' ? 'Your reply. Sellbird does not post it: copy it and post it yourself.' : 'A note for yourself') + '</label>' +
+        '<textarea class="form-input" id="mention-text" rows="4">' + escHtml(_mentionBox === 'reply' ? m.reply : m.note) + '</textarea></div>' : '') +
+    '</div>' +
+    '<div class="row-acts">' + (open
+      ? '<button class="btn btn-primary btn-sm" onclick="saveMention(' + jsq(m.id) + ')">Save</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="_mentionOpen=\'\';renderMentions()">Cancel</button>'
+      : (m.reply ? '<button class="btn btn-primary btn-sm" onclick="copyMentionReply(' + jsq(m.id) + ')">Copy reply</button>' : '') +
+        '<a class="btn btn-secondary btn-sm" href="' + safeHref(m.url) + '" target="_blank" rel="noopener noreferrer">Open the post</a>' +
+        '<button class="btn btn-secondary btn-sm" onclick="editMention(' + jsq(m.id) + ',\'reply\')">' + (m.reply ? 'Edit reply' : 'Write a reply') + '</button>' +
+        (m.prospect_id ? '<button class="btn btn-secondary btn-sm" onclick="openPerson(' + jsq(m.prospect_id) + ')">Open person</button>'
+          : (m.source !== 'news' && m.source !== 'web' && m.author ? '<button class="btn btn-secondary btn-sm" onclick="mentionLead(' + jsq(m.id) + ')">Make a lead</button>' : '')) +
+        '<button class="btn btn-ghost btn-sm" onclick="editMention(' + jsq(m.id) + ',\'note\')">Note</button>' +
+        (m.status === 'new'
+          ? (m.reply ? '<button class="btn btn-ghost btn-sm" onclick="mentionStatus(' + jsq(m.id) + ',\'replied\')">I replied</button>' : '') +
+            '<button class="btn btn-ghost btn-sm" onclick="mentionStatus(' + jsq(m.id) + ',\'skipped\')">Skip</button>'
+          : '<button class="btn btn-ghost btn-sm" onclick="mentionStatus(' + jsq(m.id) + ',\'new\')">Bring back</button>')) +
+    '</div></div>';
+}
+
+function renderMentions() {
+  const el = document.getElementById('mentions-body');
+  const d = _mentions;
+  if (!el || !d) return;
+  const all = d.mentions || [];
+  const fresh = all.filter(m => m.status === 'new'), rest = all.filter(m => m.status !== 'new');
+  const watching = (d.watches || []).filter(w => w.active).length;
+  const empty = !watching
+    ? ['Nothing is being watched yet', 'Add your own name first. <button class="btn btn-secondary btn-sm" onclick="goTab(\'mentionsetup\')">Set up brand mentions</button>']
+    : ['Nothing new', d.last_check ? 'Last checked ' + relTime(d.last_check) + '. Sellbird looks again every ' + d.check_every_hours + ' hours while it runs.'
+        : 'Sellbird has not checked yet. It checks while it runs, or press Check now under What is watched.'];
+  el.innerHTML = '<div class="secs">' +
+    '<section class="sec"><h2>New</h2><div class="w">' +
+      (fresh.map(mentionRow).join('') || '<div class="row"><div class="grow"><p class="t">' + empty[0] + '</p><p class="s">' + empty[1] + '</p></div></div>') +
+      '<p class="w-f">Sellbird never posts for you. A reply is a draft: copy it and post it from your own account. What people wrote is shown as written and never acted on.</p></div></section>' +
+    (rest.length ? '<section class="sec"><h2>Dealt with</h2><div class="w">' + rest.slice(0, 50).map(mentionRow).join('') + '</div></section>' : '') +
+    '</div>' +
+    '<p class="ask">Your coding agent can sort these and draft the replies. Ask it: <b>"Go through my new mentions and draft replies for the buyers."</b></p>';
+}
+
+async function loadMentions() {
+  const el = document.getElementById('mentions-body');
+  if (!el) return;
+  const d = await api('/api/mentions');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read your mentions', escHtml(d.error)); return; }
+  _mentions = d;
+  navCount('nav-mentions', d.new || 0);
+  renderMentions();
+}
+
+function editMention(id, box) { _mentionOpen = id; _mentionBox = box; renderMentions(); const t = document.getElementById('mention-text'); if (t) t.focus(); }
+
+async function mentionPost(path, body) {
+  return api('/api/mentions/' + path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+}
+
+async function saveMention(id) {
+  const body = {};
+  body[_mentionBox] = document.getElementById('mention-text').value;
+  const res = await mentionPost(encodeURIComponent(id), body);
+  if (res && res.success) { showToast(_mentionBox === 'reply' ? 'Saved. Copy it and post it yourself.' : 'Saved.', 'success'); _mentionOpen = ''; }
+  else showToast(failMsg(res, 'Could not save that.'), 'error');
+  loadMentions();
+}
+
+async function copyMentionReply(id) {
+  const m = ((_mentions || {}).mentions || []).find(x => x.id === id);
+  if (!m) return;
+  try { await navigator.clipboard.writeText(m.reply); showToast('Copied. Open the post and paste it in.', 'success'); }
+  catch { showToast('Could not copy. Select the reply and copy it by hand.', 'error'); }
+}
+
+async function mentionStatus(id, status) {
+  const res = await mentionPost(encodeURIComponent(id) + '/status', {status: status});
+  if (!(res && res.success)) showToast(failMsg(res, 'That did not work.'), 'error');
+  loadMentions();
+}
+
+async function mentionLead(id) {
+  const res = await mentionPost(encodeURIComponent(id) + '/lead');
+  if (res && res.success) showToast(res.message || 'Added to People.', 'success');
+  else showToast(failMsg(res, 'Could not make a lead.'), 'error');
+  loadMentions();
+}
+
+async function loadMentionSetup() {
+  const el = document.getElementById('mentionsetup-body');
+  if (!el) return;
+  const d = await api('/api/mentions');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read brand mentions', escHtml(d.error)); return; }
+  _mentions = d;
+  const file = escHtml(d.config_file || 'sellbird.yaml');
+  const kinds = d.watch_kinds || {};
+  const watches = (d.watches || []).map(w =>
+    '<div class="row"><div class="grow"><p class="t">' + escHtml(w.term) + '</p><p class="s">' + escHtml(kinds[w.kind] || w.kind) +
+      ' · ' + nWord(w.found || 0, 'mention', 'mentions') + ' found' + (w.added_by === 'agent' && !w.active ? ' · proposed by your agent' : '') + '</p></div>' +
+    '<span class="tag ' + (w.active ? 'good' : '') + '">' + (w.active ? 'On' : 'Off') + '</span>' +
+    '<div class="row-acts"><button class="btn btn-secondary btn-sm" onclick="watchSet(' + jsq(w.id) + ',{active:' + (w.active ? 'false' : 'true') + '})">' +
+      (w.active ? 'Turn off' : 'Turn on') + '</button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="watchSet(' + jsq(w.id) + ',{remove:true})">Remove</button></div></div>').join('');
+  const sources = (d.sources || []).map(s => {
+    const state = !s.on ? ['Off', ''] : s.ready ? ['On', 'good'] : ['Needs a key', 'wait'];
+    return '<div class="row"><div class="grow"><p class="t">' + escHtml(s.label) + '</p><p class="s">' + escHtml(s.cost) + '.' +
+      (s.needs.length ? ' Needs <code>' + s.needs.map(escHtml).join('</code> and <code>') + '</code> in .env.' : '') +
+      (!s.on ? ' Add <code>' + escHtml(s.key) + '</code> to <code>mentions.sources</code> in ' + file + ' to use it.' : '') + '</p></div>' +
+      '<span class="tag ' + state[1] + '">' + state[0] + '</span></div>';
+  }).join('');
+  el.innerHTML = (d.last_problems ? '<div class="banner wait mode-banner">' + icon('alert') + '<div><b>The last check had a problem</b><p>' +
+      escHtml(d.last_problems) + '. The other sources still ran.</p></div></div>' : '') +
+    '<div class="secs">' +
+    '<section class="sec"><h2>Watching</h2><div class="w">' +
+      (watches || '<div class="row"><div class="grow"><p class="t">Nothing yet</p><p class="s">Start with your own company name. Nothing is searched until a term is on.</p></div></div>') +
+      '<p class="w-f">' + (d.last_check ? 'Last checked ' + relTime(d.last_check) + '. ' : '') + 'Checked every ' + d.check_every_hours +
+        ' hours while Sellbird runs, for posts from the last ' + d.lookback_days + ' days. Your agent can propose a term. Only you can turn one on.</p></div></section>' +
+    '<section class="sec"><h2>Watch something</h2><div class="w pad">' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="watch-term">A name or a phrase</label>' +
+        '<input class="form-input" id="watch-term" autocomplete="off" placeholder="Example Roofing" onkeydown="if (event.key === \'Enter\') addWatch()"></div>' +
+      '<div class="form-group"><label class="form-label" for="watch-kind">What it is</label><select class="form-input" id="watch-kind">' +
+        Object.keys(kinds).map(k => '<option value="' + escHtml(k) + '">' + escHtml(kinds[k]) + '</option>').join('') + '</select></div>' +
+      '<button class="btn btn-primary btn-sm" onclick="addWatch()">Watch</button></div>' +
+      '<p class="form-hint">The whole phrase is searched for, so a short and exact one finds more. For buyers, try the question they ask: "roofer recommendation Denver".</p></div></section>' +
+    '<section class="sec"><h2>Where Sellbird looks</h2><div class="w">' + sources +
+      '<p class="w-f">Sellbird searches and reads. It does not scrape Instagram, TikTok, X, Facebook, LinkedIn or review sites, whose terms forbid it. Web search finds only what a search engine already shows from them.</p></div></section>' +
+    '</div>';
+}
+
+async function addWatch() {
+  const res = await mentionPost('watches', {term: document.getElementById('watch-term').value, kind: document.getElementById('watch-kind').value});
+  if (res && res.success) showToast(res.message || 'Watching.', 'success');
+  else showToast(failMsg(res, 'Could not watch that.'), 'error');
+  loadMentionSetup();
+}
+
+async function watchSet(id, body) {
+  const res = await mentionPost('watches/' + encodeURIComponent(id), body);
+  if (!(res && res.success)) showToast(failMsg(res, 'That did not work.'), 'error');
+  loadMentionSetup();
+}
+
+async function checkMentions(btn) {
+  if (btn) btn.disabled = true;
+  showToast('Searching. This can take a minute.', 'success');
+  const res = await mentionPost('check');
+  if (btn) btn.disabled = false;
+  if (res && res.success) showToast(nWord(res.found || 0, 'new mention', 'new mentions') + ' from ' + nWord(res.searches || 0, 'search', 'searches') +
+    ((res.problems || []).length ? '. ' + res.problems.join('; ') : '') + '.', (res.problems || []).length ? 'error' : 'success');
+  else showToast(failMsg(res, 'The check did not run.'), 'error');
+  loadMentionSetup();
 }
 
 // ── Texts and consent ──

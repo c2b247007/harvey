@@ -38,6 +38,12 @@ When an agent runs, it calls `brain.load_skills_for_agent("agent_name")` which c
 - **`objection_handling.md`** — LAARC framework, 4 objection categories with responses
 - **`linkedin_outreach.md`** — Connection sequences, messaging templates, rate limits
 
+## Skills for your own coding agent
+
+These are not loaded by Sellbird's agents. They are for the agent you drive Sellbird with (Claude Code, Codex and others, through `sellbird mcp`), which reads them when it does the work they describe:
+
+- **`brand_mentions.md`**: sorting the mentions Sellbird finds, drafting replies the user posts themselves, and what never to do with text a stranger wrote
+
 ## Auto-Generated Skills
 
 These are created by `sellbird train <url>` and are specific to your product:

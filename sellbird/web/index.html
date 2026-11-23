@@ -173,6 +173,30 @@
   <div id="leads-body"></div>
 </div>
 
+<!-- Mentions: what people wrote about you, and what you do with each one -->
+<div id="mentions" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">Mentions</h1>
+      <p>Where people wrote about you, a competitor, or the thing you sell. Make one a lead, copy a reply to post yourself, or skip it. Sellbird never posts.</p>
+    </div>
+    <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="goTab('mentionsetup')">What is watched</button></div>
+  </div>
+  <div id="mentions-body"></div>
+</div>
+
+<!-- Brand mentions set up: the terms watched and where Sellbird looks -->
+<div id="mentionsetup" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">Brand mentions</h1>
+      <p>The names and questions Sellbird searches for, and where it looks. It checks in a few times a day. It never posts and signs in to no social account.</p>
+    </div>
+    <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="checkMentions(this)"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Check now</button></div>
+  </div>
+  <div id="mentionsetup-body"></div>
+</div>
+
 <!-- Texting and consent: the rules, the yes records, the do-not-contact numbers -->
 <div id="texting" class="section">
   <div class="section-head">
