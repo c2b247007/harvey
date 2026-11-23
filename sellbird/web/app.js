@@ -424,6 +424,7 @@ const SCREENS = {
   texts:         {place: 'inbox', pill: 'Texts', count: 'nav-texts'},
   prospects:     {place: 'people', pill: 'People'},
   companies:     {place: 'people', pill: 'Companies'},
+  person:        {place: 'people', parent: 'prospects'},
   calendar:      {place: 'calendar'},
   numbers:       {place: 'numbers', pill: 'Overview'},
   usage:         {place: 'numbers', pill: 'Model usage'},
@@ -438,12 +439,29 @@ const SCREENS = {
   activity:      {place: 'setup', parent: 'setup'},
   events:        {place: 'setup', parent: 'setup'},
   texting:       {place: 'setup', parent: 'setup'},
+  records:       {place: 'setup', parent: 'setup'},
+  neveremail:    {place: 'setup', parent: 'setup'},
+  limits:        {place: 'setup', parent: 'setup'},
+  agent:         {place: 'setup', parent: 'setup'},
   help:          {place: 'setup', parent: 'setup'},
 };
 // The dock's own names, and the old tab names links may still carry.
 const SCREEN_ALIASES = {inbox: 'conversations', people: 'prospects', contacts: 'prospects', replies: 'conversations'};
 // Screens that are one decision or one form stay chat width.
 const CARD_SCREENS = ['company', 'settings', 'controls', 'help'];
+const PARENT_NAMES = {setup: 'Set up', prospects: 'People'};
+let _personId = '';     // whose page the person screen shows
+
+// A fragment is a screen, or "person/<id>" for one person's page.
+function fromHash() {
+  const raw = (window.location.hash || '').slice(1);
+  if (raw.slice(0, 7) === 'person/') {
+    try { _personId = decodeURIComponent(raw.slice(7)); } catch { _personId = ''; }
+    return _personId ? 'person' : 'prospects';
+  }
+  if (raw === 'person' && !_personId) return 'prospects';
+  return raw || 'today';
+}
 let _lastScreen = {};   // the view each place was last on, so the dock returns to it
 let _counts = {};       // badge numbers by element id, kept across re-renders
 
@@ -460,7 +478,8 @@ function renderScreenNav(id) {
   let html = '';
   if (s.parent) {
     html += '<button type="button" class="back" onclick="goTab(' + jsq(s.parent) + ')">' +
-      '<svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>Set up</button>';
+      '<svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>' +
+      escHtml(own(PARENT_NAMES, s.parent) || 'Back') + '</button>';
   }
   const views = Object.keys(SCREENS).filter(k => SCREENS[k].place === s.place && SCREENS[k].pill);
   if (views.length > 1 && s.pill) {
@@ -493,7 +512,8 @@ function showTab(id, opts) {
   if (inner) inner.classList.toggle('is-card', CARD_SCREENS.includes(id));
   renderScreenNav(id);
   if (!opts.fromHash) {
-    try { if (window.location.hash !== '#' + id) history.pushState(null, '', '#' + id); } catch { /* ignore */ }
+    const frag = '#' + (id === 'person' && _personId ? 'person/' + encodeURIComponent(_personId) : id);
+    try { if (window.location.hash !== frag) history.pushState(null, '', frag); } catch { /* ignore */ }
   }
   if (changed && !opts.keepScroll) {
     window.scrollTo(0, 0);
@@ -511,7 +531,7 @@ function goTab(id) {
   showTab(place && _lastScreen[place] ? _lastScreen[place] : id);
 }
 
-window.addEventListener('popstate', () => showTab((window.location.hash || '').slice(1) || 'today', {fromHash: true}));
+window.addEventListener('popstate', () => showTab(fromHash(), {fromHash: true}));
 
 function loadCurrentTab() {
   switch (currentTab) {
@@ -521,6 +541,11 @@ function loadCurrentTab() {
     case 'events': loadEvents(); break;
     case 'texts': loadTexts(); break;
     case 'texting': loadTexting(); break;
+    case 'records': loadRecords(); break;
+    case 'neveremail': loadNeverEmail(); break;
+    case 'limits': loadLimits(); break;
+    case 'agent': loadAgent(); break;
+    case 'person': loadPerson(); break;
     case 'today': loadLiveStatus(); loadRenameNotice(); loadToday(); loadTrend(); loadFunnel(); loadSetupStatus(); loadRuns(); loadTodayActivity(); break;
     case 'signals': loadSignals(); break;
     case 'discover': loadDiscoverProviders(); break;
@@ -2402,9 +2427,10 @@ function contactRow(p, i) {
       (p.status === 'opted_out' ? 'Why?' : 'Opt-out history') + '</button>' : '';
   return '<div class="row">' +
     '<span class="who" aria-hidden="true">' + initials(p.first_name, p.last_name) + '</span>' +
-    '<div class="grow"><p class="t">' + name + '</p>' +
+    '<div class="grow"><p class="t"><button type="button" class="linklike" onclick="openPerson(' + jsq(p.id) + ')">' + name + '</button></p>' +
       (role ? '<p class="s">' + role + '</p>' : '') +
       (reach ? '<p class="s">' + reach + '</p>' : '') +
+      (p.next_step ? '<p class="s">Next: ' + escHtml(p.next_step) + '</p>' : '') +
       '<p class="time">' + meta + '</p></div>' +
     '<span class="tag' + (STAGE_TONES[stageOf(p)] ? ' ' + STAGE_TONES[stageOf(p)] : '') + '" title="Stage">' +
       escHtml(stageNames()[stageOf(p)]) + '</span>' +
@@ -3509,13 +3535,19 @@ function setupHtml(st, engine, mode, setup) {
       row('discover', 'Find businesses', 'Search for companies that match your ICP. It prices every run first.',
           (st.companies || 0) + (st.companies === 1 ? ' company' : ' companies'), '') +
       row('inboxes', 'Inboxes', 'The addresses Sellbird sends from, and how much each has sent today', '', '') +
+      row('records', 'Email records', 'SPF, DKIM, DMARC and MX on each domain you send from, and what to fix', '', '') +
     '</div></section>' +
     '<section class="sec"><h2>Sending and the engine</h2><div class="w">' +
       row('settings', 'Sending and keys', 'Approval or autopilot, your email provider, and the keys for checking addresses',
           left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
+      row('limits', 'Limits and rules', 'The stop button, daily limits, quiet hours, and anything that sends without you', '', '') +
+      row('neveremail', 'Opt-outs and bounces', 'Everyone Sellbird will never email again, and why', '', '') +
+      row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') +
       row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
           engine ? (running ? 'Running' : 'Stopped') : '', running ? 'good' : '') +
-      row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') +
+    '</div></section>' +
+    '<section class="sec"><h2>Connections and records</h2><div class="w">' +
+      row('agent', 'Your agent', 'What your coding agent may do, everything it did, and the switch that cuts it off', '', '') +
       row('events', 'Events and webhooks', 'Send every reply, new lead, booking and stage change to the tools you already use', '', '') +
       row('activity', 'Activity', 'Every action Sellbird took, newest first', '', '') +
       row('help', 'Help', 'How it works, where files live, and fixes for the usual problems', '', '') +
@@ -3534,7 +3566,8 @@ function setupHtml(st, engine, mode, setup) {
 
 const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
-                     events: 'arrow', texting: 'message'};
+                     events: 'arrow', texting: 'message', records: 'check', neveremail: 'flag',
+                     limits: 'alert', agent: 'sparkle'};
 
 // ── Texts and consent ──
 
@@ -3678,6 +3711,400 @@ async function unblockPhone(phone) {
   loadTexting();
 }
 
+// ── Email records: SPF, DKIM, DMARC and MX, and what to fix ──
+
+const RECORD_WORDS = {
+  MX: 'Where replies and bounces are delivered',
+  SPF: 'Which servers may send as your domain',
+  DKIM: 'A signature that proves a message is yours',
+  DMARC: 'What receivers do when the other two fail',
+};
+
+async function loadRecords(btn) {
+  const el = document.getElementById('records-body');
+  if (!el) return;
+  if (btn) btn.disabled = true;
+  if (!el.innerHTML || btn) el.innerHTML = '<div class="w pad muted">Reading your DNS records. This takes a few seconds.</div>';
+  const d = await api('/api/email-records');
+  if (btn) btn.disabled = false;
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t check the records', escHtml(d.error)); return; }
+  el.innerHTML = recordsHtml(d);
+}
+
+function recordsHtml(d) {
+  const domains = d.domains || [];
+  if (!domains.length) {
+    return '<div class="w">' + emptyState(icon('inboxes'), 'No sending address yet',
+      'Connect an inbox under <b>Set up, Inboxes</b>, or set <code>persona.email</code> in ' +
+      escHtml(d.config_file || 'sellbird.yaml') + '. Sellbird checks the domain after the @.') + '</div>';
+  }
+  const word = {ok: 'Ready', warn: 'Works, could be better', fail: 'Needs fixing', unknown: 'Could not check'};
+  const tone = {ok: 'good', warn: 'wait', fail: 'bad', unknown: ''};
+  return '<div class="secs">' + domains.map(dom =>
+    '<section class="sec"><h2>' + escHtml(dom.domain) + '<span class="tag ' + tone[dom.state] + '">' + word[dom.state] + '</span></h2>' +
+    '<div class="w">' + (dom.checks || []).map(c => {
+      const state = c.unknown ? 'unknown' : c.status;
+      return '<div class="row top"><div class="grow"><p class="t">' + escHtml(c.name) + '</p>' +
+        '<p class="s">' + escHtml(own(RECORD_WORDS, c.name) || '') + '</p>' +
+        '<p class="s found">' + escHtml(c.detail) + '</p>' +
+        (c.fix ? '<p class="fix"><b>To fix:</b> ' + escHtml(c.fix) + '</p>' : '') + '</div>' +
+        '<span class="tag ' + (tone[state] || '') + '">' + ({ok: 'OK', warn: 'Check', fail: 'Fix', unknown: 'Not checked'}[state] || 'Note') + '</span></div>';
+    }).join('') +
+    '<p class="w-f">Records are changed where the domain is registered. A change can take up to a day to show here.</p></div></section>'
+  ).join('') + '</div>' +
+  '<p class="ask">For blocklists, domain age and warmup, run <b>sellbird warmup</b>, or ask your agent: <b>"Is my sending domain ready?"</b></p>';
+}
+
+// ── Opt-outs and bounces: who is never emailed ──
+
+const NEVER_WORDS = {opted_out: 'Opted out', bounced: 'Bounced', complaint: 'Complained', manual: 'Added by you', imported: 'Imported'};
+let _never = null, _neverQuery = '', _neverArmed = '';
+
+async function loadNeverEmail() {
+  const el = document.getElementById('neveremail-body');
+  if (!el) return;
+  const d = await api('/api/suppressions');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the list', escHtml(d.error)); return; }
+  _never = d;
+  el.innerHTML = '<div class="stats">' + ['opted_out', 'bounced', 'complaint', 'manual'].map(k =>
+      '<div class="stat"><span>' + NEVER_WORDS[k] + '</span><b class="v' + ((d.counts || {})[k] ? '' : ' zero') + '">' +
+      ((d.counts || {})[k] || 0) + '</b></div>').join('') + '</div>' +
+    '<div class="secs"><section class="sec"><h2>Add someone</h2><div class="w pad">' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="ne-value">An address, or a whole domain</label>' +
+        '<input class="form-input" id="ne-value" autocomplete="off" placeholder="pat@example.com or example.com" ' +
+        'onkeydown="if (event.key === \'Enter\') addNeverEmail()"></div>' +
+      '<button class="btn btn-primary btn-sm" onclick="addNeverEmail()">Never email</button></div>' +
+      '<p class="form-hint">A domain covers everyone at it. Anything queued for them is held back at the moment of sending.</p></div></section>' +
+    '<section class="sec"><h2>The list</h2>' +
+      '<input class="form-input" type="search" aria-label="Search the list" placeholder="Search" value="' + escHtml(_neverQuery) +
+        '" oninput="_neverQuery=this.value;renderNeverRows()">' +
+      '<div class="w" id="ne-rows"></div></section></div>';
+  renderNeverRows();
+}
+
+function renderNeverRows() {
+  const el = document.getElementById('ne-rows');
+  if (!el || !_never) return;
+  const q = _neverQuery.trim().toLowerCase();
+  const rows = (_never.rows || []).filter(r => !q || String(r.value).toLowerCase().includes(q));
+  if (!rows.length) {
+    el.innerHTML = '<div class="row"><div class="grow"><p class="t">' + (q ? 'No match' : 'Nobody yet') + '</p><p class="s">' +
+      (q ? 'Nothing on the list matches that search.' : 'An opt-out or a bounce puts the address here by itself. Nobody has done either yet.') + '</p></div></div>';
+    return;
+  }
+  el.innerHTML = rows.map(r =>
+    '<div class="row"><div class="grow"><p class="t">' + escHtml(r.value) + '</p>' +
+    '<p class="s">' + (r.kind === 'domain' ? 'Everyone at this domain' : 'This address') + ' · ' + relTime(r.created_at) + '</p></div>' +
+    '<span class="tag ' + (r.reason === 'manual' || r.reason === 'imported' ? '' : 'bad') + '">' + escHtml(own(NEVER_WORDS, r.reason) || r.reason) + '</span>' +
+    (_neverArmed === r.id
+      ? '<div class="row-acts"><button class="btn btn-danger btn-sm" onclick="removeNeverEmail(' + jsq(r.id) + ')">Yes, allow email again</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="_neverArmed=\'\';renderNeverRows()">Keep</button></div>'
+      : '<button class="btn btn-ghost btn-sm rowbtn" onclick="_neverArmed=' + jsq(r.id) + ';renderNeverRows()">Remove</button>') +
+    '</div>').join('') +
+    '<p class="w-f">' + (_never.total > rows.length && !q ? 'Showing the newest ' + rows.length + ' of ' + _never.total + '. Export has all of them. ' : '') +
+    'Only you can take someone off this list. Your agent cannot.</p>';
+}
+
+async function addNeverEmail() {
+  const input = document.getElementById('ne-value');
+  const res = await api('/api/suppressions', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({value: input.value.trim()})});
+  if (res && res.success) showToast(res.added ? res.value + ' will never be emailed.' : res.value + ' was already on the list.', 'success');
+  else showToast(failMsg(res, 'Could not add that.'), 'error');
+  loadNeverEmail();
+}
+
+async function removeNeverEmail(id) {
+  const res = await api('/api/suppressions/' + encodeURIComponent(id) + '/remove', {method: 'POST'});
+  _neverArmed = '';
+  if (res && res.success) showToast('Removed. Sellbird may email them again.', 'success');
+  else showToast(failMsg(res, 'Could not remove that.'), 'error');
+  loadNeverEmail();
+}
+
+// ── Limits and rules: the stop button, and what sends on its own ──
+
+async function loadLimits() {
+  const el = document.getElementById('limits-body');
+  if (!el) return;
+  const d = await api('/api/limits');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the limits', escHtml(d.error)); return; }
+  el.innerHTML = limitsHtml(d);
+}
+
+function limitsHtml(d) {
+  const r = (t, sub, tag, tone) => '<div class="row"><div class="grow"><p class="t">' + t + '</p><p class="s">' + sub + '</p></div>' +
+    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>';
+  const file = '<code>' + escHtml(d.file || 'sellbird.yaml') + '</code>';
+  const auto = d.mode === 'autopilot', paused = !!d.paused;
+  const q = d.quiet_hours || {}, w = d.send_window, t = d.texting;
+  return '<div class="secs">' +
+    '<section class="sec span"><div class="w"><div class="row"><div class="grow"><p class="t">' +
+      (paused ? 'All sending is paused' : 'Sending is on') + '</p><p class="s">' +
+      (paused ? escHtml(d.paused) + '. Nothing goes out until you turn it back on. Only you can.'
+              : 'One press stops every email and text. Your agent can press it too. Only you can undo it.') + '</p></div>' +
+      (paused ? '<button class="btn btn-primary btn-sm" onclick="limitsToggle(\'resume\')">Turn sending back on</button>'
+              : '<button class="btn btn-danger btn-sm" onclick="limitsToggle(\'pause\')">Pause all sending</button>') +
+      '</div></div></section>' +
+    '<section class="sec"><h2>What sends on its own</h2><div class="w">' +
+      '<div class="row"><div class="grow"><p class="t">Email autopilot</p><p class="s">' +
+        (auto ? 'On. Emails Sellbird writes go out on schedule, inside the limits here. Ones that link to a site that is not yours still wait for you.'
+              : 'Off. Every email, first, follow-up or reply, waits in the Outbox for you.') + '</p></div>' +
+        (auto ? '<button class="btn btn-secondary btn-sm" onclick="limitsAutopilotOff()">Turn off</button>'
+              : '<span class="tag good">Off</span>') + '</div>' +
+      r('Texts', 'Never. Every text waits for you under Inbox, Texts.', 'Never', 'good') +
+      r('Anything your agent writes', 'Never on its own say-so. It can draft and propose. It cannot approve, send or resume.', 'Never', 'good') +
+      '<p class="w-f">' + (auto ? 'Turning autopilot off works at once.' : 'Autopilot is turned on under <b>Sending and keys</b>, by typing its name.') +
+      ' There is no other rule that sends without you.</p></div></section>' +
+    '<section class="sec"><h2>Email limits</h2><div class="w">' +
+      r('Emails a day', 'Across every inbox. <code>channels.email.max_daily_sends</code>', escHtml(String(d.max_daily_sends))) +
+      r('Per inbox, a day', 'A new inbox ramps up to this. <code>channels.email.per_inbox_daily_cap</code>', escHtml(String(d.per_inbox_daily_cap))) +
+      r('Bounce limit', 'Past this share of bounces, all sending pauses by itself. <code>channels.email.max_bounce_rate</code>',
+        escHtml(String(Math.round(d.max_bounce_rate * 1000) / 10)) + '%') +
+      r('Sending hours', w ? 'Their local time' + (w.weekdays_only ? ', weekdays only' : '') + '. <code>channels.email.send_window</code>'
+                          : 'No window set. <code>channels.email.send_window</code>',
+        w ? escHtml(w.start) + ' to ' + escHtml(w.end) : 'Any time') +
+      r('Quiet hours', 'Sellbird does nothing in these hours, ' + escHtml(q.timezone || '') + '. <code>usage.quiet_hours</code>',
+        escHtml(q.start || '') + ' to ' + escHtml(q.end || '')) +
+      r('Follow-ups', 'They stop on a reply, a booked meeting or an opt-out. <code>writer.sequence_length</code>',
+        d.follow_ups ? escHtml(String(d.sequence_length)) + ' emails' : 'Off') +
+      r('Catch-all addresses', 'Addresses that cannot be confirmed either way. <code>channels.email.send_to_risky</code>',
+        d.send_to_risky ? 'Sent to' : 'Not sent to') +
+      '<p class="w-f">Change these in ' + file + '. A running Sellbird picks them up on its next cycle.</p></div></section>' +
+    (t ? '<section class="sec"><h2>Text limits</h2><div class="w">' +
+      r('Texting', t.enabled ? 'Approved texts go out each cycle.' : 'Nothing sends while it is off.', t.enabled ? 'On' : 'Off', t.enabled ? 'good' : '') +
+      r('Quiet hours', 'Their local time when Sellbird knows it, else yours. <code>texting.quiet_hours</code>',
+        escHtml(t.quiet_start) + ' to ' + escHtml(t.quiet_end)) +
+      r('Replies to people who text you first', 'Their message counts as the record. A reply still waits for you. <code>texting.reply_to_inbound</code>',
+        t.reply_to_inbound ? 'Allowed' : 'Needs a recorded yes') +
+      '<p class="w-f">The consent rules themselves are under <b>Texting and consent</b> and cannot be turned off.</p></div></section>' : '') +
+    '</div>';
+}
+
+async function limitsToggle(action) {
+  const res = await api('/api/sending/' + action, {method: 'POST'});
+  if (res && res.success) showToast(action === 'pause' ? 'Sending paused.' : 'Sending is back on.', 'success');
+  else showToast(failMsg(res, action === 'pause' ? 'Could not pause sending.' : 'Could not resume sending.'), 'error');
+  loadLimits();
+}
+
+async function limitsAutopilotOff() {
+  const res = await api('/api/sending-mode', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: 'approval'})});
+  if (res && res.success) showToast('Autopilot is off. Every email waits for you.', 'success');
+  else showToast(failMsg(res, 'Could not change the sending mode.'), 'error');
+  loadLimits();
+}
+
+// ── Your agent: access, what it may do, what it did ──
+
+async function loadAgent() {
+  const el = document.getElementById('agent-body');
+  if (!el) return;
+  const d = await api('/api/agent');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read this', escHtml(d.error)); return; }
+  el.innerHTML = agentHtml(d);
+}
+
+function agentHtml(d) {
+  const on = d.access !== 'off';
+  const r = (t, sub, tag, tone) => '<div class="row"><div class="grow"><p class="t">' + t + '</p>' + (sub ? '<p class="s">' + sub + '</p>' : '') + '</div>' +
+    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>';
+  const log = (d.requests || []).map(q => {
+    const ok = q.status >= 200 && q.status < 300;
+    const refused = q.status === 403;
+    return '<div class="row"><span class="time">' + relTime(q.created_at) + '</span><div class="grow"><p class="t">' + (q.what !== q.path ? escHtml(q.what) : 'Tried something that is yours alone') + '</p>' +
+      '<p class="s mono">' + escHtml(q.method) + ' ' + escHtml(q.path) + '</p></div>' +
+      '<span class="tag ' + (ok ? 'good' : refused ? 'bad' : 'wait') + '">' + (ok ? 'Done' : refused ? 'Refused' : 'Failed') + '</span></div>';
+  }).join('');
+  return '<div class="secs">' +
+    '<section class="sec span"><div class="w"><div class="row"><div class="grow"><p class="t">' +
+      (on ? 'Your agent has access' : 'Your agent is cut off') + '</p><p class="s">' +
+      (on ? (d.last_seen ? 'Last call ' + relTime(d.last_seen) + '. ' : 'It has not called yet. ') + 'Cutting it off works at once and needs nothing from the agent.'
+          : 'Every call it makes is refused. Nothing else changes: Sellbird keeps running and your own access is the same.') + '</p></div>' +
+      (on ? '<button class="btn btn-danger btn-sm" onclick="setAgentAccess(\'off\')">Cut it off</button>'
+          : '<button class="btn btn-primary btn-sm" onclick="setAgentAccess(\'on\')">Let it back in</button>') +
+      '</div></div></section>' +
+    '<section class="sec"><h2>Connect an agent</h2><div class="w pad">' +
+      '<p class="s" style="margin-bottom:10px">Run this once in a terminal, in this folder. It adds Sellbird to Claude Code or Codex as an MCP server.</p>' +
+      '<pre class="code-block">sellbird mcp install</pre>' +
+      '<p class="form-hint">The agent gets its own key, kept in <code>data/agent-token</code>. It is not your key and it opens less. Never paste either into a chat.</p></div>' +
+      '<h2>What it may do</h2><div class="w">' +
+      r('Read', 'Today, people, companies, replies, the Outbox, campaigns, numbers, the calendar and the setup checklist.', d.reads + ' reads') +
+      (d.may_do || []).map(x => r(escHtml(x), '')).join('') + '</div></section>' +
+    '<section class="sec"><h2>What it can never do</h2><div class="w">' +
+      ['Approve or send an email or a text', 'Turn sending back on after a pause', 'Turn on autopilot',
+       'Confirm a signal or run a paid search', 'Record that someone agreed to texts or calls',
+       'Take anyone off the never-email or do-not-contact lists', 'Read or change a key, a password or a setting',
+       'Switch its own access back on'].map(x => r(x, '', 'Yours', 'good')).join('') +
+      '<p class="w-f">This is a fixed list in the code, not a setting. A new feature is yours alone until it is added to the agent\'s list.</p></div></section>' +
+    '<section class="sec span"><h2>What it did</h2><div class="w">' +
+      (log || '<div class="row"><div class="grow"><p class="t">Nothing yet</p><p class="s">Every call your agent makes shows up here, including the ones Sellbird refused.</p></div></div>') +
+      '<p class="w-f">The newest 100. What it asked for and how it ended; never the contents.</p></div></section></div>';
+}
+
+async function setAgentAccess(access) {
+  const res = await api('/api/agent/access', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({access})});
+  if (res && res.success) showToast(access === 'off' ? 'Your agent is cut off.' : 'Your agent has access again.', 'success');
+  else showToast(failMsg(res, 'Could not change that.'), 'error');
+  loadAgent();
+}
+
+// ── One person: who they are, the deal, and everything that happened ──
+
+let _person = null;
+
+function openPerson(id) {
+  _personId = String(id || '');
+  _person = null;
+  showTab('person');
+}
+
+async function loadPerson() {
+  const el = document.getElementById('person-body');
+  if (!el) return;
+  if (!_personId) { goTab('prospects'); return; }
+  const d = await api('/api/prospects/' + encodeURIComponent(_personId));
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.success === false || !d.person) {
+    el.innerHTML = '<div class="w">' + emptyState(icon('contacts'), 'No such person',
+      'They may have been removed. <button type="button" class="linklike" onclick="goTab(\'prospects\')">Back to People</button>') + '</div>';
+    return;
+  }
+  // Typing in the deal form survives a background refresh.
+  const typing = document.activeElement && el.contains(document.activeElement) &&
+    ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+  _person = d;
+  if (!typing) el.innerHTML = personHtml(d);
+}
+
+function personHtml(d) {
+  const p = d.person;
+  const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email || 'Unnamed';
+  const stage = stageOf(p);
+  const r = (t, sub, tag, tone) => '<div class="row"><div class="grow"><p class="t">' + t + '</p>' + (sub ? '<p class="s">' + sub + '</p>' : '') + '</div>' +
+    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>';
+  const none = (t, sub) => '<div class="row"><div class="grow"><p class="t">' + t + '</p><p class="s">' + sub + '</p></div></div>';
+
+  // Emails and replies, in the order they happened.
+  const items = (d.emails || []).map(e => ({ts: e.sent_at || e.send_at || e.created_at, email: e}));
+  (d.conversations || []).forEach(c => (c.thread || []).forEach(m => items.push({ts: m.timestamp, msg: m})));
+  items.forEach(it => { it.key = +parseTs(it.ts); });
+  items.sort((a, b) => (isNaN(a.key) ? Infinity : a.key) - (isNaN(b.key) ? Infinity : b.key));
+  const thread = items.map(it => {
+    if (it.email) {
+      const e = it.email;
+      return '<div class="thread-email"><div class="te-head">' + icon('campaigns') +
+        '<b>' + (e.kind === 'reply' ? 'Reply' : 'Email ' + escHtml(String(e.step))) + '</b><span>' + escHtml(e.subject) + '</span>' +
+        badge(e.status) + '<span class="te-when">' + relTime(it.ts) + '</span></div>' +
+        '<div class="te-body">' + escHtml(e.body) + '</div></div>';
+    }
+    const m = it.msg, sent = m.sender !== 'prospect';
+    return '<div class="thread-msg ' + (sent ? 'sent' : 'received') + '"><div class="sender">' +
+      (sent ? 'Sellbird' : escHtml(p.first_name || 'Them')) + ' &middot; ' + relTime(m.timestamp) + '</div>' + escHtml(m.content) + '</div>';
+  }).join('');
+
+  const texts = (d.texts || []).map(t => {
+    const out = t.direction === 'out';
+    return '<div class="thread-msg ' + (out ? 'sent' : 'received') + '"><div class="sender">' +
+      (out ? 'You' : escHtml(p.first_name || 'Them')) + ' &middot; ' + relTime(t.sent_at || t.created_at) +
+      (out && t.status !== 'sent' ? ' &middot; ' + escHtml(String(t.status).replace(/_/g, ' ')) : '') + '</div>' + escHtml(t.body) + '</div>';
+  }).join('');
+
+  const latest = {};
+  (d.consents || []).forEach(c => { if (!latest[c.channel]) latest[c.channel] = c; });
+  const consentRow = (channel, label) => {
+    const c = latest[channel];
+    if (!c) return r(label, 'No record. Nothing can go to them on this channel.', 'No yes', '');
+    return r(label, escHtml(c.evidence || c.source || '') + ' · ' + relTime(c.created_at) + ' · recorded by ' + escHtml(c.recorded_by || 'you'),
+      c.status === 'granted' ? 'Yes' : 'Took it back', c.status === 'granted' ? 'good' : 'bad');
+  };
+
+  const history = (d.stage_events || []).slice().reverse().map(ev =>
+    '<div class="row"><span class="time">' + relTime(ev.created_at) + '</span><div class="grow"><p class="t">' +
+    escHtml(own(stageNames(), ev.to_stage) || ev.to_stage) + '</p><p class="s">' +
+    (ev.from_stage ? 'From ' + escHtml(own(stageNames(), ev.from_stage) || ev.from_stage) + ', by ' : 'By ') +
+    escHtml(ev.changed_by === 'sellbird' ? 'Sellbird' : ev.changed_by === 'agent' ? 'your agent' : 'you') +
+    (ev.reason ? ' · ' + escHtml(ev.reason) : '') + '</p></div></div>').join('');
+  const meetings = (d.meetings || []).map(m =>
+    r(m.starts_at ? formatDate(m.starts_at) : 'Time not given', escHtml(m.note || '') || 'Recorded ' + relTime(m.created_at), 'Meeting', 'acc')).join('');
+
+  const optedOut = p.status === 'opted_out';
+  return '<div class="person-head"><span class="who big" aria-hidden="true">' + initials(p.first_name, p.last_name) + '</span>' +
+      '<div class="grow"><h1 tabindex="-1">' + escHtml(name) + '</h1>' +
+      '<p>' + escHtml([p.title, p.company].filter(Boolean).join(', ')) + '</p>' +
+      '<p class="reach">' + [p.email ? escHtml(p.email) + emailTag(p) : '', p.phone ? escHtml(p.phone) : ''].filter(Boolean).join(' · ') + '</p></div>' +
+      '<div class="tags"><span class="tag' + (STAGE_TONES[stage] ? ' ' + STAGE_TONES[stage] : '') + '">' + escHtml(stageNames()[stage]) + '</span>' +
+      '<span class="tag">' + escHtml(sourceName(sourceOf(p))) + '</span>' + badge(p.status) + '</div></div>' +
+    (d.suppressed ? '<div class="banner bad">' + icon('alert') + '<div><b>Never emailed</b><p>' +
+      escHtml(own(NEVER_WORDS, d.suppressed) || d.suppressed) + '. See Set up, Opt-outs and bounces.</p></div></div>' : '') +
+    '<div class="secs">' +
+    '<section class="sec"><h2>The deal</h2><div class="w pad">' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="pd-stage">Stage</label>' +
+        '<select class="form-input" id="pd-stage"' + (optedOut ? ' disabled' : '') + ' onchange="personStage(this.value)">' +
+        Object.keys(stageNames()).map(k => '<option value="' + k + '"' + (k === stage ? ' selected' : '') + '>' + escHtml(stageNames()[k]) + '</option>').join('') +
+        '</select></div>' +
+      '<div class="form-group"><label class="form-label" for="pd-value">Worth</label>' +
+        '<input class="form-input" id="pd-value" inputmode="numeric" autocomplete="off" placeholder="0" value="' + (p.deal_value ? escHtml(String(p.deal_value)) : '') + '"></div></div>' +
+      '<div class="form-group"><label class="form-label" for="pd-next">Next step</label>' +
+        '<input class="form-input" id="pd-next" maxlength="300" placeholder="Send the quote by Friday" value="' + escHtml(p.next_step || '') + '"></div>' +
+      '<div class="form-group"><label class="form-label" for="pd-notes">Notes</label>' +
+        '<textarea class="form-input" id="pd-notes" rows="3" maxlength="4000">' + escHtml(p.deal_notes || '') + '</textarea></div>' +
+      '<div class="btn-group" style="margin-top:0"><button class="btn btn-primary btn-sm" onclick="savePersonDeal()">Save</button>' +
+        (optedOut ? '' : '<button class="btn btn-secondary btn-sm" onclick="personMeeting()">A meeting is booked</button>') + '</div>' +
+      '<p class="form-hint">Your agent keeps this up to date too. Moving a stage sends nothing. A booked meeting stops their follow-ups.</p></div>' +
+      '<h2>Calls and texts</h2><div class="w">' + consentRow('sms', 'Texts') + consentRow('call', 'Calls') +
+        (d.phone_blocked ? r('Do not contact', d.phone_blocked === 'opted_out' ? 'They replied STOP.' : 'Added by hand.', 'Blocked', 'bad') : '') +
+        '<p class="w-f">A yes is recorded under Set up, Texting and consent.</p></div>' +
+      '<h2>Stage history</h2><div class="w">' + (meetings + history || none('Nothing yet', 'They were found and have not moved since.')) + '</div></section>' +
+    '<section class="sec"><h2>Emails and replies</h2><div class="w pad"><div class="thread">' +
+      (thread || '<p class="muted">Nothing has been written to them yet.</p>') + '</div></div>' +
+      (texts ? '<h2>Texts</h2><div class="w pad"><div class="thread">' + texts + '</div></div>' : '') +
+      (p.personalization_notes ? '<h2>What Sellbird found</h2><div class="w pad"><p class="notes">' + escHtml(p.personalization_notes) + '</p></div>' : '') +
+    '</section></div>';
+}
+
+async function savePersonDeal() {
+  const value = document.getElementById('pd-value').value.replace(/[^0-9.]/g, '');
+  const body = {value: value === '' ? 0 : Number(value), next_step: document.getElementById('pd-next').value,
+                notes: document.getElementById('pd-notes').value};
+  const res = await api('/api/prospects/' + encodeURIComponent(_personId) + '/deal', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (res && res.success) showToast('Saved.', 'success');
+  else showToast(failMsg(res, 'Could not save that.'), 'error');
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  loadPerson();
+}
+
+async function personStage(stage) {
+  if (stage === 'meeting_booked') { personMeeting(); return; }
+  const res = await api('/api/prospects/' + encodeURIComponent(_personId) + '/stage', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({stage})});
+  if (res && res.success) showToast('Moved to ' + (own(stageNames(), stage) || stage) + '.', 'success');
+  else showToast(failMsg(res, 'Could not move them.'), 'error');
+  loadPerson();
+}
+
+async function personMeeting() {
+  const when = prompt('A meeting is booked. Their follow-ups stop.\n\nWhen is it? Optional, for example 2026-03-10 15:00', '');
+  if (when === null) { loadPerson(); return; }
+  let starts = '';
+  if (when.trim()) {
+    const dt = new Date(when.trim().replace(' ', 'T'));
+    if (isNaN(dt)) { showToast('That time was not understood. Try 2026-03-10 15:00.', 'error'); loadPerson(); return; }
+    starts = dt.toISOString();
+  }
+  const res = await api('/api/prospects/' + encodeURIComponent(_personId) + '/meeting', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({starts_at: starts})});
+  if (res && res.success) showToast('Meeting recorded. Follow-ups stop.', 'success');
+  else showToast(failMsg(res, 'Could not record the meeting.'), 'error');
+  loadPerson();
+}
+
 // ── Events and webhooks: what other tools can listen to ──
 
 const EVENT_NAMES = {'lead.created': 'New lead', 'reply.received': 'Reply', 'meeting.booked': 'Meeting booked',
@@ -3770,7 +4197,7 @@ function labelTables(root) {
 
 // ── Init & live refresh ──
 
-showTab((window.location.hash || '').slice(1) || 'today', {fromHash: true, focus: false});
+showTab(fromHash(), {fromHash: true, focus: false});
 loadSellbirdStatus();
 
 // Agent status: quick poll (not while locked: it would only be refused)

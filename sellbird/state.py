@@ -616,7 +616,27 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_texts_status ON texts(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_texts_phone ON texts(phone, created_at);
     """,
+    # ── v20: the deal on a person, and what the agent did ──
+    # A deal is three plain fields on the person, so the People list and the
+    # person's page read them with no join. agent_requests is a record of
+    # every call made with the agent's token: what it asked for and whether
+    # it was let through. It holds no request body.
+    """
+    ALTER TABLE prospects ADD COLUMN deal_value INTEGER DEFAULT 0;
+    ALTER TABLE prospects ADD COLUMN next_step TEXT DEFAULT '';
+    ALTER TABLE prospects ADD COLUMN deal_notes TEXT DEFAULT '';
+    CREATE TABLE IF NOT EXISTS agent_requests (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_agent_requests_time ON agent_requests(created_at);
+    """,
 ]
+
+# The deal on a person (set_deal) and the agent's request log.
+DEAL_VALUE_MAX = 1_000_000_000
+DEAL_TEXT_MAX = 300
+DEAL_NOTES_MAX = 4000
+AGENT_LOG_KEEP = 5000
 
 BRAIN_PROVIDERS = ("claude", "codex")
 _USAGE_LOG_COLUMN = {"claude": "claude_calls", "codex": "codex_calls"}
@@ -1264,6 +1284,99 @@ class StateManager:
             async with db.execute(
                     "SELECT * FROM stage_events WHERE prospect_id = ? "
                     "ORDER BY created_at DESC, rowid DESC LIMIT ?", (prospect_id, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def set_deal(self, prospect_id: str, *, value: int | None = None,
+                       next_step: str | None = None, notes: str | None = None) -> dict | None:
+        """Change the deal on a person: what it is worth (whole units of the
+        owner's currency), the next step and a note. Only the fields given
+        change. Returns the three as they now stand, or None for nobody."""
+        sets, params = [], []
+        if value is not None:
+            sets.append("deal_value = ?")
+            params.append(max(0, min(int(value), DEAL_VALUE_MAX)))
+        if next_step is not None:
+            sets.append("next_step = ?")
+            params.append(str(next_step).strip()[:DEAL_TEXT_MAX])
+        if notes is not None:
+            sets.append("deal_notes = ?")
+            params.append(str(notes).strip()[:DEAL_NOTES_MAX])
+        async with self._connect() as db:
+            if sets:
+                await db.execute(f"UPDATE prospects SET {', '.join(sets)}, updated_at = ? WHERE id = ?",
+                                 (*params, _utcnow().isoformat(), prospect_id))
+                await db.commit()
+            async with db.execute("SELECT deal_value, next_step, deal_notes FROM prospects WHERE id = ?",
+                                  (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {"value": row[0] or 0, "next_step": row[1] or "", "notes": row[2] or ""}
+
+    async def person_record(self, prospect_id: str) -> dict | None:
+        """Everything about one person in one read: who they are, the deal,
+        every email written to them, every reply, their texts, their consent
+        records, each stage move and each booked meeting."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+
+            async def rows(sql: str, params: tuple) -> list[dict]:
+                async with db.execute(sql, params) as cursor:
+                    return [dict(r) for r in await cursor.fetchall()]
+
+            found = await rows("SELECT * FROM prospects WHERE id = ?", (prospect_id,))
+            if not found:
+                return None
+            person = found[0]
+            emails = await rows(
+                "SELECT id, campaign_id, step, kind, subject, body, status, send_at, sent_at, created_at"
+                " FROM outbox WHERE prospect_id = ? ORDER BY COALESCE(sent_at, send_at, created_at)",
+                (prospect_id,))
+            conversations = await rows(
+                "SELECT id, campaign_id, thread_json, intent, stage, status, updated_at"
+                " FROM conversations WHERE prospect_id = ? ORDER BY created_at", (prospect_id,))
+            phone = person.get("phone") or ""
+            texts = await rows(
+                "SELECT id, direction, body, status, error, created_at, sent_at FROM texts"
+                " WHERE prospect_id = ? OR (phone != '' AND phone = ?) ORDER BY created_at, rowid",
+                (prospect_id, phone))
+            consents = await rows(
+                "SELECT channel, status, source, evidence, recorded_by, created_at FROM consents"
+                " WHERE prospect_id = ? OR (phone != '' AND phone = ?) ORDER BY created_at DESC, rowid DESC",
+                (prospect_id, phone))
+            stages = await rows(
+                "SELECT * FROM stage_events WHERE prospect_id = ? ORDER BY created_at, rowid", (prospect_id,))
+            meetings = await rows(
+                "SELECT * FROM meetings WHERE prospect_id = ? ORDER BY created_at", (prospect_id,))
+            blocked = await rows("SELECT reason FROM phone_blocks WHERE phone = ? AND phone != ''", (phone,))
+        for c in conversations:
+            try:
+                thread = json.loads(c.pop("thread_json") or "[]")
+            except ValueError:
+                thread = []
+            c["thread"] = thread if isinstance(thread, list) else []
+        return {"person": person, "emails": emails, "conversations": conversations, "texts": texts,
+                "consents": consents, "stage_events": stages, "meetings": meetings,
+                "phone_blocked": blocked[0]["reason"] if blocked else "",
+                "suppressed": await self.is_suppressed(person.get("email") or "") or ""}
+
+    async def log_agent_request(self, method: str, path: str, status: int) -> None:
+        """One line for a call made with the agent's token. The oldest lines
+        go once there are more than AGENT_LOG_KEEP."""
+        async with self._connect() as db:
+            await db.execute("INSERT INTO agent_requests (method, path, status) VALUES (?, ?, ?)",
+                             (str(method)[:8], str(path)[:200], int(status)))
+            await db.execute(
+                "DELETE FROM agent_requests WHERE id <= (SELECT MAX(id) FROM agent_requests) - ?",
+                (AGENT_LOG_KEEP,))
+            await db.commit()
+
+    async def get_agent_requests(self, limit: int = 100) -> list[dict]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT method, path, status, created_at FROM agent_requests ORDER BY id DESC LIMIT ?",
+                    (int(limit),)) as cursor:
                 return [dict(r) for r in await cursor.fetchall()]
 
     async def set_lead_source(self, prospect_id: str, source: str) -> str:

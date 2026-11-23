@@ -52,6 +52,7 @@ sellbird status                # pipeline summary
 sellbird usage                 # active provider's quota + per-agent tokens
 sellbird outbox                # review queued email
 sellbird export                # deliverable prospects → CSV
+sellbird import people.csv     # bring your own list in; checks each address, emails nobody
 sellbird precleared-key        # free key for the cold-email check, saved to .env
 sellbird companies             # company register → CSV: every company, fit, and why it wasn't contacted
 sellbird sending pause|resume  # kill switch

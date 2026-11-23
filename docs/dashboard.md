@@ -28,6 +28,8 @@ There is no sidebar and no top bar. A dock floats at the bottom with six places,
 - **Numbers**: people found, emails sent, replies and reply rate over 2, 6 or 12 weeks, by campaign and by inbox. **Model usage** is the second view: Claude or Codex quota gauges and per-agent token counts, with no dollar figures, because a subscription is not billed per token.
 - **Set up**: one row each for **Your company**, **Campaigns**, **Signals** (the confirmation gate and the cohort builder), **Find businesses** (the provider menu with prices side by side, an estimate, then a run), **Inboxes**, **Sending and keys**, **Engine** (start, stop, log), **Activity** and **Help**. Each opens with a way back.
 
+Under **Set up** there are also: **Email records** (MX, SPF, DKIM and DMARC on each sending domain, with what to change; read only), **Limits and rules** (the stop button, every sending limit, and anything that sends without you), **Opt-outs and bounces** (the never-email list, with the reason for each entry and a CSV export), **Texting and consent**, **Events and webhooks**, and **Your agent** (what your coding agent may do, a log of every call it made, and a switch that cuts it off at once; only you can switch it back on). A name on **People** opens that person's page: the deal (worth, next step, notes), every email, reply and text, their consent records, stage history and meetings.
+
 Addresses work as links: `#outbox`, `#signals`, `#calendar` and so on open that screen.
 
 | Outbox | Conversations |

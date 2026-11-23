@@ -34,6 +34,22 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Five more screens in the dashboard.** *Email records* (Set up) reads MX,
+  SPF, DKIM and DMARC on each domain you send from and says what to change;
+  Sellbird never writes DNS. *Opt-outs and bounces* is the never-email list
+  with the reason for each entry, add, remove and CSV export. *Limits and
+  rules* puts the stop button, every sending limit and anything that sends
+  without you in one place. *Your agent* shows what your coding agent may do,
+  logs every call it makes (allowed or refused) and has a switch that cuts it
+  off at once. Each person on People opens a page of their own: the deal
+  (worth, next step, notes), every email, reply and text, consent, stage
+  history and meetings.
+- **`sellbird import people.csv`.** Bring your own list in. Each address is
+  checked like a found one, people on the never-email list are left out, and
+  nobody is emailed: they land in People with the source "import".
+- **Agent tools** `person_get`, `person_update_deal`, `email_records`,
+  `never_email_list` and `limits`.
+
 - **A consent check for calls and texts, and texts through your own Twilio.**
   One gate in code (`sellbird/consent.py`): a stored yes for that channel, not
   opted out, not on the do-not-contact list, not in quiet hours. There is no

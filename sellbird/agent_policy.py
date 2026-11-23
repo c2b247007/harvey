@@ -9,6 +9,10 @@ and recording a booked meeting (which can only stop email, never send it). Every
 approval, setting, key, purchase, resume or deletion, is yours alone and
 answers 403 to the agent.
 
+You can also cut the agent off altogether (dashboard, Set up, Your agent):
+while that switch is off every agent request answers 403, and every agent
+request, allowed or refused, is written to a log you can read there.
+
 The list is an allowlist on purpose: a route added to the dashboard later is
 yours until someone decides the agent may call it. An extension adds its own
 agent routes with ``registry.add_agent_route`` (sellbird.extensions).
@@ -59,7 +63,73 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", r"/api/prospects/[^/]+/stage"),
     ("POST", r"/api/prospects/[^/]+/stage"),    # where a person stands; sends nothing
     ("POST", r"/api/prospects/[^/]+/meeting"),  # a booking only ever stops follow-ups
+    ("GET", r"/api/prospects/[^/]+"),            # one person's record
+    ("POST", r"/api/prospects/[^/]+/deal"),      # value, next step, notes; sends nothing
+    ("GET", r"/api/email-records"),
+    ("GET", r"/api/suppressions"),
+    ("GET", r"/api/limits"),
 )
+
+# What each route is, in the words the Your agent screen and its log use.
+# A path with no entry is shown as it is.
+ROUTE_WORDS: tuple[tuple[str, str], ...] = (
+    (r"/api/today", "Read Today"),
+    (r"/api/stats", "Read the totals"),
+    (r"/api/trend", "Read the trend"),
+    (r"/api/activity", "Read the activity log"),
+    (r"/api/usage", "Read model usage"),
+    (r"/api/live-status", "Read what is running"),
+    (r"/api/setup-status", "Read the setup checklist"),
+    (r"/api/sending-mode", "Read the sending mode"),
+    (r"/api/sellbird/status", "Read the engine's state"),
+    (r"/api/runs", "Read past runs"),
+    (r"/api/campaigns", "Read campaigns"),
+    (r"/api/companies", "Read companies"),
+    (r"/api/companies/[^/]+/contacts", "Read a company's people"),
+    (r"/api/companies/[^/]+/profile", "Read a company's profile"),
+    (r"/api/prospects", "Read people"),
+    (r"/api/prospects/[^/]+", "Read one person"),
+    (r"/api/conversations", "Read replies"),
+    (r"/api/outbox", "Read the Outbox"),
+    (r"/api/signals", "Read signals"),
+    (r"/api/discover/providers", "Read the sources for finding businesses"),
+    (r"/api/inboxes", "Read inboxes"),
+    (r"/api/discover/estimate", "Price a search (runs nothing)"),
+    (r"/api/sending/pause", "Pause all sending"),
+    (r"/api/company", "Read your company"),
+    (r"/api/offers/accepted", "Read who said yes to your offer"),
+    (r"/api/offer/suggest", "Suggest offers"),
+    (r"/api/offer/preview", "Write a sample email for an offer"),
+    (r"/api/offer/propose", "Propose an offer for you to confirm"),
+    (r"/api/inboxes/[^/]+/pause", "Pause one inbox"),
+    (r"/api/calendar", "Read the calendar"),
+    (r"/api/pipeline", "Read the pipeline"),
+    (r"/api/events", "Read events"),
+    (r"/api/texting", "Read texts and consent"),
+    (r"/api/texts", "Draft a text for you to approve"),
+    (r"/api/consent/check", "Ask whether someone may be called or texted"),
+    (r"/api/phone-blocks", "Add a number to do-not-contact"),
+    (r"/api/prospects/[^/]+/stage", "Move a person's stage"),
+    (r"/api/prospects/[^/]+/meeting", "Record a booked meeting"),
+    (r"/api/prospects/[^/]+/deal", "Change a deal's value, next step or notes"),
+    (r"/api/email-records", "Read the email records check"),
+    (r"/api/suppressions", "Read who is never emailed"),
+    (r"/api/limits", "Read limits and rules"),
+)
+_WORDS = [(re.compile(pattern), words) for pattern, words in ROUTE_WORDS]
+
+
+def describe_route(pattern: str) -> str:
+    """The words for one entry of AGENT_ROUTES, by its pattern."""
+    return dict(ROUTE_WORDS).get(pattern, pattern)
+
+
+def describe(path: str) -> str:
+    for pattern, words in _WORDS:
+        if pattern.fullmatch(path):
+            return words
+    return path
+
 
 USER_ONLY = {
     "error": "user_only",
@@ -79,22 +149,64 @@ def agent_may(method: str, path: str, extra=()) -> bool:
     return any(m == method and p.fullmatch(path) for m, p in (*_BUILT_IN, *extra))
 
 
+AGENT_OFF = {
+    "error": "agent_off",
+    "message": "The user has switched agent access off in the Sellbird dashboard "
+               "(Set up, Your agent). Only they can switch it back on.",
+}
+
+
 class AgentPolicy:
     """ASGI middleware, inside DashboardGuard: a request made with the agent's
-    token reaches only the allowed routes."""
+    token reaches only the allowed routes, and none at all while the user has
+    switched agent access off. ``is_off`` answers that; ``record`` is told
+    the method, path and status of every agent request. Both are optional and
+    neither may break a request: a failure in either is swallowed."""
 
-    def __init__(self, app):
+    def __init__(self, app, is_off=None, record=None):
         self.app = app
+        self.is_off = is_off
+        self.record = record
 
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or (scope.get("state") or {}).get("principal") != "agent":
-            return await self.app(scope, receive, send)
-        from sellbird import extensions
-        extra = _compile(extensions.registry().agent_routes)
-        if agent_may(scope["method"], scope["path"], extra):
-            return await self.app(scope, receive, send)
-        body = json.dumps(USER_ONLY).encode()
+    async def _note(self, scope, status: int) -> None:
+        if self.record is None:
+            return
+        try:
+            await self.record(scope["method"], scope["path"], status)
+        except Exception:
+            pass
+
+    async def _refuse(self, scope, send, payload: dict) -> None:
+        body = json.dumps(payload).encode()
         await send({"type": "http.response.start", "status": 403,
                     "headers": [(b"content-type", b"application/json"),
                                 (b"content-length", str(len(body)).encode())]})
         await send({"type": "http.response.body", "body": body})
+        await self._note(scope, 403)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or (scope.get("state") or {}).get("principal") != "agent":
+            return await self.app(scope, receive, send)
+        off = False
+        if self.is_off is not None:
+            try:
+                off = bool(await self.is_off())
+            except Exception:
+                off = True   # can't tell: closed is the safe answer for an off switch
+        if off:
+            return await self._refuse(scope, send, AGENT_OFF)
+        from sellbird import extensions
+        extra = _compile(extensions.registry().agent_routes)
+        if not agent_may(scope["method"], scope["path"], extra):
+            return await self._refuse(scope, send, USER_ONLY)
+        seen = {"status": 0}
+
+        async def watch(message):
+            if message["type"] == "http.response.start":
+                seen["status"] = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watch)
+        finally:
+            await self._note(scope, seen["status"] or 500)

@@ -1081,6 +1081,54 @@ def _carry_over_from_harvey():
         print(f"Sellbird (formerly Harvey): {note}", file=sys.stderr)
 
 
+def cmd_import(args):
+    """Bring a CSV of people in. They land in People; nobody is emailed."""
+    from pathlib import Path
+
+    from sellbird import importer
+    from sellbird.config import load_env
+    from sellbird.integrations.email_finder import verify_published_address
+    from sellbird.state import StateManager
+    from sellbird.textio import read_user_text
+
+    path = Path(args.file).expanduser()
+    if not path.is_file():
+        print(f"\n  No such file: {path}\n")
+        sys.exit(1)
+    people, problems = importer.read_rows(read_user_text(path))
+    for line in problems[:20]:
+        print(f"  {line}")
+    if len(problems) > 20:
+        print(f"  ...and {len(problems) - 20} more rows left out.")
+    if not people:
+        print("\n  Nothing to import.\n")
+        sys.exit(1)
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        env = load_env()
+
+        async def check(email: str) -> str:
+            return await verify_published_address(email, env)
+
+        return await importer.import_people(
+            state, people, check=None if args.no_check else check, dry_run=args.dry_run)
+
+    counts = asyncio.run(_run())
+    verb = "Would add" if args.dry_run else "Added"
+    print(f"\n  {verb} {counts['added']} of {len(people)} people.")
+    if not args.dry_run and counts["added"]:
+        print(f"    {counts['verified']} verified, {counts['risky']} catch-all, "
+              f"{counts['guess']} not checked (a guess is never sent to)")
+    for key, words in (("already_here", "already in People"),
+                       ("never_email", "on your never-email list, left out"),
+                       ("invalid", "address does not exist, left out")):
+        if counts[key]:
+            print(f"    {counts[key]} {words}")
+    print("  Nobody was emailed. They are in People with the source \"import\".\n")
+
+
 def cmd_suppressions(args):
     """See, add or remove suppressed addresses and domains. Removing is yours alone."""
     from sellbird.state import StateManager
@@ -1320,6 +1368,13 @@ def main():
     from sellbird import desktop_cli
     desktop_cli.register_desktop_commands(subparsers)
     desktop_cli.register(subparsers)
+
+    sub = subparsers.add_parser("import", help="Bring your own list in from a CSV (emails nobody)")
+    sub.add_argument("file", help="A CSV with a header row; one column must be email")
+    sub.add_argument("--no-check", action="store_true",
+                     help="Skip checking each address; every one stays a guess and is never sent to")
+    sub.add_argument("--dry-run", action="store_true", help="Count what would be added; change nothing")
+    sub.set_defaults(func=cmd_import)
 
     sub = subparsers.add_parser("suppressions", help="Addresses and domains Sellbird never emails")
     sub.add_argument("suppression_action", nargs="?", default="list", choices=["list", "add", "remove"])

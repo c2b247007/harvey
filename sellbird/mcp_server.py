@@ -371,6 +371,46 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
             f"/api/prospects/{quote(prospect_id, safe='')}/meeting", {"starts_at": starts_at, "note": note}))
 
     @server.tool()
+    async def person_get(prospect_id: str) -> dict:
+        """Everything about one person: who they are, the deal (value, next step,
+        notes), every email written to them, every reply and text, their consent
+        records, each stage move and each booked meeting. Read this before a
+        meeting to brief the user, and after one to draft the follow-up."""
+        return await read(f"/api/prospects/{quote(prospect_id, safe='')}")
+
+    @server.tool()
+    async def person_update_deal(prospect_id: str, value: int | None = None,
+                                 next_step: str | None = None, notes: str | None = None) -> dict:
+        """Change the deal on a person: what it is worth (a whole number in the
+        user's currency), the next step, and notes. Only what you pass changes.
+        Sends nothing. To move the stage use person_set_stage."""
+        body = {k: v for k, v in (("value", value), ("next_step", next_step), ("notes", notes))
+                if v is not None}
+        return await guarded(lambda c: c.post(
+            f"/api/prospects/{quote(prospect_id, safe='')}/deal", body))
+
+    @server.tool()
+    async def email_records() -> dict:
+        """MX, SPF, DKIM and DMARC for each domain the user sends from, with what
+        to change for anything that is not right. Read only: the user changes DNS
+        at their domain provider."""
+        return await read("/api/email-records")
+
+    @server.tool()
+    async def never_email_list() -> dict:
+        """Everyone Sellbird will never email and why (opted out, bounced,
+        complained, added by the user). Only the user can add to it or take
+        someone off it."""
+        return await read("/api/suppressions")
+
+    @server.tool()
+    async def limits() -> dict:
+        """Every limit on what goes out (daily sends, bounce limit, quiet hours,
+        send window) and every rule that lets something send without the user.
+        Only the user changes them."""
+        return await read("/api/limits")
+
+    @server.tool()
     async def sending_status() -> dict:
         """Whether sending is paused and why, and whether email waits for approval."""
         async def call(c: CoreClient) -> dict:

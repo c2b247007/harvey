@@ -333,6 +333,9 @@ Users will come back with questions and tasks. Common ones:
 - **"How do I see the database?"** → It's at `data/sellbird.db`. They can open it with any SQLite tool, or ask you to query it.
 - **"Can it tell my CRM / Zapier / Slack?"** → Yes: every reply, new lead, booking and stage change is an event. Add an address under `webhooks:` in the config file Sellbird reads, put the signing secret in `.env`, and check Set up → Events and webhooks (`docs/events.md`). Have the user add the secret themselves; don't ask them to paste it into this chat.
 - **"Can it text people?"** → Only people who said yes, through the user's own Twilio account, and only texts the user approved (Inbox → Texts). Record each yes under Set up → Texting and consent; you can draft a text (`text_draft`) and ask the gate (`consent_check`), but you can't record consent or approve. Never suggest texting a list or anyone who hasn't opted in: Sellbird refuses it in code. Twilio keys go in `.env`, typed by the user, never pasted into this chat. See `docs/texting.md`.
+- **"I have my own list"** → `sellbird import people.csv` (a header row with an `email` column; name, title, company and phone are used when present). Each address is checked like a found one, anyone on the never-email list is left out, and nobody is emailed: they land in People with the source "import". A column saying someone agreed to texts is ignored; a yes is recorded one person at a time.
+- **"Are my DNS records right?"** → the `email_records` tool, or Set up → Email records: MX, SPF, DKIM and DMARC on each sending domain with what to change. Sellbird never writes DNS; the user changes it at their domain provider.
+- **"What did you do?" / "Stop the agent"** → Set up → Your agent logs every call you make, and has a switch that cuts you off. Only the user can switch it back on; if a tool answers `agent_off`, tell them and stop.
 - **"I just want the prospect list"** → `sellbird export` writes a sequencer-ready CSV (verified/risky emails only; `--all` for everything). Also available as Export buttons on the dashboard's People place. Sellbird is valuable purely as a list-builder even if the user never lets it send.
 
 ---
@@ -377,6 +380,7 @@ sellbird usage                 # Claude quota gauges + per-agent token usage (no
 sellbird export                # Deliverable prospects → sequencer-ready CSV (prospects.csv)
 sellbird precleared-key [--email ADDRESS]  # Free Precleared key for the cold-email check, saved to .env
 sellbird export --all          # Full raw list, no filters
+sellbird import people.csv     # Bring your own list in (checks each address, emails nobody)
 sellbird companies             # Company register CSV: every company, its fit score, and why it wasn't contacted
 sellbird gmail auth            # One-time Gmail OAuth (when provider: gmail)
 sellbird gmail test            # Verify the Gmail connection

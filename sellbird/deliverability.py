@@ -162,6 +162,43 @@ def check_dkim(domain: str, selector: str = "") -> Check:
                  "set channels.email.warmup.dkim_selector; otherwise turn DKIM on in your provider.")
 
 
+def how_to_fix(check: Check, domain: str) -> str:
+    """What to do about a record check that isn't OK, in plain words, or ''.
+    Where the record has one right shape, the record itself is given so it
+    can be copied into the domain's DNS."""
+    if check.status == OK or check.unknown:
+        return ""
+    detail = check.detail.lower()
+    if check.name == "MX":
+        return ("Add the MX records your mail provider lists for this domain "
+                "(Google Workspace, Microsoft 365 or your host), at your domain provider.")
+    if check.name == "SPF":
+        if "no spf record" in detail:
+            return (f"Add one TXT record on {domain} that names your mail provider. "
+                    "Google Workspace: v=spf1 include:_spf.google.com ~all. "
+                    "Microsoft 365: v=spf1 include:spf.protection.outlook.com ~all.")
+        if "spf records" in detail:
+            return "Keep one SPF record: put every include in a single v=spf1 line and delete the others."
+        if "+all" in detail:
+            return "Change the ending of the SPF record to ~all."
+        if "lookups" in detail:
+            return "Remove the includes for services that no longer send mail for this domain."
+        return "End the SPF record with ~all."
+    if check.name == "DKIM":
+        return ("Turn on DKIM signing in your mail provider's admin console and add the TXT record "
+                "it shows you. If it uses its own selector, set channels.email.warmup.dkim_selector.")
+    if check.name == "DMARC":
+        if "no dmarc record" in detail:
+            return (f"Add a TXT record at _dmarc.{domain} with: "
+                    f"v=DMARC1; p=none; rua=mailto:dmarc@{domain}")
+        if "dmarc records" in detail:
+            return f"Keep one TXT record at _dmarc.{domain} and delete the others."
+        if "no p=" in detail:
+            return "Add p=none to the DMARC record."
+        return "Nothing to do while warming. Later, change p=none to p=quarantine."
+    return ""
+
+
 def check_domain_age(domain: str) -> Check:
     try:
         r = httpx.get(f"https://rdap.org/domain/{domain}", timeout=15, follow_redirects=True)

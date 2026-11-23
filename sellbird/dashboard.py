@@ -60,8 +60,23 @@ def _resolve_config_file() -> Path:
 app = FastAPI(title="Sellbird Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
 token_store = auth.TokenStore(TOKEN_FILE)
 agent_token_store = auth.TokenStore(AGENT_TOKEN_FILE)
+AGENT_ACCESS_KEY = "agent_access"   # 'off' cuts the agent off; anything else is on
+
+
+async def _agent_is_off() -> bool:
+    if not DB_PATH.exists():
+        return False
+    return (await _state().get_setting(AGENT_ACCESS_KEY) or "") == "off"
+
+
+async def _record_agent_request(method: str, path: str, status: int) -> None:
+    state = _state()
+    await state.init_db()
+    await state.log_agent_request(method, path, status)
+
+
 # Innermost first: the guard (added next) sets the principal before this runs.
-app.add_middleware(agent_policy.AgentPolicy)
+app.add_middleware(agent_policy.AgentPolicy, is_off=_agent_is_off, record=_record_agent_request)
 app.add_middleware(auth.DashboardGuard, store=token_store, agent_store=agent_token_store)
 
 
@@ -1435,6 +1450,246 @@ async def send_test_event():
 def _who(request: Request) -> str:
     """"agent" when the coding agent made this call, else "you"."""
     return "agent" if getattr(request.state, "principal", "user") == "agent" else "you"
+
+
+# ── Email records, opt-outs and bounces, your agent, limits, one person ──
+
+
+def _sending_domains(config, addresses: list[str]) -> list[str]:
+    """The domains mail goes out from: the main address, then each connected
+    inbox, each once, in that order."""
+    from sellbird import deliverability as d
+    email = config.channels.email
+    smtp_user = os.getenv("SMTP_USERNAME", "").strip() if email.provider == "smtp" else ""
+    main = smtp_user if "@" in smtp_user else (config.persona.email or "")
+    out: list[str] = []
+    for address in [main, *addresses]:
+        domain = str(address).rpartition("@")[2].strip().lower().rstrip(".")
+        if domain and d.DOMAIN_RE.match(domain) and domain not in out:
+            out.append(domain)
+    return out
+
+
+def _email_record_checks(domain: str, selector: str) -> list[dict]:
+    from sellbird import deliverability as d
+    checks = [d.check_mx(domain), d.check_spf(domain), d.check_dkim(domain, selector),
+              d.check_dmarc(domain)]
+    return [{"name": c.name, "status": c.status, "detail": c.detail, "unknown": c.unknown,
+             "fix": d.how_to_fix(c, domain)} for c in checks]
+
+
+@app.get("/api/email-records")
+async def get_email_records(domain: str = ""):
+    """MX, SPF, DKIM and DMARC for each domain Sellbird sends from, read from
+    public DNS, with what to change for anything that is not right. Read only:
+    Sellbird never writes a DNS record."""
+    from sellbird import deliverability as d
+    from sellbird.config import load_config
+    try:
+        config = load_config()
+    except Exception as e:
+        return {"error": f"Couldn't read {_resolve_config_file().name}: {e}"}
+    rows = await query_db("SELECT address FROM mailboxes WHERE state != 'retired'")
+    domains = _sending_domains(config, [r["address"] for r in rows])
+    wanted = domain.strip().lower().rstrip(".")
+    if wanted:
+        if not d.DOMAIN_RE.match(wanted):
+            return _refuse("That isn't a domain name.", 400)
+        domains = [wanted]
+    selector = config.channels.email.warmup.dkim_selector
+    out = []
+    for name in domains[:EMAIL_RECORD_DOMAINS_MAX]:
+        checks = await asyncio.to_thread(_email_record_checks, name, selector)
+        worst = ("fail" if any(c["status"] == d.FAIL for c in checks)
+                 else "unknown" if any(c["unknown"] for c in checks)
+                 else "warn" if any(c["status"] == d.WARN for c in checks) else "ok")
+        out.append({"domain": name, "state": worst, "checks": checks})
+    return {"domains": out, "config_file": _resolve_config_file().name}
+
+
+EMAIL_RECORD_DOMAINS_MAX = 10
+
+
+@app.get("/api/suppressions")
+async def get_suppressions():
+    """Everyone Sellbird will never email, and why: opted out, bounced,
+    complained, or added by you. The record you may be asked to show."""
+    try:
+        state = _state()
+        await state.init_db()
+        rows = await state.list_suppressions(limit=SUPPRESSIONS_SHOWN)
+        counts = await query_db("SELECT reason, COUNT(*) AS n FROM suppressions GROUP BY reason")
+        return {"rows": rows, "counts": {r["reason"]: r["n"] for r in counts},
+                "total": sum(r["n"] for r in counts), "shown": SUPPRESSIONS_SHOWN}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+SUPPRESSIONS_SHOWN = 500
+
+
+@app.post("/api/suppressions")
+async def add_suppression_api(request: Request):
+    """Never email this address, or anyone at this domain: {"value": "..."}."""
+    body = await _json_body(request)
+    value = str(body.get("value") or "").strip()
+    if not value or len(value) > 254:
+        return _refuse("Give an email address or a domain.", 400)
+    kind = "address" if "@" in value else "domain"
+    state = _state()
+    await state.init_db()
+    try:
+        added = await state.add_suppression(kind, value, "manual", source="dashboard")
+    except ValueError:
+        return _refuse("That isn't an email address or a domain.", 400)
+    return {"success": True, "added": bool(added), "kind": kind,
+            "value": state.suppression_key(kind, value)}
+
+
+@app.post("/api/suppressions/{suppression_id}/remove")
+async def remove_suppression_api(suppression_id: str):
+    """Let Sellbird email them again. Yours alone: the agent can never call this."""
+    state = _state()
+    await state.init_db()
+    if not await state.remove_suppression(suppression_id):
+        return _refuse("That entry is already gone.", 404)
+    return {"success": True}
+
+
+@app.get("/api/export/suppressions.csv")
+async def export_suppressions():
+    import csv
+    import io
+    state = _state()
+    await state.init_db()
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["kind", "value", "reason", "source", "added_at"])
+    offset = 0
+    while True:
+        rows = await state.list_suppressions(limit=1000, offset=offset)
+        for r in rows:
+            writer.writerow([_csv_safe(r["kind"]), _csv_safe(r["value"]), _csv_safe(r["reason"]),
+                             _csv_safe(r["source"]), r["created_at"]])
+        if len(rows) < 1000:
+            break
+        offset += 1000
+    return Response(out.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": 'attachment; filename="sellbird-never-email.csv"'})
+
+
+def _csv_safe(value) -> str:
+    """A cell a spreadsheet won't run as a formula."""
+    text = str(value or "")
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
+
+
+@app.get("/api/agent")
+async def get_agent():
+    """Whether your coding agent may reach Sellbird, what it is allowed to
+    do, and every call it has made (method, path and outcome; never a body)."""
+    state = _state()
+    await state.init_db()
+    requests_ = await state.get_agent_requests(limit=100)
+    reads = sorted({p for m, p in agent_policy.AGENT_ROUTES if m == "GET"})
+    writes = sorted({p for m, p in agent_policy.AGENT_ROUTES if m != "GET"})
+    return {
+        "access": "off" if await _agent_is_off() else "on",
+        "has_token": agent_token_store.peek() is not None,
+        "last_seen": requests_[0]["created_at"] if requests_ else "",
+        "reads": len(reads), "may_do": [agent_policy.describe_route(p) for p in writes],
+        "requests": [dict(r, what=agent_policy.describe(r["path"])) for r in requests_],
+    }
+
+
+@app.post("/api/agent/access")
+async def set_agent_access(request: Request):
+    """Cut the agent off, or let it back in: {"access": "off"} or {"access": "on"}.
+    Off answers every agent request with 403 from this moment."""
+    body = await _json_body(request)
+    access = str(body.get("access") or "").strip().lower()
+    if access not in ("on", "off"):
+        return _refuse('access must be "on" or "off".', 400)
+    state = _state()
+    await state.init_db()
+    await state.set_setting(AGENT_ACCESS_KEY, "off" if access == "off" else "")
+    await state.log_action("agent_access_" + access, "dashboard", {})
+    return {"success": True, "access": access}
+
+
+@app.get("/api/limits")
+async def get_limits():
+    """Every limit on what goes out and every rule that lets something send
+    without you, in one read."""
+    from sellbird.config import load_config
+    path = _resolve_config_file()
+    try:
+        config = load_config(str(path))
+    except Exception as e:
+        return {"error": f"Couldn't read {path.name}: {e}"}
+    state = _state()
+    await state.init_db()
+    email, usage = config.channels.email, config.usage
+    window = email.send_window
+    texting = getattr(config, "texting", None)
+    return {
+        "file": path.name,
+        "paused": await state.get_setting("sending_paused") or "",
+        "mode": "approval" if email.require_approval else "autopilot",
+        "provider": email.provider,
+        "max_daily_sends": email.max_daily_sends,
+        "per_inbox_daily_cap": email.per_inbox_daily_cap,
+        "max_bounce_rate": email.max_bounce_rate,
+        "send_to_risky": bool(email.send_to_risky),
+        "follow_ups": bool(email.follow_ups),
+        "sequence_length": config.writer.sequence_length,
+        "quiet_hours": {"start": usage.quiet_hours.start, "end": usage.quiet_hours.end,
+                        "timezone": usage.quiet_hours.timezone},
+        "send_window": ({"start": window.start, "end": window.end,
+                         "weekdays_only": bool(window.weekdays_only)} if window else None),
+        "texting": ({"enabled": bool(texting.enabled), "quiet_start": texting.quiet_hours.start,
+                     "quiet_end": texting.quiet_hours.end,
+                     "reply_to_inbound": bool(texting.reply_to_inbound)} if texting else None),
+    }
+
+
+@app.get("/api/prospects/{prospect_id}")
+async def get_person(prospect_id: str):
+    """One person: who they are, the deal, every email, reply and text, their
+    consent records, each stage move and each booked meeting."""
+    state = _state()
+    await state.init_db()
+    record = await state.person_record(prospect_id)
+    if record is None:
+        return _refuse("No such person.", 404)
+    return record
+
+
+@app.post("/api/prospects/{prospect_id}/deal")
+async def set_person_deal(prospect_id: str, request: Request):
+    """Change the deal on a person. Any of {"value": 4000, "next_step": "...",
+    "notes": "..."}; what is left out stays as it is. Sends nothing."""
+    body = await _json_body(request)
+    value = body.get("value")
+    if value is not None:
+        try:
+            value = int(float(value))
+        except (TypeError, ValueError):
+            return _refuse("value must be a number.", 400)
+        if value < 0:
+            return _refuse("value can't be negative.", 400)
+    next_step, notes = body.get("next_step"), body.get("notes")
+    if value is None and next_step is None and notes is None:
+        return _refuse("Give a value, a next_step or notes.", 400)
+    state = _state()
+    await state.init_db()
+    deal = await state.set_deal(prospect_id, value=value,
+                                next_step=None if next_step is None else str(next_step),
+                                notes=None if notes is None else str(notes))
+    if deal is None:
+        return _refuse("No such person.", 404)
+    await state.log_action("deal_updated", _who(request), {"prospect_id": prospect_id})
+    return {"success": True, "deal": deal}
 
 
 @app.get("/api/pipeline")

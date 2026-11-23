@@ -1289,3 +1289,29 @@ dialog.modal::backdrop { background: rgb(0 0 0 / 0.45); }
   .file-table td { display: block; width: auto !important; white-space: normal !important; padding: 4px 14px; border: 0; }
   .file-table tr { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); }
 }
+
+/* Email records, the never-email list, limits, your agent, one person. */
+.linklike { appearance: none; background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
+.linklike:hover { text-decoration-color: currentColor; }
+.linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.sec > h2:not(:first-child) { margin-top: 14px; }
+.sec > h2 .tag { text-transform: none; letter-spacing: 0; }
+.row.top { align-items: flex-start; }
+.row .found { color: var(--fg2); overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--fs-caption); margin-top: 4px; }
+.row .fix { margin-top: 8px; padding: 8px 10px; border-radius: var(--r-md); background: var(--wait-bg); color: var(--fg); font-size: var(--fs-ui); overflow-wrap: anywhere; }
+.row .fix b { font-weight: 600; }
+.row .s.mono { font-family: var(--mono); overflow-wrap: anywhere; }
+.person-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.person-head h1 { font-size: var(--fs-h1, 1.75rem); font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; overflow-wrap: anywhere; }
+.person-head h1:focus { outline: none; }
+.person-head p { color: var(--fg2); font-size: var(--fs-body); overflow-wrap: anywhere; }
+.person-head .reach { font-size: var(--fs-ui); margin-top: 2px; }
+.person-head .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.who.big { width: 52px; height: 52px; font-size: 1.05rem; }
+.w .notes { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg2); font-size: var(--fs-ui); line-height: 1.55; }
+#neveremail .sec > .form-input { width: 100%; }
+@container app (max-width: 640px) {
+  .person-head { align-items: flex-start; gap: 12px; }
+  .person-head .tags { flex: 1 1 100%; }
+  .who.big { width: 44px; height: 44px; }
+}

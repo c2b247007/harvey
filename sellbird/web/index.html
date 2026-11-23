@@ -173,6 +173,57 @@
   <div id="texting-body"></div>
 </div>
 
+<!-- Email records: SPF, DKIM, DMARC and MX on each sending domain -->
+<div id="records" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">Email records</h1>
+      <p>Four DNS records decide whether mail from your domain is trusted. Sellbird reads them and says what to change. It never changes them.</p>
+    </div>
+    <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="loadRecords(this)"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Check again</button></div>
+  </div>
+  <div id="records-body"></div>
+</div>
+
+<!-- Opt-outs and bounces: who is never emailed -->
+<div id="neveremail" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">Opt-outs and bounces</h1>
+      <p>Everyone Sellbird will never email again, and why. This is the record to show if anyone asks.</p>
+    </div>
+    <div class="page-actions"><button class="btn btn-secondary btn-sm" onclick="downloadCsv('/api/export/suppressions.csv', 'sellbird-never-email.csv', this)"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Export</button></div>
+  </div>
+  <div id="neveremail-body"></div>
+</div>
+
+<!-- Limits and rules: what may go out, and what sends on its own -->
+<div id="limits" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">Limits and rules</h1>
+      <p>The stop button, every limit on what goes out, and every rule that lets something send without you.</p>
+    </div>
+  </div>
+  <div id="limits-body"></div>
+</div>
+
+<!-- Your agent: access, what it may do, what it did -->
+<div id="agent" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">Your agent</h1>
+      <p>Your coding agent works Sellbird for you through its own key. Here is what it may do, everything it did, and the switch that cuts it off.</p>
+    </div>
+  </div>
+  <div id="agent-body"></div>
+</div>
+
+<!-- One person -->
+<div id="person" class="section">
+  <div id="person-body"></div>
+</div>
+
 <!-- Events: what other tools can listen to -->
 <div id="events" class="section">
   <div class="section-head">
