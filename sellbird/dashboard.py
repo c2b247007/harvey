@@ -1519,6 +1519,80 @@ async def mention_status(mention_id: str, request: Request):
     return result if result["success"] else JSONResponse(result, status_code=400)
 
 
+# ── Social playbooks and post drafts (sellbird.social) ──
+
+
+@app.get("/api/social")
+async def get_social():
+    """The playbooks and which are on, posts waiting for you, approved posts
+    not yet posted, and recent ones. Sellbird posts nothing itself."""
+    from sellbird import social
+    try:
+        state = _state()
+        await state.init_db()
+        return await social.overview(state)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/social/playbooks/{key}")
+async def get_social_playbook(key: str):
+    """One playbook in full, for whoever is about to write from it."""
+    from sellbird import social
+    state = _state()
+    await state.init_db()
+    book = social.playbook(key)
+    if book is None:
+        return _refuse("There is no such playbook.", 404)
+    return {**book, "active": book["key"] in await state.active_social_playbooks()}
+
+
+@app.post("/api/social/playbooks/{key}")
+async def switch_social_playbook(key: str, request: Request):
+    """Turn a playbook on or off: {"active": true|false}."""
+    from sellbird import social
+    body = await _json_body(request)
+    state = _state()
+    await state.init_db()
+    result = await social.set_active(state, key, bool(body.get("active")))
+    return result if result["success"] else JSONResponse(result, status_code=404)
+
+
+@app.post("/api/social/posts")
+async def draft_social_post(request: Request):
+    """Draft one post: {"playbook", "platform", "body", "media_note"}. It
+    waits for approval. Refused when the playbook is off."""
+    from sellbird import social
+    body = await _json_body(request)
+    state = _state()
+    await state.init_db()
+    result = await social.draft(state, playbook_key=str(body.get("playbook") or ""),
+                                platform=str(body.get("platform") or ""), body=str(body.get("body") or ""),
+                                media_note=str(body.get("media_note") or ""), by=_who(request))
+    return result if result["success"] else JSONResponse(result, status_code=409)
+
+
+@app.post("/api/social/posts/{post_id}/{action}")
+async def act_on_social_post(post_id: str, action: str, request: Request):
+    """approve (optionally {"body": your edit}), edit ({"body": ...}), skip,
+    or posted ({"url": the link}). Only an approved post can be marked posted."""
+    from sellbird import social
+    body = await _json_body(request)
+    state = _state()
+    await state.init_db()
+    if action == "approve":
+        result = await social.approve(state, post_id, body=None if body.get("body") is None else str(body["body"]))
+    elif action == "edit":
+        result = await social.edit(state, post_id, str(body.get("body") or ""))
+    elif action == "skip":
+        result = await social.skip(state, post_id)
+    elif action == "posted":
+        result = await social.mark_posted(state, post_id, url=str(body.get("url") or ""), by=_who(request))
+    else:
+        return _refuse("There is no such action.", 404)
+    return result if result["success"] else JSONResponse(result, status_code=409)
+
+
 @app.post("/api/consent")
 async def record_consent(request: Request):
     """Record a yes or a no: {"phone" or "prospect_id", "channel": "sms"|"call",
@@ -3411,6 +3485,17 @@ async def get_today():
                 "detail": ("Someone reached out. Sellbird drafts a first answer on its next cycle, "
                            "or your agent can. A drafted answer waits in the Outbox."),
                 "action": "Open leads", "tab": "leads",
+            })
+
+        posts_waiting = await state.count_social_posts("pending_review")
+        stats["social_waiting"] = posts_waiting
+        if posts_waiting:
+            items.append({
+                "key": "social", "tone": "warn",
+                "title": ("1 social post drafted" if posts_waiting == 1
+                          else f"{posts_waiting} social posts drafted"),
+                "detail": "Each waits for your approval. Nothing is posted until you say so, and Sellbird never posts itself.",
+                "action": "Review", "tab": "social",
             })
 
         new_mentions = await state.count_mentions("new")

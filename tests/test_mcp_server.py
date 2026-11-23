@@ -150,7 +150,10 @@ def test_the_allowlist_is_reads_estimates_pause_and_offer_proposals_only():
                      # Mentions: a proposed term stays off, a check only searches free
                      # sources, a reply is a draft to copy. Nothing is posted or sent.
                      "/api/mentions/watches", "/api/mentions/check",
-                     "/api/mentions/(?!watches$|check$)[^/]+", "/api/mentions/(?!watches/)[^/]+/lead")
+                     "/api/mentions/(?!watches$|check$)[^/]+", "/api/mentions/(?!watches/)[^/]+/lead",
+                     # A social post is a draft the user approves; "posted" only records one
+                     # they approved. Sellbird posts nothing.
+                     "/api/social/posts", "/api/social/posts/[^/]+/posted")
     for method, pattern in agent_policy.AGENT_ROUTES:
         assert method == "GET" or pattern in allowed_posts
     assert not agent_policy.agent_may("POST", "/api/offer")

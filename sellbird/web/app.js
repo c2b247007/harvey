@@ -287,6 +287,10 @@ function actionText(a) {
       (d.problems ? ' · ' + n(d.problems, 'source failed', 'sources failed') : '');
     case 'mention_watch_added': return (d.proposed ? 'Your agent proposed a term to watch · off until you turn it on' : 'You started watching a term');
     case 'mention_became_lead': return 'A mention became a lead';
+    case 'social_post_drafted': return (a.agent === 'agent' ? 'Your agent drafted' : 'You drafted') + ' a social post · it waits for you';
+    case 'social_post_approved': return 'You approved a social post';
+    case 'social_post_posted': return 'A social post you approved was marked as posted';
+    case 'social_playbook_switched': return 'You turned a social playbook ' + (d.on ? 'on' : 'off');
     case 'text_sent': return 'Sent a text';
     case 'text_drafted': return (d.by === 'agent' ? 'Your agent drafted' : 'You drafted') + ' a text';
     case 'text_approved': return 'You approved a text';
@@ -450,6 +454,7 @@ const SCREENS = {
   events:        {place: 'setup', parent: 'setup'},
   texting:       {place: 'setup', parent: 'setup'},
   mentionsetup:  {place: 'setup', parent: 'setup'},
+  social:        {place: 'setup', parent: 'setup'},
   records:       {place: 'setup', parent: 'setup'},
   neveremail:    {place: 'setup', parent: 'setup'},
   limits:        {place: 'setup', parent: 'setup'},
@@ -554,6 +559,7 @@ function loadCurrentTab() {
     case 'texts': loadTexts(); break;
     case 'mentions': loadMentions(); break;
     case 'mentionsetup': loadMentionSetup(); break;
+    case 'social': loadSocial(); break;
     case 'texting': loadTexting(); break;
     case 'records': loadRecords(); break;
     case 'neveremail': loadNeverEmail(); break;
@@ -3558,6 +3564,8 @@ function setupHtml(st, engine, mode, setup) {
           left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
       row('limits', 'Limits and rules', 'The stop button, daily limits, quiet hours, and anything that sends without you', '', '') +
       row('neveremail', 'Opt-outs and bounces', 'Everyone Sellbird will never email again, and why', '', '') +
+      row('social', 'Social', 'Playbooks your agent follows, and posts that wait for your approval',
+          st.social_waiting ? st.social_waiting + ' to review' : '', st.social_waiting ? 'wait' : '') +
       row('mentionsetup', 'Brand mentions', 'The names and questions Sellbird searches for, and where it looks', '', '') +
       row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') +
       row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
@@ -3583,7 +3591,7 @@ function setupHtml(st, engine, mode, setup) {
 
 const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
-                     events: 'arrow', mentionsetup: 'signals', texting: 'message', records: 'check', neveremail: 'flag',
+                     events: 'arrow', social: 'pen', mentionsetup: 'signals', texting: 'message', records: 'check', neveremail: 'flag',
                      limits: 'alert', agent: 'sparkle'};
 
 // ── Leads: people who came to you ──
@@ -3873,6 +3881,105 @@ async function checkMentions(btn) {
     ((res.problems || []).length ? '. ' + res.problems.join('; ') : '') + '.', (res.problems || []).length ? 'error' : 'success');
   else showToast(failMsg(res, 'The check did not run.'), 'error');
   loadMentionSetup();
+}
+
+// ── Social: playbooks, and posts that wait for you ──
+
+let _social = null;
+let _socialEdit = '';     // the post whose text is being edited
+
+function socialPost(p, mode) {
+  const editing = _socialEdit === p.id;
+  const limit = ((_social || {}).limits || {})[p.platform] || 0;
+  const acts = mode === 'waiting'
+    ? (editing
+        ? '<button class="btn btn-primary btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'edit\')">Save</button>' +
+          '<button class="btn btn-ghost btn-sm" onclick="_socialEdit=\'\';renderSocial()">Cancel</button>'
+        : '<button class="btn btn-primary btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'approve\')">Approve</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="_socialEdit=' + jsq(p.id) + ';renderSocial()">Edit</button>' +
+          '<button class="btn btn-ghost btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'skip\')">Skip this one</button>')
+    : mode === 'approved'
+      ? '<button class="btn btn-primary btn-sm" onclick="copySocial(' + jsq(p.id) + ')">Copy post</button>' +
+        '<button class="btn btn-secondary btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'posted\')">I posted it</button>' +
+        '<button class="btn btn-ghost btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'skip\')">Skip</button>'
+      : (p.posted_url && safeHref(p.posted_url) ? '<a class="btn btn-secondary btn-sm" href="' + safeHref(p.posted_url) + '" target="_blank" rel="noopener noreferrer">Open the post</a>' : '');
+  const tag = mode === 'recent' ? (p.status === 'posted' ? ['Posted', 'good'] : ['Skipped', ''])
+    : mode === 'approved' ? ['Approved', 'good'] : ['Needs you', 'wait'];
+  return '<div class="row lead-row"><span class="who" aria-hidden="true">' + icon('pen') + '</span>' +
+    '<div class="grow"><p class="t">' + escHtml(p.platform_label) + ' <span class="tag ' + tag[1] + '">' + tag[0] + '</span></p>' +
+      '<p class="s">From ' + escHtml(p.playbook_name) + (p.drafted_by === 'agent' ? ' · drafted by your agent' : '') +
+        ' · ' + relTime(p.posted_at || p.approved_at || p.created_at) + ' · ' + p.body.length + (limit ? ' of ' + limit : '') + ' characters</p>' +
+      (editing ? '<div class="form-group mention-edit"><label class="form-label" for="social-text">The post</label>' +
+          '<textarea class="form-input" id="social-text" rows="6">' + escHtml(p.body) + '</textarea></div>'
+        : '<div class="tb ' + (mode === 'waiting' ? 'draft ' : '') + 'lead-words">' + escHtml(p.body) + '</div>') +
+      (p.media_note ? '<p class="s"><b>With it</b> ' + escHtml(p.media_note) + '</p>' : '') + '</div>' +
+    (acts ? '<div class="row-acts">' + acts + '</div>' : '') + '</div>';
+}
+
+function renderSocial() {
+  const el = document.getElementById('social-body');
+  const d = _social;
+  if (!el || !d) return;
+  const books = (d.playbooks || []).map(b =>
+    '<div class="row"><div class="grow"><p class="t">' + escHtml(b.name) + '</p><p class="s">' + escHtml(b.summary || '') +
+      (b.summary ? '. ' : '') + escHtml(b.platforms.map(p => (d.platforms || {})[p] || p).join(', ')) +
+      (b.cadence ? ' · ' + escHtml(b.cadence) : '') + '</p></div>' +
+    '<span class="tag ' + (b.active ? 'good' : '') + '">' + (b.active ? 'On' : 'Off') + '</span>' +
+    '<button class="btn btn-secondary btn-sm rowbtn" onclick="socialSwitch(' + jsq(b.key) + ',' + (b.active ? 'false' : 'true') + ')">' +
+      (b.active ? 'Turn off' : 'Turn on') + '</button></div>').join('');
+  const none = (t, s) => '<div class="row"><div class="grow"><p class="t">' + t + '</p><p class="s">' + s + '</p></div></div>';
+  el.innerHTML = '<div class="secs">' +
+    '<section class="sec"><h2>Waiting for you</h2><div class="w">' +
+      ((d.waiting || []).map(p => socialPost(p, 'waiting')).join('') ||
+        none('Nothing to approve', 'A post your agent drafts from a playbook that is on shows up here first.')) +
+      '<p class="w-f">Your agent can draft a post. Only you can approve one.</p></div></section>' +
+    ((d.approved || []).length ? '<section class="sec"><h2>Approved, not posted yet</h2><div class="w">' +
+      d.approved.map(p => socialPost(p, 'approved')).join('') +
+      '<p class="w-f">Copy it and post it yourself, or ask your agent to post it from the account you connected to it. Sellbird has no way to post.</p></div></section>' : '') +
+    '<section class="sec"><h2>Playbooks</h2><div class="w">' +
+      (books || none('No playbooks found', 'Sellbird ships five in its skills folder. Yours has none it can read.')) +
+      '<p class="w-f">A playbook is a file your agent reads: <code>skills/social_&lt;name&gt;.md</code>. Add your own beside the ones Sellbird ships. Your agent drafts only from the ones that are on.</p></div></section>' +
+    ((d.recent || []).length ? '<section class="sec"><h2>Recent</h2><div class="w">' + d.recent.map(p => socialPost(p, 'recent')).join('') + '</div></section>' : '') +
+    '</div>' +
+    '<p class="ask">Ask your coding agent: <b>"Draft a LinkedIn post about the job we finished this week."</b></p>';
+  const box = document.getElementById('social-text');
+  if (box) box.focus();
+}
+
+async function loadSocial() {
+  const el = document.getElementById('social-body');
+  if (!el) return;
+  const d = await api('/api/social');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read your playbooks', escHtml(d.error)); return; }
+  _social = d;
+  renderSocial();
+}
+
+async function socialSwitch(key, on) {
+  const res = await api('/api/social/playbooks/' + encodeURIComponent(key), {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({active: on})});
+  if (!(res && res.success)) showToast(failMsg(res, 'That did not work.'), 'error');
+  loadSocial();
+}
+
+async function socialAct(id, action) {
+  const body = action === 'edit' ? {body: document.getElementById('social-text').value} : {};
+  const res = await api('/api/social/posts/' + encodeURIComponent(id) + '/' + action, {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (res && res.success) {
+    _socialEdit = '';
+    showToast(action === 'approve' ? 'Approved. Copy it and post it, or ask your agent to.' : action === 'posted' ? 'Marked as posted.'
+      : action === 'skip' ? 'Skipped.' : 'Saved. It still waits for your approval.', 'success');
+  } else showToast(failMsg(res, 'That did not work.'), 'error');
+  loadSocial();
+}
+
+async function copySocial(id) {
+  const p = ((_social || {}).approved || []).find(x => x.id === id);
+  if (!p) return;
+  try { await navigator.clipboard.writeText(p.body); showToast('Copied.', 'success'); }
+  catch { showToast('Could not copy. Select the post and copy it by hand.', 'error'); }
 }
 
 // ── Texts and consent ──

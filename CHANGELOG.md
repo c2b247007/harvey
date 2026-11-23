@@ -34,6 +34,17 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Social playbooks.** Five playbooks ship as plain files
+  (`skills/social_*.md`: finished work, customer questions, what we learned,
+  local and seasonal, in their words) and you can add your own. You switch on
+  the ones you want under Set up → Social; your agent drafts posts from them
+  for LinkedIn, Instagram, Facebook or X; every draft waits for your
+  approval. Sellbird posts nothing and stores no social login: you post the
+  approved text, or the agent you connected the account to does. Agent tools
+  `social_playbooks`, `social_playbook_get`, `social_post_draft` and
+  `social_post_mark_posted`, with `skills/posting_to_social.md`. See
+  `docs/social.md`.
+
 - **Brand mentions.** Sellbird searches for the names and questions you
   watch and lists what it finds under Inbox → Mentions: make one a lead (a
   person with the source "Mention"), copy a drafted reply to post from your

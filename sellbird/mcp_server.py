@@ -406,6 +406,36 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
         return await guarded(lambda c: c.post(f"/api/mentions/{quote(mention_id, safe='')}/lead"))
 
     @server.tool()
+    async def social_playbooks() -> dict:
+        """Social playbooks and posts: each playbook with whether the user switched it on,
+        posts waiting for their approval, posts they approved that are not posted yet, and
+        recent ones. Work only from playbooks that are on. Read skills/posting_to_social.md."""
+        return await read("/api/social")
+
+    @server.tool()
+    async def social_playbook_get(key: str) -> dict:
+        """One playbook in full: what it needs from the user before drafting, the shape of
+        a post, the length for each platform, and what not to do."""
+        return await read(f"/api/social/playbooks/{quote(key, safe='')}")
+
+    @server.tool()
+    async def social_post_draft(playbook: str, platform: str, body: str, media_note: str = "") -> dict:
+        """Draft one post from a playbook that is on, for one platform (linkedin, instagram,
+        facebook or x). It waits for the user's approval in the dashboard; you cannot
+        approve it, and Sellbird cannot post it. `media_note` says which photos go with
+        it. Refused when the playbook is off, the text is too long for the platform, or
+        too many drafts are already waiting."""
+        return await guarded(lambda c: c.post("/api/social/posts", {
+            "playbook": playbook, "platform": platform, "body": body, "media_note": media_note}))
+
+    @server.tool()
+    async def social_post_mark_posted(post_id: str, url: str = "") -> dict:
+        """Record that a post the user approved went out, with its link. Call this only
+        after the user asked you to post it and you posted the approved text exactly,
+        through an account they connected to you. Refused for a post that is not approved."""
+        return await guarded(lambda c: c.post(f"/api/social/posts/{quote(post_id, safe='')}/posted", {"url": url}))
+
+    @server.tool()
     async def do_not_contact_number(phone: str) -> dict:
         """Put a phone number on the do-not-contact list: no calls, no texts, and anything
         queued for it is cancelled. Only the user can take it off."""

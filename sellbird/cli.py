@@ -1257,6 +1257,41 @@ def cmd_mentions(args):
     print()
 
 
+def cmd_social(args):
+    """Social playbooks and post drafts: list, switch a playbook, approve or skip a post."""
+    from sellbird import social
+    from sellbird.state import StateManager
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        if args.social_action in ("on", "off"):
+            return await social.set_active(state, args.target, args.social_action == "on")
+        if args.social_action == "approve":
+            return await social.approve(state, args.target)
+        if args.social_action == "skip":
+            return await social.skip(state, args.target)
+        return await social.overview(state)
+
+    result = asyncio.run(_run())
+    if args.social_action != "list":
+        if not result["success"]:
+            print(f"\n  {result['message']}\n")
+            sys.exit(1)
+        print("\n  " + (result.get("message") or "Done.") + "\n")
+        return
+    print("\n  Playbooks:")
+    for book in result["playbooks"]:
+        print(f"    {'on ' if book['active'] else 'off'}  {book['key']:<22} {book['name']}  ({', '.join(book['platforms'])})")
+    for title, key in (("Waiting for you", "waiting"), ("Approved, not posted yet", "approved")):
+        if result[key]:
+            print(f"\n  {title}:")
+            for post in result[key]:
+                print(f"    {post['id']}  {post['platform_label']:<10} {post['body'][:70]!r}")
+    print("\n  sellbird social on|off PLAYBOOK   ·   sellbird social approve|skip POST_ID")
+    print("  Sellbird posts nothing itself. See docs/social.md.\n")
+
+
 def main():
     from sellbird.textio import utf8_stdio
     utf8_stdio()
@@ -1487,6 +1522,11 @@ def main():
     sub.add_argument("--kind", default="brand", choices=["brand", "competitor", "topic"])
     sub.add_argument("--limit", type=int, default=30)
     sub.set_defaults(func=cmd_mentions)
+
+    sub = subparsers.add_parser("social", help="Social playbooks and post drafts; on|off PLAYBOOK, approve|skip POST_ID")
+    sub.add_argument("social_action", nargs="?", default="list", choices=["list", "on", "off", "approve", "skip"])
+    sub.add_argument("target", nargs="?", default="", help="A playbook's key, or a post's id")
+    sub.set_defaults(func=cmd_social)
 
     sub = subparsers.add_parser("suppressions", help="Addresses and domains Sellbird never emails")
     sub.add_argument("suppression_action", nargs="?", default="list", choices=["list", "add", "remove"])

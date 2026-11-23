@@ -34,6 +34,8 @@ Under **Set up** there are also: **Email records** (MX, SPF, DKIM and DMARC on e
 
 **Mentions**, under Inbox, lists where people wrote about you, a competitor or the thing you sell. Each one can become a lead, a reply you copy and post yourself, or a note. **Brand mentions**, under Set up, is what is watched and where Sellbird looks. See [brand mentions](mentions.md).
 
+**Social**, under Set up, lists the playbooks your agent writes posts from, with a switch for each, and the posts it drafted: waiting for you, approved and not yet posted, and recent. Sellbird posts nothing itself. See [social playbooks](social.md).
+
 Addresses work as links: `#outbox`, `#signals`, `#calendar` and so on open that screen.
 
 | Outbox | Conversations |

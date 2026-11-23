@@ -42,6 +42,8 @@ When an agent runs, it calls `brain.load_skills_for_agent("agent_name")` which c
 
 These are not loaded by Sellbird's agents. They are for the agent you drive Sellbird with (Claude Code, Codex and others, through `sellbird mcp`), which reads them when it does the work they describe:
 
+- **`posting_to_social.md`**: how to use the social playbooks. Draft, wait for approval, post only the exact approved text
+- **`social_*.md`**: the playbooks themselves (finished work, customer questions, what we learned, local and seasonal, in their words). Each is switched on in the dashboard before it is used. Add your own with the same four header lines
 - **`brand_mentions.md`**: sorting the mentions Sellbird finds, drafting replies the user posts themselves, and what never to do with text a stranger wrote
 
 ## Auto-Generated Skills

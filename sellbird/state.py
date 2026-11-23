@@ -666,6 +666,19 @@ MIGRATIONS: list[str] = [
     CREATE UNIQUE INDEX IF NOT EXISTS uq_mentions_url ON mentions(url);
     CREATE INDEX IF NOT EXISTS idx_mentions_status ON mentions(status, found_at);
     """,
+    # ── v23: social playbooks and post drafts ──
+    # A playbook is a markdown file; social_playbooks only remembers which
+    # ones you switched on. social_posts holds every drafted post. One waits
+    # as pending_review until you approve it; Sellbird posts nothing itself.
+    """
+    CREATE TABLE IF NOT EXISTS social_playbooks (key TEXT PRIMARY KEY, active INTEGER DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS social_posts (id TEXT PRIMARY KEY, playbook TEXT DEFAULT '',
+      platform TEXT NOT NULL, body TEXT NOT NULL, media_note TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending_review', drafted_by TEXT DEFAULT 'you', posted_url TEXT DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, approved_at TIMESTAMP, posted_at TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_social_posts_status ON social_posts(status, created_at);
+    """,
 ]
 
 # The deal on a person (set_deal) and the agent's request log.
@@ -1264,6 +1277,69 @@ class StateManager:
     async def count_mentions(self, status: str = "new") -> int:
         async with self._connect() as db:
             async with db.execute("SELECT COUNT(*) FROM mentions WHERE status = ?", (status,)) as cursor:
+                return (await cursor.fetchone())[0]
+
+    # ── Social playbooks and post drafts (sellbird.social) ──
+
+    async def active_social_playbooks(self) -> set[str]:
+        async with self._connect() as db:
+            async with db.execute("SELECT key FROM social_playbooks WHERE active = 1") as cursor:
+                return {row[0] for row in await cursor.fetchall()}
+
+    async def set_social_playbook(self, key: str, active: bool) -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO social_playbooks (key, active, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET active = excluded.active, updated_at = excluded.updated_at",
+                (key, int(active), _utcnow().isoformat()))
+            await db.commit()
+
+    async def add_social_post(self, *, playbook: str, platform: str, body: str, media_note: str = "",
+                              drafted_by: str = "you") -> str:
+        post_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO social_posts (id, playbook, platform, body, media_note, drafted_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (post_id, playbook, platform, body, media_note, drafted_by, _utcnow().isoformat()))
+            await db.commit()
+        return post_id
+
+    async def get_social_posts(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        where, params = ("WHERE status = ?", [status]) if status else ("", [])
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    f"SELECT * FROM social_posts {where} ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                    (*params, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_social_post(self, post_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM social_posts WHERE id = ?", (post_id,)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def move_social_post(self, post_id: str, new: str, *, only_from: tuple[str, ...],
+                               **fields) -> bool:
+        """Move one post between statuses, only when it is in one of
+        ``only_from``, setting any of body, media_note, posted_url and the
+        time stamps in the same write."""
+        allowed = {"body", "media_note", "posted_url", "approved_at", "posted_at"}
+        cols = [k for k in fields if k in allowed]
+        marks = ",".join("?" * len(only_from))
+        async with self._connect() as db:
+            cursor = await db.execute(
+                f"UPDATE social_posts SET status = ?{''.join(', ' + c + ' = ?' for c in cols)} "
+                f"WHERE id = ? AND status IN ({marks})",
+                (new, *[fields[c] for c in cols], post_id, *only_from))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def count_social_posts(self, status: str = "pending_review") -> int:
+        async with self._connect() as db:
+            async with db.execute("SELECT COUNT(*) FROM social_posts WHERE status = ?", (status,)) as cursor:
                 return (await cursor.fetchone())[0]
 
     async def add_text(self, *, phone: str, direction: str, body: str, status: str,
