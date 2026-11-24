@@ -152,3 +152,11 @@ def test_the_setup_rail_has_one_primary_button_and_every_step_a_way_to_it():
     assert "Ask your agent to suggest signals" in html and "You confirm which ones count" in html
     assert _run_js(["escHtml", "jsq", "icon", "plural", "fixBtn", "setupSteps", "stepActions", "setupRailHtml"],
                    "setupRailHtml(" + json.dumps({"checks": [dict(c, done=True) for c in checks]}) + ")") == ""
+
+
+def test_a_change_on_a_tiny_base_is_said_in_words_not_a_huge_percent():
+    small = _run_js(["num", "pctReads", "changeHtml"], "changeHtml(57, 3, 30)")
+    assert "Up from 3 the 30 days before" in small and "%" not in small
+    big = _run_js(["num", "pctReads", "changeHtml"], "changeHtml(60, 50, 30)")
+    assert "+20% vs the 30 days before" in big
+    assert "Down from 6" in _run_js(["num", "pctReads", "changeHtml"], "changeHtml(2, 6, 7)")    # a small base going down

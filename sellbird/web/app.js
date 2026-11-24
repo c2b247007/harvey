@@ -3727,8 +3727,12 @@ async function loadCalendar() {
   const el = document.getElementById('calendar-body');
   if (!el) return;
   const r = calRange();
+  // Only the latest request draws: a week answer that arrives after you
+  // switched to Month must not be drawn as a month.
+  const seq = ++_calSeq;
   el.classList.add('refetch');
   const data = await api('/api/calendar?start=' + isoDay(r.start) + '&days=' + r.days + tzParam());
+  if (seq !== _calSeq) return;
   el.classList.remove('refetch');
   if (!data) { el.innerHTML = offlineState(); return; }
   if (data.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the calendar', escHtml(data.error)); return; }
@@ -3755,7 +3759,7 @@ async function loadCalendar() {
     (scheduled ? ', and ' + plural(scheduled, 'email goes', 'emails go') + ' out on schedule.' : '.') +
     (waiting ? ' ' + plural(waiting, 'email waits', 'emails wait') + ' for your OK first.' : ''), 'Calendar');
 }
-let _calRO = null, _calNarrow = null;
+let _calRO = null, _calNarrow = null, _calSeq = 0;
 
 function calInMonth(iso) {
   const a = _calAnchor || calToday();
@@ -3946,7 +3950,7 @@ function calMeetingsHtml(data) {
 // ── Numbers: one range and one filter for the whole page ──
 
 const NUM_SERIES = [['found', 'People found'], ['sent', 'Emails sent'], ['replies', 'Replies'], ['meetings', 'Meetings']];
-let _numbers = null;
+let _numbers = null, _numSeq = 0;
 let _numCampaign = (() => { try { return sessionStorage.getItem('sb-num-campaign') || ''; } catch { return ''; } })();
 let _numShown = new Set(['sent', 'replies']);
 let _numBreak = 'campaign';
@@ -3975,8 +3979,10 @@ function sortNum(by) {
 async function loadNumbers() {
   const el = document.getElementById('numbers-body');
   if (!el) return;
+  const seq = ++_numSeq;
   el.classList.add('refetch');
   const d = await api('/api/numbers?days=' + _rangeDays + tzParam() + (_numCampaign ? '&campaign=' + encodeURIComponent(_numCampaign) : ''));
+  if (seq !== _numSeq) return;   // a newer range or filter is on its way
   el.classList.remove('refetch');
   if (currentTab !== 'numbers') return;
   if (!d) { el.innerHTML = offlineState(); return; }
@@ -5423,9 +5429,16 @@ function changeHtml(now, before, days) {
   if (!before) return '<span class="delta up">Up from none in the ' + days + ' days before</span>';
   const pct = Math.round(100 * (now - before) / before);
   const dir = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+  if (!pctReads(before, pct)) {
+    return '<span class="delta ' + dir + '">' + (pct > 0 ? 'Up from ' : pct < 0 ? 'Down from ' : 'Same as ') + num(before) +
+      ' the ' + days + ' days before</span>';
+  }
   return '<span class="delta ' + dir + '">' + (pct > 0 ? '+' : pct < 0 ? '&minus;' : '') + Math.abs(pct) + '% vs the ' +
     days + ' days before (' + num(before) + ')</span>';
 }
+// A percent says something only when the earlier figure is big enough:
+// "+1800%" on a base of 3 reads as noise; "up from 3" does not.
+function pctReads(before, pct) { return before >= 10 && Math.abs(pct) <= 200; }
 
 // ── Charts: hand-built SVG, a crosshair and one tooltip for every series ──
 // Series colours follow the thing, never its rank: found is always slot 1.
@@ -5599,6 +5612,7 @@ const STAT_PAGES = {
   meetings: {title: 'Meetings booked', unit: ['meeting booked', 'meetings booked'], list: 'Who booked',
              none: 'No meetings were booked in this range.'},
 };
+let _statSeq = 0;
 function openStat(key) {
   _statKey = own(STAT_PAGES, key) ? key : 'found';
   showTab('stat');
@@ -5607,8 +5621,10 @@ async function loadStat() {
   const key = _statKey, page = STAT_PAGES[key];
   const el = document.getElementById('stat-body');
   if (!el) return;
+  const seq = ++_statSeq;
   el.classList.add('refetch');
   const d = await api('/api/stat/' + key + '?days=' + _rangeDays + tzParam());
+  if (seq !== _statSeq) return;   // a newer range is on its way
   el.classList.remove('refetch');
   if (key !== _statKey || currentTab !== 'stat') return;
   if (!d) { el.innerHTML = offlineState(); return; }
@@ -5617,7 +5633,9 @@ async function loadStat() {
   const before = days ? d.previous : null;
   const tone = before === null ? 'info' : d.total > before ? 'good' : d.total < before ? 'warn' : '';
   const pct = before ? Math.round(100 * (d.total - before) / before) : null;
-  setAnswer('stat', toneBadge(tone, pct === null ? rangeWords(days).replace(/^the /, '') : (pct > 0 ? '+' : '') + pct + '%'),
+  const badgeText = pct === null ? rangeWords(days).replace(/^the /, '')
+    : pctReads(before, pct) ? (pct > 0 ? '+' : '') + pct + '%' : (pct > 0 ? 'Up from ' : pct < 0 ? 'Down from ' : 'Same as ') + num(before);
+  setAnswer('stat', toneBadge(tone, badgeText),
     num(d.total) + ' ' + (d.total === 1 ? page.unit[0] : page.unit[1]) + ' in ' + rangeWords(days) + '.', page.title);
   document.title = page.title + ' · Sellbird';
   const items = d.items || [];
@@ -5707,7 +5725,16 @@ function setupRailHtml(data, always) {
   const left = steps.filter(c => !c.done);
   if (!left.length && !always) return '';
   const next = steps.find(c => c.required && !c.done) || left[0];
-  return '<ol class="rail">' + steps.map((c, i) => {
+  // Today keeps it short: no steps already done, the next one and two after
+  // it, and a way to the rest. Set up (always) lists every step.
+  let shown = steps, rest = 0;
+  if (!always) {
+    const todo = [next].concat(left.filter(c => c !== next));
+    shown = steps.filter(c => todo.slice(0, 3).includes(c));
+    rest = todo.length - shown.length;
+  }
+  return '<ol class="rail">' + shown.map(c => {
+    const i = steps.indexOf(c);
     const state = c.done ? 'done' : c === next ? 'next' : 'todo';
     const why = state === 'next' || (c.id === 'signals' && !c.done);
     return '<li class="rstep ' + state + '"><span class="rdot" aria-hidden="true">' + (c.done ? CHECK_SVG : String(i + 1)) + '</span>' +
@@ -5718,7 +5745,9 @@ function setupRailHtml(data, always) {
       (state === 'todo' && c.id !== 'signals' && c.fix ? '<button type="button" class="linkq" onclick="goFix(' + jsq(c.fix) + (c.field ? ',' + jsq(c.field) : '') + ')">' +
         escHtml(c.fix_label || 'Open') + icon('chevron', 'chev') + '</button>' : '') +
       '</li>';
-  }).join('') + '</ol>';
+  }).join('') + '</ol>' +
+    (rest ? '<button type="button" class="rail-more" onclick="goTab(\'setup\')">' + plural(rest, 'more step', 'more steps') +
+      ' in Set up' + icon('chevron', 'chev') + '</button>' : '');
 }
 
 // ── Init & live refresh ──

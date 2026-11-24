@@ -264,7 +264,7 @@ async def get_setup_status():
 
     # 1. Venv
     checks.append({
-        "id": "venv", "label": "Python virtual environment",
+        "id": "venv", "label": "Install Sellbird",
         # An installed app (pipx) has no checkout venv to make.
         "done": (not is_checkout(PACKAGE_ROOT)) or (PACKAGE_ROOT / ".venv").is_dir(),
         "required": True,
@@ -275,10 +275,10 @@ async def get_setup_status():
     env_vars = _read_env_file()
     env_exists = ENV_FILE.exists() and bool(env_vars)
     checks.append({
-        "id": "env_file", "label": "Environment file (.env)",
+        "id": "env_file", "label": "Add your keys",
         "done": env_exists,
         "required": True,
-        "help": "Open Set up, then Sending and keys, to enter your API keys.",
+        "help": "Your email and address-checking keys stay on this computer. Add them in Sending and keys.",
     })
 
     # 3. Email provider configured (matches channels.email.provider)
@@ -305,7 +305,7 @@ async def get_setup_status():
         provider_done = bool(instantly_key) and instantly_key != "your_instantly_api_key_here"
         provider_help = "Enter your Instantly API key in Settings."
     checks.append({
-        "id": "email_provider", "label": f"Email provider configured ({provider})",
+        "id": "email_provider", "label": "Connect your email",
         "done": provider_done,
         "required": True,
         "help": provider_help,
@@ -315,7 +315,7 @@ async def get_setup_status():
     from sellbird import recommended
     verifier_set = _has("REOON_API_KEY") or _has("ZEROBOUNCE_API_KEY") or _has("HUNTER_API_KEY")
     checks.append({
-        "id": "verifier", "label": "Email verification key",
+        "id": "verifier", "label": "Add a key for checking addresses",
         "done": verifier_set,
         "required": True,
         "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Sending and keys. "
@@ -336,26 +336,26 @@ async def get_setup_status():
         except Exception:
             pass
     checks.append({
-        "id": "config", "label": f"Sellbird configured ({config_path.name})",
+        "id": "config", "label": "Tell Sellbird about your company",
         "done": config_valid,
         "required": True,
-        "help": "Train Sellbird on your product. Use the trainer or set up manually through Claude.",
+        "help": "What you sell and who you sell to. Fill in Your company, or ask your agent to train Sellbird on your website.",
     })
 
     # 6. Product trained
     product_trained = (PROJECT_ROOT / "skills" / "product_knowledge.md").exists()
     checks.append({
-        "id": "product_trained", "label": "Product knowledge trained",
+        "id": "product_trained", "label": "Teach Sellbird your product",
         "done": product_trained,
         "required": True,
-        "help": "Run: sellbird train https://yourwebsite.com (or set up through Claude).",
+        "help": "Sellbird reads your website to learn what you sell. Ask your agent: \"Train Sellbird on my website.\"",
     })
 
     # 7. LinkedIn (optional)
     linkedin_email = env_vars.get("LINKEDIN_EMAIL", "") or os.getenv("LINKEDIN_EMAIL", "")
     linkedin_pass = env_vars.get("LINKEDIN_PASSWORD", "") or os.getenv("LINKEDIN_PASSWORD", "")
     checks.append({
-        "id": "linkedin", "label": "LinkedIn credentials",
+        "id": "linkedin", "label": "Connect LinkedIn",
         "done": bool(linkedin_email) and bool(linkedin_pass),
         "required": False,
         "help": "Optional. Enter your LinkedIn credentials in Settings to enable LinkedIn prospecting.",
@@ -365,7 +365,7 @@ async def get_setup_status():
     cf_id = env_vars.get("CLOUDFLARE_ACCOUNT_ID", "") or os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
     cf_token = env_vars.get("CLOUDFLARE_API_TOKEN", "") or os.getenv("CLOUDFLARE_API_TOKEN", "")
     checks.append({
-        "id": "cloudflare", "label": "Cloudflare deep crawling",
+        "id": "cloudflare", "label": "Read sites that need JavaScript",
         "done": bool(cf_id) and bool(cf_token),
         "required": False,
         "help": "Optional. For JavaScript-rendered website crawling during training.",
