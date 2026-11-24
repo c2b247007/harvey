@@ -159,7 +159,7 @@ async def test_the_card_tools_carry_a_ui_resource_and_plain_text():
         assert ".innerHTML" not in html     # every value is set as text
         # The one tool a card calls opens the dashboard; it never calls one that acts.
         import re
-        assert re.findall(r"name: '([a-z_]+)'", html) == ["dashboard_open"]
+        assert set(re.findall(r"call\('([a-z_]+)'", html)) == {"dashboard_open", "dashboard_navigate"}
 
 
 def test_the_cards_shape_real_answers_and_never_offer_to_approve():

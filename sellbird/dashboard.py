@@ -5,12 +5,14 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta, timezone
@@ -2297,6 +2299,107 @@ async def pane_code(request: Request):
     await state.init_db()
     await state.log_action("pane_link_made", "agent" if _who(request) == "agent" else "user", {})
     return {"success": True, "code": code, "expires_in": auth.CODE_SECONDS}
+
+
+# ── "Go to": a card in the agent's chat turns the open dashboard tab ──
+# A dashboard tab (your own sign-in or a pane your agent opened) long-polls
+# /api/navigate/next; a card click calls the agent's dashboard_navigate tool,
+# which posts /api/navigate. Only a page name travels, never a token or a code,
+# and only signed-in tabs can listen. The request waits up to two seconds for a
+# tab to say it switched, so the card can say so.
+
+class _NavBus:
+    LISTEN_SECONDS = 25.0      # one long-poll
+    OPEN_SECONDS = 35.0        # a tab that polled this recently is open
+    ACK_SECONDS = 2.0
+
+    def __init__(self):
+        self.seq = 0
+        self.page = ""
+        self.tabs: dict[str, float] = {}      # tab id -> last poll (monotonic)
+        self.acks: dict[int, set[str]] = {}
+        self.changed = asyncio.Event()
+
+    def open_tabs(self) -> int:
+        now = time.monotonic()
+        self.tabs = {t: at for t, at in self.tabs.items() if now - at < self.OPEN_SECONDS}
+        return len(self.tabs)
+
+    def push(self, page: str) -> int:
+        self.seq += 1
+        self.page = page
+        self.acks = {self.seq: set()}
+        old, self.changed = self.changed, asyncio.Event()
+        old.set()
+        return self.seq
+
+
+_nav = _NavBus()
+
+
+@app.post("/api/navigate")
+async def navigate(request: Request):
+    """Show `page` in every open dashboard tab. Answers whether one switched."""
+    from sellbird.mcp_cards import page_for
+    body = await _json_body(request)
+    screen = page_for(str(body.get("page") or ""))
+    if screen is None:
+        return JSONResponse({"ok": False, "message": "That isn't a page."}, status_code=400)
+    if not _nav.open_tabs():
+        return {"ok": True, "delivered": False, "open_tabs": 0, "page": screen}
+    seq = _nav.push(screen)
+    deadline = time.monotonic() + _NavBus.ACK_SECONDS
+    while time.monotonic() < deadline:
+        if _nav.acks.get(seq):
+            return {"ok": True, "delivered": True, "open_tabs": _nav.open_tabs(), "page": screen}
+        await asyncio.sleep(0.05)
+    return {"ok": True, "delivered": False, "open_tabs": _nav.open_tabs(), "page": screen}
+
+
+def _tab_id(value) -> str:
+    tab = str(value or "")
+    return tab if re.fullmatch(r"[A-Za-z0-9_-]{8,64}", tab) else ""
+
+
+@app.get("/api/navigate/next")
+async def navigate_next(request: Request, after: int = -1, tab: str = ""):
+    """For a dashboard tab: wait for the next page to go to. `after` is the
+    last one it saw (-1 the first time: it learns where things stand and
+    goes nowhere). Your agent's key can't listen; a signed-in tab can."""
+    if getattr(request.state, "principal", "user") == "agent":
+        return _refuse("Only a dashboard tab listens here.", 403)
+    tab = _tab_id(tab)
+    if not tab:
+        return JSONResponse({"error": "tab id required"}, status_code=400)
+    _nav.tabs[tab] = time.monotonic()
+    if after < 0 or after > _nav.seq:
+        return {"seq": _nav.seq}
+    if _nav.seq > after:
+        return {"seq": _nav.seq, "page": _nav.page}
+    event = _nav.changed
+    try:
+        await asyncio.wait_for(event.wait(), timeout=_NavBus.LISTEN_SECONDS)
+    except asyncio.TimeoutError:
+        pass
+    _nav.tabs[tab] = time.monotonic()
+    return {"seq": _nav.seq, "page": _nav.page} if _nav.seq > after else {"seq": _nav.seq}
+
+
+@app.post("/api/navigate/ack")
+async def navigate_ack(request: Request):
+    """A tab says it switched to page `seq`."""
+    if getattr(request.state, "principal", "user") == "agent":
+        return _refuse("Only a dashboard tab answers here.", 403)
+    body = await _json_body(request)
+    tab = _tab_id(body.get("tab"))
+    try:
+        seq = int(body.get("seq"))
+    except (TypeError, ValueError):
+        seq = -1
+    if tab and seq in _nav.acks:
+        _nav.acks[seq].add(tab)
+        _nav.tabs[tab] = time.monotonic()
+    return {"ok": True}
 
 
 @app.post(auth.PANE_PATH)

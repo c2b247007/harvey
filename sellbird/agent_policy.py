@@ -75,6 +75,7 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", r"/api/suite"),
     ("GET", r"/api/campaigns/[^/]+/report"),
     ("POST", r"/api/pane/code"),                # a one-use sign-in link for its browser pane; never the token
+    ("POST", r"/api/navigate"),                 # shows a page in a dashboard tab you have open; changes nothing
     ("GET", r"/api/leads"),
     ("POST", r"/api/leads"),                    # a person and a record; sends nothing
     ("POST", r"/api/leads/[^/]+/answer"),       # a draft; only you approve it
@@ -141,6 +142,7 @@ ROUTE_WORDS: tuple[tuple[str, str], ...] = (
     (r"/api/suite", "Read everything Sellbird does, and what is on"),
     (r"/api/campaigns/[^/]+/report", "Read one campaign's numbers"),
     (r"/api/pane/code", "Make a one-use link to open the dashboard in its browser pane"),
+    (r"/api/navigate", "Show a page in the dashboard tab you have open"),
     (r"/api/leads", "Read leads, or add one"),
     (r"/api/leads/[^/]+/answer", "Draft a first answer to a lead for you to approve"),
     (r"/api/mentions", "Read brand mentions"),

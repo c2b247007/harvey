@@ -342,6 +342,23 @@ def register(server, guarded, read) -> None:
             return _result(message, {"ok": False, "message": message})
         return _result(f"{OPEN_ADVICE}\n\n{got['url']}", {**got, "advice": OPEN_ADVICE})
 
+    @server.tool()
+    async def dashboard_navigate(page: str = "") -> CallToolResult:
+        """Show a page in the Sellbird dashboard tab the user already has open (your
+        browser pane or side panel, or their own browser). It only switches the page:
+        nothing else changes. Answers whether a tab switched; if none is open, use
+        dashboard_open. `page` as for dashboard_open."""
+        screen = page_for(page)
+        if screen is None:
+            return _result(f"'{page}' isn't a page.", {"ok": False})
+        got = await guarded(lambda c: c.post("/api/navigate", {"page": screen}, timeout=6.0))
+        if got.get("ok") is False:
+            return _result(got.get("message") or "Sellbird isn't reachable.", {"ok": False, "delivered": False})
+        delivered = bool(got.get("delivered"))
+        text = ("Showing it in the open Sellbird tab." if delivered else
+                "No Sellbird dashboard tab is open. Call dashboard_open and open the link in your browser pane.")
+        return _result(text, {"ok": True, "delivered": delivered, "open_tabs": _n(got.get("open_tabs")), "page": screen})
+
     @server.tool(meta={"ui": {"resourceUri": CARD_URIS["today"]}})
     async def show_today() -> CallToolResult:
         """Show the user's Today as a card: what needs them, what happened, the next thing.

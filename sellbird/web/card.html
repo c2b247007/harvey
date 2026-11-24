@@ -113,6 +113,9 @@ button:disabled { opacity: .55; cursor: default; }
   background: var(--wait-bg); border: 1px solid var(--wait-line); }
 .fbt { font-weight: 550; color: var(--wait); }
 .fb.ok { background: var(--soft); border-color: var(--accent-line); }
+.fb.quiet { background: transparent; border-color: var(--line); padding: 8px 10px; }
+.fb.quiet .fbrow { align-items: center; justify-content: space-between; }
+.fb.quiet .s { flex: 1; min-width: 0; }
 .fb.ok .s { color: var(--fg); }
 .fb .note { flex: none; }
 .fbrow { display: flex; gap: 6px; min-width: 0; }
@@ -227,70 +230,53 @@ button:disabled { opacity: .55; cursor: default; }
     notify('ui/notifications/size-changed', {width: w, height: h});
   }
 
-  // Opening something in the dashboard, in one click.
-  //  1. Ask Sellbird for a one-use sign-in link (dashboard_open). Never the token.
-  //  2. Ask the host to open it (ui/open-link), unless the host is known to drop
-  //     such links: Codex opens only https and codex: links from an app's card,
-  //     and drops ours without saying so.
-  //  3. If the host didn't open it, ask the agent instead (ui/message, a turn in
-  //     the chat): it calls dashboard_open and opens the page in its own pane.
-  //  4. Only if both fail: say which app refused, and offer the prompt or link to copy.
-  // What the host said about itself at start-up. `message` is true, false, or
-  // null when it said nothing either way.
-  var host = {name: '', codex: false, message: null};
-  var PAGE_WORDS = {'': 'Today', today: 'Today', outbox: 'Outbound (what waits for my approval)', conversations: 'replies',
-    leads: 'leads', social: 'social posts', texts: 'texts', campaigns: 'campaigns', mentions: 'mentions', signals: 'signals'};
+  // Opening something in the dashboard, in one click, without the chat.
+  //  1. dashboard_navigate: Sellbird tells the dashboard tab you already have
+  //     open (side panel, pane or browser) to show the page. No link, no code.
+  //  2. No tab open: ask the host to open a one-use sign-in link (never the
+  //     token), then check a tab came up. Codex opens only https links from a
+  //     card, so it is not asked.
+  //  3. Neither: one quiet line saying to open Sellbird first, with a prompt
+  //     to copy. The card never posts into the chat.
+  var host = {name: '', codex: false};
   function learnHost(res) {
-    var info = (res && res.hostInfo) || {}, caps = (res && res.hostCapabilities) || {};
+    var info = (res && res.hostInfo) || {};
     host.codex = info.client_type === 'codex_desktop' || /codex/i.test(String(info.name || ''));
     host.name = host.codex ? 'Codex' : /claude/i.test(String(info.name || '')) ? 'Claude' : String(info.title || info.name || '');
-    host.message = res && res.hostCapabilities ? !!caps.message : null;
   }
-  function promptFor(page) { return 'Open Sellbird\u2019s ' + (PAGE_WORDS[page] || page || 'dashboard') + ' in your browser pane.'; }
+  function call(name, page) {
+    return rpc('tools/call', {name: name, arguments: {page: page || ''}}, 8000).then(function (r) {
+      var res = result(r);
+      return (res && res.structuredContent) || {};
+    });
+  }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function open(page, button, where) {
     if (button) button.disabled = true;
-    var url = '';
-    var done = function (how) {
-      if (button) button.disabled = false;
-      var old = where.querySelector('.fb'); if (old) old.remove();
-      if (how === 'asked') status(where, 'Asked ' + (host.name || 'your agent') + ' to open it in its browser pane. Its reply shows in the chat.');
-      else if (how !== 'opened') fallback(where, page, url);
-      resized();
-    };
-    var askAgent = function () {
-      if (host.message === false) return Promise.resolve('failed');
-      return rpc('ui/message', {role: 'user', content: [{type: 'text', text: promptFor(page)}]}, 8000).then(function (r) {
-        var res = result(r);
-        return res && !res.isError ? 'asked' : 'failed';
-      });
-    };
-    // A one-use sign-in link for the page; '' when Sellbird couldn't make one.
-    var getLink = function () {
-      return rpc('tools/call', {name: 'dashboard_open', arguments: {page: page || ''}}).then(function (r) {
-        var res = result(r), u = res && res.structuredContent && res.structuredContent.url;
-        if (!u && res && res.content && res.content[0] && res.content[0].text) {
-          var m = /https?:\/\/127\.0\.0\.1:\d+\/#\S+|https?:\/\/localhost:\d+\/#\S+/.exec(res.content[0].text);
-          u = m && m[0];
-        }
-        url = u && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(u) ? u : '';
-        return url;
-      });
-    };
-    // Ask the agent first wherever the host takes messages (or didn't say): a
-    // host's "OK" to opening a link can't be trusted (Codex answers and drops
-    // it), while the agent's reply shows in the chat. Codex never gets a link.
-    var openLink = function () {
-      return getLink().then(function (u) {
-        if (!u || host.codex) return 'failed';
+    var navigate = function () { return call('dashboard_navigate', page).then(function (s) { return !!s.delivered; }); };
+    var viaLink = function () {
+      if (host.codex) return Promise.resolve(false);
+      return call('dashboard_open', page).then(function (s) {
+        var u = s.url;
+        if (!(u && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(u))) return false;
         return rpc('ui/open-link', {url: u}, 5000).then(function (o) {
           var ok = result(o);
-          return ok && !ok.isError ? 'opened' : 'failed';
+          if (!ok || ok.isError) return false;
+          // The host said it opened it: believe it once a tab answers.
+          return wait(1500).then(navigate).then(function (yes) { return yes || wait(1500).then(navigate); });
         });
       });
     };
-    var flow = host.message === false ? openLink()
-      : askAgent().then(function (how) { return how === 'asked' ? how : openLink(); });
-    flow.then(done, function () { done('failed'); });
+    navigate().then(function (yes) { return yes ? 'tab' : viaLink().then(function (ok) { return ok ? 'opened' : 'none'; }); })
+      .then(function (how) { finish(how); }, function () { finish('none'); });
+    function finish(how) {
+      if (button) button.disabled = false;
+      var old = where.querySelector('.fb'); if (old) old.remove();
+      if (how === 'tab') status(where, 'Opened in your Sellbird tab.');
+      else if (how === 'opened') status(where, 'Opened Sellbird in a new tab.');
+      else fallback(where);
+      resized();
+    }
   }
   function status(where, text) {
     var box = el('div', 'fb ok');
@@ -308,31 +294,19 @@ button:disabled { opacity: .55; cursor: default; }
     if (!input) return false;
     try { input.select(); return document.execCommand('copy'); } catch (e) { return false; }
   }
-  // Shown under the thing clicked when the host didn't open the link.
-  function fallback(where, page, url) {
-    var old = where.querySelector('.fb');
-    if (old) old.remove();
-    var box = el('div', 'fb');
+  // No Sellbird tab is open, and the host didn't open one: one quiet line.
+  function fallback(where) {
+    var box = el('div', 'fb quiet');
     box.setAttribute('role', 'status');
-    box.appendChild(el('p', 'fbt', (host.name || 'This app') + ' didn\u2019t take the request for your agent' +
-      (host.codex ? '' : ' or open the link') + ' from the card.'));
-    var prompt = promptFor(page);
-    box.appendChild(el('p', 's', 'Ask your agent to open it, or open the link in your browser.'));
     var line = el('div', 'fbrow');
-    var pin = el('input', 'fbin'); pin.readOnly = true; pin.value = prompt; pin.setAttribute('aria-label', 'Prompt for your agent');
-    var pb = el('button', 'pri', 'Copy prompt'); pb.type = 'button';
+    line.appendChild(el('p', 's', 'Open Sellbird in your side panel first, then click again.'));
+    var prompt = 'Open Sellbird in your browser pane.';
+    var pin = el('input', 'fbin sr'); pin.readOnly = true; pin.value = prompt; pin.tabIndex = -1;
+    var pb = el('button', '', 'Copy prompt'); pb.type = 'button';
+    pb.title = 'Copies \u201c' + prompt + '\u201d to paste to your agent';
     pb.addEventListener('click', function () { copy(prompt, pin, pb); });
     line.appendChild(pin); line.appendChild(pb); box.appendChild(line);
-    if (url) {
-      var line2 = el('div', 'fbrow');
-      var lin = el('input', 'fbin'); lin.readOnly = true; lin.value = url; lin.setAttribute('aria-label', 'Sign-in link, works once for two minutes');
-      var lb = el('button', '', 'Copy link'); lb.type = 'button';
-      lb.addEventListener('click', function () { copy(url, lin, lb); });
-      line2.appendChild(lin); line2.appendChild(lb); box.appendChild(line2);
-      box.appendChild(el('p', 'note', 'The link signs in once, within two minutes. Click the button again for a new one.'));
-    }
     where.appendChild(box);
-    resized();
   }
 
   // Tiles from `tiles`, or from the older `stats` ([value, label]) a host may still send.

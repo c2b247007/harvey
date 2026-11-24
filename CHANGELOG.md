@@ -32,11 +32,12 @@ minor versions can still change behaviour.
 - **The chat cards match the dashboard.** Today, Waiting for you and a campaign
   report open with the answer sentence, show stat tiles with sparklines and the
   change against the period before, and mark what only you can approve. They
-  still only show and link. A button opens the page in one click: the app opens
-  the one-use sign-in link, or, where it won't (Codex opens only https links
-  from a card), the card asks your agent in the chat to open the page in its
-  own browser pane. Only when both are refused does it offer a prompt or the
-  link to copy, and it names the app that refused.
+  still only show and link. A button turns the Sellbird tab you already have
+  open (a side panel, a pane or your browser) to that page, through a new
+  "go to" channel: only a page name travels, never a token or a code, and only
+  signed-in tabs listen. With no tab open the app may open a one-use sign-in
+  link (Codex won't: it opens only https links from a card); otherwise the card
+  says to open Sellbird first. A card never posts into the chat.
 - **Set up in groups** (Get started, Sending, Finding people, Inbound, Your
   agent, Account, Everything Sellbird does) with an index when there is room.
   Whole rows open what they are about on People, Companies, Leads and Replies.

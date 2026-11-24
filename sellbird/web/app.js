@@ -5750,6 +5750,36 @@ function setupRailHtml(data, always) {
       ' in Set up' + icon('chevron', 'chev') + '</button>' : '');
 }
 
+// ── "Go to" from a card in your agent's chat ──
+// This tab waits for the next page Sellbird says to show (a card click in the
+// agent's chat), switches to it and says so. Only a page name arrives: no
+// token, no code, nothing else changes.
+const NAV_TAB = (() => {
+  const a = new Uint8Array(12);
+  (window.crypto || {}).getRandomValues ? crypto.getRandomValues(a) : a.forEach((_, i) => { a[i] = Math.random() * 256; });
+  return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+})();
+let _navSeq = -1;
+function goToPage(page) {
+  const p = String(page || '');
+  if (p.slice(0, 7) === 'person/') { openPerson(p.slice(7)); return; }
+  showTab(screenId(p || 'today'));
+}
+async function listenForGoTo() {
+  for (;;) {
+    if (_locked) { await new Promise(r => setTimeout(r, 3000)); continue; }
+    const d = await api('/api/navigate/next?after=' + _navSeq + '&tab=' + NAV_TAB);
+    if (!d || typeof d.seq !== 'number') { await new Promise(r => setTimeout(r, 3000)); continue; }
+    const first = _navSeq < 0;
+    _navSeq = d.seq;
+    if (!first && d.page) {
+      goToPage(d.page);
+      api('/api/navigate/ack', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({seq: d.seq, tab: NAV_TAB})});
+    }
+  }
+}
+
 // ── Init & live refresh ──
 
 document.body.classList.add('first-load');
@@ -5757,6 +5787,7 @@ showTab(fromHash(), {fromHash: true, focus: false, initial: true});
 setTimeout(() => document.body.classList.remove('first-load'), 700);
 loadSellbirdStatus();
 loadAgentReport();
+listenForGoTo();
 // The agent chip and the answer lines: what the agent did, kept fresh.
 setInterval(() => { if (!document.hidden && !_locked) loadAgentReport(); }, 30000);
 
