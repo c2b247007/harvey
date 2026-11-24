@@ -82,6 +82,18 @@ def other_home(change: mi.PlannedChange) -> str:
     return home if home and home != str(mi.server_entry()["env"][HOME_ENV]) else ""
 
 
+def install_gone(change: mi.PlannedChange) -> bool:
+    """The entry being replaced starts a program that is no longer there:
+    that Sellbird was moved or deleted, so Reconnect is the fix."""
+    try:
+        old = json.loads(change.old_json) if change.old_json else None
+    except ValueError:
+        return False
+    command = str((old or {}).get("command") or "") if isinstance(old, dict) else ""
+    looks_absolute = command.startswith(("/", "\\")) or (len(command) > 2 and command[1] == ":")
+    return looks_absolute and not Path(command).exists()
+
+
 def _keep_other_install(change: mi.PlannedChange) -> mi.PlannedChange:
     elsewhere = other_home(change) if change.action in ("remove", "cli") else ""
     if not elsewhere:
@@ -204,3 +216,67 @@ def offer(*, out: Callable[[str], None] = print, **kwargs) -> int | None:
     if code != 0:
         out("Later: sellbird connect")
     return code
+
+
+# ── The dashboard's Connect buttons (Set up, Your agent) ──
+
+LABELS = {"connected": "Connected", "not_connected": "Not connected",
+          "elsewhere": "Points at another Sellbird folder", "moved": "Points at an older copy",
+          "blocked": "Can't connect"}
+BUTTON = {"connected": "remove", "not_connected": "connect", "elsewhere": "reconnect",
+          "moved": "reconnect", "blocked": ""}
+
+
+def agent_states(*, home: Path | None = None, env: Mapping[str, str] | None = None,
+                 which=shutil.which, runner=subprocess.run,
+                 platform: str = sys.platform) -> list[dict]:
+    """One row per agent found here: its state and the one thing to do."""
+    home = Path.home() if home is None else Path(home)
+    env = os.environ if env is None else env
+    rows = []
+    for t in detect(home=home, env=env, which=which, platform=platform):
+        c = plan(t, False, home=home, env=env, which=which, runner=runner, platform=platform)
+        detail = ""
+        if c.action == "none":
+            state = "connected"
+        elif c.action == "refuse":
+            state, detail = "blocked", c.reason
+        elif c.old_json:
+            elsewhere = "" if install_gone(c) else other_home(c)
+            state = "elsewhere" if elsewhere else "moved"
+            detail = elsewhere
+        else:
+            state = "not_connected"
+        rows.append({"agent": t.replace("_", "-"), "name": mi.CLIENT_NAMES[t], "state": state,
+                     "label": LABELS[state], "detail": detail, "action": BUTTON[state],
+                     "next": AFTER[t]})
+    return rows
+
+
+def apply_one(agent: str, action: str, *, home: Path | None = None,
+              env: Mapping[str, str] | None = None, which=shutil.which,
+              runner=subprocess.run, platform: str = sys.platform,
+              now: datetime | None = None) -> dict:
+    """What a Connect, Reconnect or Remove click does: plan that one change
+    and make it with mcp_install's own code. Never raises InstallError."""
+    target = agent.replace("-", "_")
+    if target not in TARGETS or action not in ("connect", "reconnect", "remove"):
+        return {"success": False, "message": "Unknown agent or action."}
+    home = Path.home() if home is None else Path(home)
+    env = os.environ if env is None else env
+    c = plan(target, action == "remove", home=home, env=env, which=which, runner=runner,
+             platform=platform)
+    name = mi.CLIENT_NAMES[target]
+    if c.action == "refuse":
+        return {"success": False, "message": c.reason}
+    if c.action == "none":
+        return {"success": True, "message": c.reason or f"{name} is connected already.",
+                "next": "" if action == "remove" else AFTER[target]}
+    try:
+        message = mi.apply_change(c, runner=runner, now=now or datetime.now())
+    except mi.InstallError as e:
+        return {"success": False, "message": str(e)}
+    nxt = {"claude": "Start a new Claude Code session.",
+           "claude_desktop": "Quit Claude desktop completely and open it again.",
+           "codex": "Start a new Codex session."}[target]
+    return {"success": True, "message": message, "next": nxt}

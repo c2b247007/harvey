@@ -231,3 +231,39 @@ def test_the_page_swaps_the_code_before_its_first_request(outcome):
     else:
         assert out["stored"] == "" and out["failed"] is True and out["calls"][1]["auth"] is None
     assert code not in json.dumps(out["calls"][1:]) and out["stored"] != code
+
+
+# ── Connect buttons (Set up, Your agent) ──
+
+def test_connect_buttons_are_yours_alone_not_a_pane_or_the_agent(client, agent, monkeypatch):  # noqa: F811
+    from sellbird import connect
+    calls = []
+    monkeypatch.setattr(connect, "agent_states", lambda: [{"agent": "claude-desktop"}])
+    monkeypatch.setattr(connect, "apply_one",
+                        lambda a, act: calls.append((a, act)) or {"success": True, "next": "x"})
+    body = {"agent": "claude-desktop", "action": "connect"}
+
+    # A pane your agent opened counts as you elsewhere, but not here.
+    code = agent.post("/api/pane/code").json()["code"]
+    with _browser() as http:
+        pane = _redeem(http, code).json()["token"]
+        h = {"Authorization": f"Bearer {pane}"}
+        assert http.get("/api/agents/connect", headers=h).status_code == 403
+        assert http.post("/api/agents/connect", json=body, headers=h).status_code == 403
+    # The agent's own key: refused before the route runs.
+    assert agent.get("/api/agents/connect").status_code == 403
+    assert agent.post("/api/agents/connect", json=body).status_code == 403
+    # No sign-in, another host, another site.
+    with _browser() as http:
+        assert http.post("/api/agents/connect", json=body).status_code == 401
+    assert client.post("/api/agents/connect", json=body,
+                       headers={"origin": "http://evil.example"}).status_code == 403
+    with TestClient(dash.app, base_url="http://evil.example") as other:
+        assert other.post("/api/agents/connect", json=body,
+                          headers=dict(client.headers)).status_code == 400
+    assert calls == []
+
+    # Your own dashboard sign-in.
+    assert client.get("/api/agents/connect").json()["agents"] == [{"agent": "claude-desktop"}]
+    assert client.post("/api/agents/connect", json=body).json()["success"]
+    assert calls == [("claude-desktop", "connect")]

@@ -140,6 +140,8 @@ It finds Claude Code, Claude desktop and Codex on your machine, shows the line i
 - **Claude Code** and **Codex** (the CLI and the app): start a new session.
 - **Claude desktop**: quit it completely and open it again. It can open the dashboard in its side panel and show cards in the chat.
 
+Or click **Connect** in the dashboard, under Set up, Your agent: one row per agent, with Connect, Reconnect (when Sellbird has moved) or Remove. It works on macOS and Windows, including the Microsoft Store build of Claude desktop.
+
 `sellbird connect claude-desktop` (or `claude`, `codex`) does just one. `sellbird connect --remove` takes Sellbird out again. Nothing goes into those configs but the command and Sellbird's folder: no key, no token.
 
 ChatGPT and claude.ai in a browser connect from their own servers, so they can't reach Sellbird on your machine. On a ChatGPT plan, use Codex, or hosted Sellbird.

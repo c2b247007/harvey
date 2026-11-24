@@ -39,7 +39,13 @@ minor versions can still change behaviour.
   each, and adds them all on one yes; `--remove` takes it out. Claude desktop
   is a new target (`sellbird mcp install claude-desktop` too), edited with the
   same care as the others: merge, backup, verify, never a token, and a Sellbird
-  entry it didn't write is left alone. The setup wizard ends by offering it.
+  entry it didn't write is left alone. The setup wizard ends by offering it, and Set up, Your agent has a
+  Connect, Reconnect or Remove button for each agent. Those buttons answer
+  only your own dashboard sign-in, never a browser pane your agent opened.
+  On Windows it finds the Microsoft Store build of Claude desktop, edits the
+  file instead of passing JSON through an npm `.cmd` shim, keeps CRLF line
+  endings and a byte-order mark, and stops cleanly when another app has the
+  file open.
 
 - **Sellbird inside your agent app.** `dashboard_open` gives your agent a
   link that opens the full dashboard in its app's browser pane, signed in.

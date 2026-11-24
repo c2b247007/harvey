@@ -34,7 +34,7 @@ from sellbird.paths import PACKAGE_ROOT, PROJECT_ROOT, is_checkout  # noqa: E402
 from sellbird import storage  # noqa: E402
 from sellbird.pidfile import LOCK_FILE, loop_lock_held, pid_alive  # noqa: E402
 from sellbird.textio import read_user_text  # noqa: E402
-from sellbird.workspace_home import NotOnHosted, use_home  # noqa: E402
+from sellbird.workspace_home import NotOnHosted, require_self_hosted, use_home  # noqa: E402
 DB_PATH = PROJECT_ROOT / "data" / "sellbird.db"
 ENV_FILE = PROJECT_ROOT / ".env"
 CONFIG_FILE = PROJECT_ROOT / "sellbird.yaml"
@@ -2084,6 +2084,56 @@ async def set_agent_access(request: Request):
     signed_out = pane_sessions.sign_out_all() if access == "off" else 0
     await state.log_action("agent_access_" + access, "dashboard", {"panes_signed_out": signed_out})
     return {"success": True, "access": access, "panes_signed_out": signed_out}
+
+
+# ── Connect buttons: put Sellbird into the agents on this machine ──
+
+
+def _yours_alone(request: Request):
+    """Only the person's own dashboard sign-in. A browser pane the agent
+    opened (principal "pane") counts as you elsewhere, but must never wire
+    Sellbird into, or out of, an agent's config."""
+    if getattr(request.state, "principal", "") != "user":
+        return _refuse("Only you can do this, from your own dashboard link, not from a "
+                       "browser pane your agent opened.", 403)
+    return None
+
+
+@app.get("/api/agents/connect")
+async def agents_connect_list(request: Request):
+    """The agents found on this machine and whether Sellbird is in each."""
+    refused = _yours_alone(request)
+    if refused:
+        return refused
+    from sellbird import connect
+    try:
+        rows = await asyncio.to_thread(connect.agent_states)
+    except NotOnHosted as e:
+        return _refuse(e.payload["message"], 400)
+    return {"agents": rows, "folder": str(PROJECT_ROOT)}
+
+
+@app.post("/api/agents/connect")
+async def agents_connect_apply(request: Request):
+    """Connect, Reconnect or Remove one agent: {"agent": "claude-desktop",
+    "action": "connect"}. The same safe write as `sellbird connect`."""
+    refused = _yours_alone(request)
+    if refused:
+        return refused
+    body = await _json_body(request)
+    from sellbird import connect
+    try:
+        require_self_hosted("mcp_install")
+    except NotOnHosted as e:
+        return _refuse(e.payload["message"], 400)
+    result = await asyncio.to_thread(connect.apply_one, str(body.get("agent") or ""),
+                                     str(body.get("action") or ""))
+    state = _state()
+    await state.init_db()
+    await state.log_action("agent_connect", "user", {"agent": str(body.get("agent") or ""),
+                                                      "action": str(body.get("action") or ""),
+                                                      "ok": bool(result.get("success"))})
+    return result if result.get("success") else JSONResponse(result, status_code=400)
 
 
 # ── The agent's browser pane (sellbird.dashboard_auth.PaneSessions) ──

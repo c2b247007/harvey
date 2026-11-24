@@ -4447,6 +4447,7 @@ async function loadAgent() {
   if (!d) { el.innerHTML = offlineState(); return; }
   if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read this', escHtml(d.error)); return; }
   el.innerHTML = agentHtml(d);
+  loadAgentConnect();
 }
 
 function agentHtml(d) {
@@ -4477,10 +4478,8 @@ function agentHtml(d) {
         : r('No pane is signed in', 'Your agent can open this dashboard in its own browser pane with a link that works once, for two minutes. ' +
             'It never gets your key. Cutting it off signs every pane out.')) +
       '</div></section>' +
-    '<section class="sec"><h2>Connect an agent</h2><div class="w pad">' +
-      '<p class="s" style="margin-bottom:10px">Run this once in a terminal, in this folder. It adds Sellbird to Claude Code or Codex as an MCP server.</p>' +
-      '<pre class="code-block">sellbird mcp install</pre>' +
-      '<p class="form-hint">The agent gets its own key, kept in <code>data/agent-token</code>. It is not your key and it opens less. Never paste either into a chat.</p></div>' +
+    '<section class="sec"><h2>Connect an agent</h2><div class="w" id="agent-connect">' +
+      '<div class="row"><div class="grow"><p class="s">Looking for agents on this computer...</p></div></div></div>' +
       '<h2>What it may do</h2><div class="w">' +
       r('Read', 'Today, people, companies, replies, the Outbox, campaigns, numbers, the calendar and the setup checklist.', d.reads + ' reads') +
       (d.may_do || []).map(x => r(escHtml(x), '')).join('') + '</div></section>' +
@@ -4493,6 +4492,53 @@ function agentHtml(d) {
     '<section class="sec span"><h2>What it did</h2><div class="w">' +
       (log || '<div class="row"><div class="grow"><p class="t">Nothing yet</p><p class="s">Every call your agent makes shows up here, including the ones Sellbird refused.</p></div></div>') +
       '<p class="w-f">The newest 100. What it asked for and how it ended; never the contents.</p></div></section></div>';
+}
+
+// Connect buttons: one row per agent found on this computer.
+let _connectNext = {};
+
+async function loadAgentConnect() {
+  const el = document.getElementById('agent-connect');
+  if (!el) return;
+  const d = await api('/api/agents/connect');
+  if (!d || d.error || !d.agents) {
+    el.innerHTML = '<div class="row"><div class="grow"><p class="t">Connect from a terminal</p><p class="s">' +
+      escHtml((d && (d.message || d.error)) || 'This page can\'t check your agents.') + ' Run <code>sellbird connect</code> instead.</p></div></div>';
+    return;
+  }
+  const verb = {connect: 'Connect', reconnect: 'Reconnect', remove: 'Remove'};
+  const tone = {connected: 'good', not_connected: '', elsewhere: 'wait', moved: 'wait', blocked: 'bad'};
+  const rows = d.agents.map(a => {
+    const sub = a.state === 'elsewhere' ? 'Uses the Sellbird in ' + escHtml(a.detail) + '. Reconnect points it at this one.'
+      : a.state === 'moved' ? 'Set up from another copy of Sellbird. Reconnect points it at this one.'
+      : a.state === 'blocked' ? escHtml(a.detail)
+      : a.state === 'connected' ? 'Ask it: "Open Sellbird" or "What needs me?"'
+      : 'Adds Sellbird to its settings. Nothing else in them changes.';
+    const nxt = _connectNext[a.agent];
+    return '<div class="row"><div class="grow"><p class="t">' + escHtml(a.name) + '</p><p class="s">' + sub + '</p>' +
+      '<span class="tag ' + (tone[a.state] || '') + '">' + escHtml(a.label) + '</span>' +
+      (nxt ? '<p class="s"><b>Next:</b> ' + escHtml(nxt) + '</p>' : '') + '</div>' +
+      (a.action ? '<button class="btn ' + (a.action === 'connect' || a.state === 'moved' ? 'btn-primary' : 'btn-secondary') + ' btn-sm" ' +
+        'onclick="connectAgent(\'' + escHtml(a.agent) + '\', \'' + a.action + '\', this, ' + (a.state === 'elsewhere' ? '1' : '0') + ')">' + verb[a.action] + '</button>' : '') + '</div>';
+  }).join('');
+  el.innerHTML = (rows || '<div class="row"><div class="grow"><p class="t">No agent found here</p><p class="s">Install Claude Code, Claude desktop or Codex, then come back.</p></div></div>') +
+    '<p class="w-f">Your agent gets its own key, never yours, and no key goes into its settings. A copy of each settings file is kept before it changes. ' +
+    'ChatGPT and claude.ai in a browser can\'t reach Sellbird on this computer: use Codex, or hosted Sellbird.</p>';
+}
+
+async function connectAgent(agent, action, btn, otherFolder) {
+  // Another Sellbird folder is in use there: moving it to this one is a real choice.
+  if (otherFolder && !confirm('This agent uses another Sellbird folder now. Point it at this one instead? The other folder stays as it is.')) return;
+  if (btn) btn.disabled = true;
+  const res = await api('/api/agents/connect', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({agent, action})});
+  if (res && res.success) {
+    _connectNext[agent] = res.next || '';
+    showToast(action === 'remove' ? 'Removed. ' + (res.next || '') : 'Connected. ' + (res.next || ''), 'success');
+  } else {
+    showToast(failMsg(res, 'Could not change that agent.'), 'error');
+    if (btn) btn.disabled = false;
+  }
+  loadAgentConnect();
 }
 
 async function signOutPanes() {

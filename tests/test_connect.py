@@ -333,3 +333,174 @@ def test_remove_everywhere_leaves_another_install_alone(tmp_path):
     code, _ = run(tmp_path, target="claude", remove=True, yes=True)
     assert code == 0
     assert json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8")) == {"mcpServers": {}}
+
+
+# ── The dashboard's buttons ──
+
+def states(home):
+    return connect.agent_states(home=home, env={"CODEX_HOME": str(home / ".codex")},
+                                which=no_cli, runner=never_run, platform="darwin")
+
+
+def click(home, agent, action):
+    return connect.apply_one(agent, action, home=home, env={"CODEX_HOME": str(home / ".codex")},
+                             which=no_cli, runner=never_run, platform="darwin", now=NOW)
+
+
+def test_rows_show_each_state_and_one_button(tmp_path):
+    theirs = {**mi.server_entry(), "env": {"SELLBIRD_HOME": str(tmp_path / "real-home")}}
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {"sellbird": theirs}}),
+                                           encoding="utf-8")
+    make_desktop(tmp_path, {})
+    (tmp_path / ".codex").mkdir()
+    got = {r["agent"]: (r["state"], r["action"]) for r in states(tmp_path)}
+    assert got == {"claude": ("elsewhere", "reconnect"),
+                   "claude-desktop": ("not_connected", "connect"),
+                   "codex": ("not_connected", "connect")}
+
+    done = click(tmp_path, "claude-desktop", "connect")
+    assert done["success"] and "Quit Claude desktop" in done["next"]
+    assert {r["agent"]: r["state"] for r in states(tmp_path)}["claude-desktop"] == "connected"
+    assert click(tmp_path, "claude-desktop", "remove")["success"]
+    assert json.loads(desktop_file(tmp_path).read_text(encoding="utf-8")) == {"mcpServers": {}}
+
+
+def test_a_moved_install_reconnects(tmp_path):
+    old = {**mi.server_entry(), "command": "/old/place/bin/python"}
+    path = make_desktop(tmp_path, {"mcpServers": {"sellbird": old}})
+    [row] = states(tmp_path)
+    assert (row["state"], row["action"]) == ("moved", "reconnect")
+    assert click(tmp_path, "claude-desktop", "reconnect")["success"]
+    assert json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["sellbird"] == mi.server_entry()
+
+
+def test_a_foreign_entry_shows_why_and_no_button(tmp_path):
+    hosted = {"type": "http", "url": "https://app.example.com/mcp"}
+    path = make_desktop(tmp_path, {"mcpServers": {"sellbird": hosted}})
+    [row] = states(tmp_path)
+    assert (row["state"], row["action"]) == ("blocked", "")
+    assert row["detail"] == mi.REFUSE_FOREIGN_DESKTOP
+    assert click(tmp_path, "claude-desktop", "connect") == \
+        {"success": False, "message": mi.REFUSE_FOREIGN_DESKTOP}
+    assert json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["sellbird"] == hosted
+
+
+def test_unknown_agent_or_action_does_nothing(tmp_path):
+    assert not click(tmp_path, "cursor", "connect")["success"]
+    assert not click(tmp_path, "codex", "delete")["success"]
+
+
+def test_a_moved_folder_is_reconnect_not_another_install(tmp_path):
+    gone = {"command": str(tmp_path / "old-copy" / ".venv" / "bin" / "python"),
+            "args": ["-P", "-m", "sellbird", "mcp"],
+            "env": {"SELLBIRD_HOME": str(tmp_path / "old-copy")}}
+    make_desktop(tmp_path, {"mcpServers": {"sellbird": gone}})
+    [row] = states(tmp_path)
+    assert (row["state"], row["action"]) == ("moved", "reconnect")
+
+
+# ── Windows, tested on any OS ──
+
+WIN_PY = "C:\\Users\\Sam O'Neil\\Projects\\sellbird\\.venv\\Scripts\\python.exe"
+WIN_HOME = "C:\\Users\\Sam O'Neil\\Projects\\sellbird"
+
+
+@pytest.fixture
+def windows_entry(monkeypatch):
+    entry = {"command": WIN_PY, "args": ["-P", "-m", "sellbird", "mcp"],
+             "env": {"SELLBIRD_HOME": WIN_HOME}}
+    monkeypatch.setattr(mi, "server_entry", lambda: json.loads(json.dumps(entry)))
+    return entry
+
+
+def test_windows_desktop_path_store_build_and_classic(tmp_path):
+    env = {"APPDATA": str(tmp_path / "Roaming"), "LOCALAPPDATA": str(tmp_path / "Local")}
+    classic = tmp_path / "Roaming" / "Claude" / "claude_desktop_config.json"
+    assert mi.desktop_config_path(env=env, home=tmp_path, platform="win32") == classic
+    store = tmp_path / "Local" / "Packages" / "Claude_pzs8sxrjxfjjc" / "LocalCache" / "Roaming" / "Claude"
+    store.mkdir(parents=True)
+    assert mi.desktop_config_path(env=env, home=tmp_path, platform="win32") == \
+        store / "claude_desktop_config.json"
+    assert mi.desktop_detected(env=env, home=tmp_path, platform="win32")
+    # Two store packages: don't guess, use the classic place.
+    (tmp_path / "Local" / "Packages" / "Claude_other" / "LocalCache" / "Roaming" / "Claude").mkdir(parents=True)
+    assert mi.desktop_config_path(env=env, home=tmp_path, platform="win32") == classic
+
+
+def test_windows_npm_cmd_shim_edits_the_file_not_through_cmd(tmp_path):
+    (tmp_path / ".claude.json").write_text("{}", encoding="utf-8")
+    shim = lambda name: "C:\\Users\\Sam\\AppData\\Roaming\\npm\\claude.cmd"  # noqa: E731
+    change = mi.plan_claude(home=tmp_path, which=shim, runner=never_run)
+    assert change.action == "add" and change.argv == ()
+    mi.apply_change(change, runner=never_run, now=NOW)
+    assert json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))["mcpServers"]["sellbird"] == \
+        mi.server_entry()
+    # An .exe takes the argument as is: the CLI is used.
+    exe = mi.plan_claude(home=tmp_path, which=lambda n: "C:\\tools\\claude.exe", runner=never_run)
+    assert exe.action == "none"
+
+
+def test_windows_paths_survive_json_and_toml(tmp_path, windows_entry):
+    desktop = make_desktop(tmp_path, {})
+    (tmp_path / ".codex").mkdir()
+    code, _ = run(tmp_path, yes=True)
+    assert code == 0
+    assert json.loads(desktop.read_text(encoding="utf-8"))["mcpServers"]["sellbird"] == windows_entry
+    codex = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    assert codex["mcp_servers"]["sellbird"] == windows_entry
+    assert states(tmp_path)[0]["state"] == "connected"
+
+
+def test_windows_line_endings_and_byte_order_mark_are_kept(tmp_path):
+    desktop = make_desktop(tmp_path)
+    desktop.write_bytes(b'\xef\xbb\xbf{\r\n  "mcpServers": {\r\n    "other": {"command": "o"}\r\n  }\r\n}\r\n')
+    (tmp_path / ".codex").mkdir()
+    toml = tmp_path / ".codex" / "config.toml"
+    toml.write_bytes(b'model = "m"\r\n\r\n[mcp_servers.other]\r\ncommand = "o"\r\n')
+    code, _ = run(tmp_path, yes=True)
+    assert code == 0
+    for path in (desktop, toml):
+        data = path.read_bytes()
+        assert b"\n" not in data.replace(b"\r\n", b""), path.name     # CRLF only
+    assert desktop.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert not toml.read_bytes().startswith(b"\xef\xbb\xbf")
+    doc = json.loads(desktop.read_bytes().decode("utf-8-sig"))
+    assert doc["mcpServers"]["other"] == {"command": "o"}
+    # And it reads back as connected, then comes out cleanly.
+    assert {r["agent"]: r["state"] for r in states(tmp_path)} == \
+        {"claude-desktop": "connected", "codex": "connected"}
+    code, _ = run(tmp_path, remove=True, yes=True)
+    assert code == 0
+    assert tomllib.loads(toml.read_bytes().decode("utf-8")) == \
+        {"model": "m", "mcp_servers": {"other": {"command": "o"}}}
+
+
+def test_a_file_held_open_by_another_app_is_left_as_it_was(tmp_path, monkeypatch):
+    desktop = make_desktop(tmp_path, {"mcpServers": {"other": {"command": "o"}}})
+    before = desktop.read_bytes()
+
+    def locked(src, dst):
+        raise PermissionError(13, "The process cannot access the file")
+    monkeypatch.setattr(mi.os, "replace", locked)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    result = click(tmp_path, "claude-desktop", "connect")
+    assert not result["success"]
+    assert "open in another app" in result["message"] and "Nothing was changed" in result["message"]
+    assert desktop.read_bytes() == before
+    assert [p.name for p in desktop.parent.iterdir() if p.name.endswith(".tmp")] == []
+
+
+def test_replace_retries_then_says_it_is_locked(tmp_path, monkeypatch):
+    target = tmp_path / "f.json"
+    target.write_text("{}", encoding="utf-8")
+    tmp = tmp_path / "t"
+    tmp.write_text("{}", encoding="utf-8")
+    tries = []
+
+    def locked(src, dst):
+        tries.append(1)
+        raise PermissionError(13, "locked")
+    monkeypatch.setattr(mi.os, "replace", locked)
+    with pytest.raises(mi.FileLocked):
+        mi._replace(str(tmp), target, tries=3, wait=0)
+    assert len(tries) == 3

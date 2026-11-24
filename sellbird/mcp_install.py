@@ -144,7 +144,7 @@ def _read_json_config(path: Path, label: str, bad: str) -> tuple[dict | None, st
     if not path.exists():
         return {}, ""
     try:
-        doc = json.loads(path.read_bytes().decode("utf-8"))
+        doc = json.loads(_text(path.read_bytes()))
     except OSError as e:
         return None, _unreadable(label, e)
     except (ValueError, UnicodeDecodeError):
@@ -167,6 +167,15 @@ def _claude_entry_preview(old, new) -> str:
     return "\n".join(lines)
 
 
+def _usable_cli(found: str | None) -> str | None:
+    """The `claude` command, when it can take our JSON as one argument. On
+    Windows an npm install is a .cmd shim, which runs through cmd.exe and can
+    mangle quotes: then the file is edited directly instead, the same careful way."""
+    if found and found.lower().endswith((".cmd", ".bat")):
+        return None
+    return found
+
+
 def _claude_cli_argv(claude: str, verb: str, entry: dict | None = None) -> tuple[str, ...]:
     if verb == "add":
         return (claude, "mcp", "add-json", "--scope", "user", SERVER_NAME,
@@ -177,9 +186,10 @@ def _claude_cli_argv(claude: str, verb: str, entry: dict | None = None) -> tuple
 def plan_claude(*, home: Path, which=shutil.which, runner=subprocess.run) -> PlannedChange:
     """What installing for Claude Code would do. Reads only; never runs `claude`."""
     path = _claude_path(home)
-    claude = which("claude")
-    if not claude and not path.exists():
+    found = which("claude")
+    if not found and not path.exists():
         return PlannedChange("claude", "refuse", None, "", REFUSE_NO_CLAUDE)
+    claude = _usable_cli(found)
     doc, refusal = _read_claude(path)
     if refusal:
         return PlannedChange("claude", "refuse", path, "", refusal)
@@ -197,15 +207,17 @@ def plan_claude(*, home: Path, which=shutil.which, runner=subprocess.run) -> Pla
                              old_json=json.dumps(current) if current is not None else "")
     action = "add" if current is None else "replace"
     return PlannedChange("claude", action, path,
-                         _claude_entry_preview(current, server_entry()))
+                         _claude_entry_preview(current, server_entry()),
+                         old_json=json.dumps(current) if current is not None else "")
 
 
 def plan_uninstall_claude(*, home: Path, which=shutil.which,
                           runner=subprocess.run) -> PlannedChange:
     path = _claude_path(home)
-    claude = which("claude")
-    if not claude and not path.exists():
+    found = which("claude")
+    if not found and not path.exists():
         return PlannedChange("claude", "refuse", None, "", REFUSE_NO_CLAUDE)
+    claude = _usable_cli(found)
     doc, refusal = _read_claude(path)
     if refusal:
         return PlannedChange("claude", "refuse", path, "", refusal)
@@ -260,11 +272,22 @@ def desktop_config_path(*, env: Mapping[str, str], home: Path,
     if platform == "darwin":
         folder = home / "Library" / "Application Support" / "Claude"
     elif platform == "win32":
-        appdata = env.get("APPDATA")
-        folder = Path(appdata) / "Claude" if appdata else home / "AppData" / "Roaming" / "Claude"
+        folder = _msix_folder(env, home) or (
+            Path(env["APPDATA"]) / "Claude" if env.get("APPDATA")
+            else home / "AppData" / "Roaming" / "Claude")
     else:
         folder = Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "Claude"
     return folder / "claude_desktop_config.json"
+
+
+def _msix_folder(env: Mapping[str, str], home: Path) -> Path | None:
+    """The Microsoft Store build keeps its settings in its own package folder:
+    %LOCALAPPDATA%\\Packages\\Claude_<id>\\LocalCache\\Roaming\\Claude. Used
+    when exactly one such folder exists."""
+    local = Path(env.get("LOCALAPPDATA") or Path(home) / "AppData" / "Local")
+    found = [f for f in sorted((local / "Packages").glob("Claude_*"))
+             if (f / "LocalCache" / "Roaming" / "Claude").is_dir()]
+    return found[0] / "LocalCache" / "Roaming" / "Claude" if len(found) == 1 else None
 
 
 def desktop_detected(*, env: Mapping[str, str], home: Path, platform: str = sys.platform) -> bool:
@@ -351,7 +374,7 @@ def _read_codex(path: Path) -> tuple[str | None, dict | None, str]:
     if not path.exists():
         return None, {}, ""
     try:
-        text = path.read_bytes().decode("utf-8")
+        text = _text(path.read_bytes())
         return text, tomllib.loads(text), ""
     except OSError as e:
         return None, None, _unreadable(CODEX_LABEL, e)
@@ -444,6 +467,23 @@ def _codex_parts(text: str) -> tuple[dict, object]:
 
 # ── Applying ──
 
+BOM = "\ufeff"
+LOCKED = ("{label} is open in another app that won't let it be changed. Close that app "
+          "(or quit the agent) and try again. Nothing was changed.")
+
+
+def _text(data: bytes) -> str:
+    """UTF-8, with a byte-order mark (Windows Notepad adds one) set aside."""
+    return data.decode("utf-8").removeprefix(BOM)
+
+
+def _same_style(new: str, original: str) -> str:
+    """Keep the file's own line endings (CRLF on Windows) and its mark."""
+    if "\r\n" in original:
+        new = new.replace("\r\n", "\n").replace("\n", "\r\n")
+    return (BOM + new) if original.startswith(BOM) else new
+
+
 def _backup_path(path: Path, now: datetime) -> Path:
     """A fresh name: two changes in one second must not overwrite a backup."""
     base = f"{path.name}.sellbird-backup-{now:%Y%m%d%H%M%S}"
@@ -462,10 +502,28 @@ def _write_atomic(target: Path, text: str) -> None:
             f.write(text.encode("utf-8"))
         if target.exists():
             shutil.copymode(target, tmp)               # ~/.claude.json is private
-        os.replace(tmp, target)
+        _replace(tmp, target)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+class FileLocked(InstallError):
+    """Another app holds the file (Windows): nothing was written."""
+
+
+def _replace(tmp: str, target: Path, tries: int = 5, wait: float = 0.2) -> None:
+    """os.replace, a few times: on Windows an app reading the file at that
+    moment makes it fail with PermissionError."""
+    import time
+    for attempt in range(tries):
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError:
+            if attempt == tries - 1:
+                raise FileLocked(LOCKED.format(label=target.name))
+            time.sleep(wait)
 
 
 def _write_private(path: Path, data: bytes, *, exclusive: bool) -> None:
@@ -537,7 +595,8 @@ def _apply_file(change: PlannedChange, now: datetime) -> None:
     data = _read(change)
     existed = data is not None
     try:
-        original = data.decode("utf-8") if existed else ""
+        raw = data.decode("utf-8") if existed else ""
+        original = raw.removeprefix(BOM)
         if change.client == "claude":
             new_text, parts = _claude_new_text(change.action, original), _claude_parts
         elif change.client == "claude_desktop":
@@ -551,11 +610,13 @@ def _apply_file(change: PlannedChange, now: datetime) -> None:
         raise InstallError(bad)
     backup = _back_up(change, data, now)               # only once it parsed: no stray backup
     try:
-        _write_atomic(path, new_text)
-        rest_after, ours_after = parts(path.read_bytes().decode("utf-8"))
+        _write_atomic(path, _same_style(new_text, raw))
+        rest_after, ours_after = parts(_text(path.read_bytes()))
         rest_before, _ = parts(original)
         wanted = None if change.action == "remove" else server_entry()
         ok = rest_after == rest_before and ours_after == wanted
+    except FileLocked:
+        raise                                          # the original is untouched
     except Exception:
         ok = False
     if not ok:
