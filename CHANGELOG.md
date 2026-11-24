@@ -29,6 +29,10 @@ minor versions can still change behaviour.
 - **Inbound and signals as steps.** Leads from your website is three steps:
   an inbox Sellbird reads, your form's emails sent there, a test. Choosing
   signals is a named setup step, and People links to what Sellbird looks for.
+- **The chat cards match the dashboard.** Today, Waiting for you and a campaign
+  report open with the answer sentence, show stat tiles with sparklines and the
+  change against the period before, and mark what only you can approve. They
+  still only show and link.
 - **Set up in groups** (Get started, Sending, Finding people, Inbound, Your
   agent, Account, Everything Sellbird does) with an index when there is room.
   Whole rows open what they are about on People, Companies, Leads and Replies.

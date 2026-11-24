@@ -10,57 +10,111 @@
   to the dashboard. A card never approves, sends or changes anything: its
   only button opens the item in the dashboard, where the person decides.
   Everything shown is set as text, never as HTML.
+
+  The look is the dashboard's: one bordered panel, a 48px header with the
+  logo mark, the answer sentence first, stat tiles with sparklines, rows split
+  by hairlines, five tones, and "Only you" next to a decision.
 -->
 <style>
 /*FONT*/
 :root {
   color-scheme: light;
-  --surface: #FFFFFF; --subtle: #F7F8F9; --chip: #EEF1F3; --line: #E9ECEF; --line2: #DCE1E5;
-  --fg: #16202A; --fg2: #5A6672; --fg3: #6C7883;
-  --accent: #244B62; --on: #FFFFFF; --soft: #E9F0F4;
-  --good: #1B7348; --good-bg: #E9F6EF; --wait: #875800; --wait-bg: #FEF5E2; --bad: #AE222E; --bad-bg: #FDEEEF;
+  --surface: #FFFFFF; --subtle: #F2F5F3; --hover: #F6F8F7; --line: #E3E8E5; --line2: #D3DAD6;
+  --fg: #15212A; --fg2: #4F5D67; --fg3: #6B7780;
+  --accent: #244B62; --accent-h: #1B3A4C; --on: #FFFFFF; --soft: #E9F0F4; --accent-line: #C9DAE4;
+  --good: #16794A; --good-bg: #E7F4EC; --good-line: #BFE3CD; --good-solid: #22A364;
+  --wait: #8A4B06; --wait-bg: #FCF2DF; --wait-line: #F0D29B; --wait-solid: #E09A1E;
+  --bad: #AB2A1F; --bad-bg: #FCEBE9; --bad-line: #F3C2BC; --bad-solid: #DC4637;
+  --shadow-xs: 0 1px 2px rgb(21 33 42 / .06);
   --sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --surface: #16191C; --subtle: #1B1F23; --chip: #272C31; --line: #262B30; --line2: #32383E;
-  --fg: #ECEFF1; --fg2: #A0ABB4; --fg3: #8B97A1;
-  --accent: #A3C9DE; --on: #0D2230; --soft: #1C2E39;
-  --good: #5CCB8F; --good-bg: #10261B; --wait: #F0B84F; --wait-bg: #2A2010; --bad: #FF7A85; --bad-bg: #2C1316;
+  --surface: #151C21; --subtle: #1C252B; --hover: #1A2228; --line: #243038; --line2: #2F3C45;
+  --fg: #E8EEF1; --fg2: #A6B3BC; --fg3: #8592A0;
+  --accent: #7FB3D1; --accent-h: #A3CBE2; --on: #0C1A22; --soft: #17303E; --accent-line: #24455A;
+  --good: #6FD19B; --good-bg: #12291D; --good-line: #1F4A33; --good-solid: #3CBF78;
+  --wait: #F0BE6A; --wait-bg: #2B2112; --wait-line: #4D3A17; --wait-solid: #E0A43A;
+  --bad: #F08A7E; --bad-bg: #2E1715; --bad-line: #55271F; --bad-solid: #E06253;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / .35);
 }
 * { box-sizing: border-box; margin: 0; }
 html, body { background: transparent; }
-body { font: 400 14px/1.45 var(--sans); color: var(--fg); -webkit-font-smoothing: antialiased; }
-.card { background: var(--surface); border-radius: 16px; box-shadow: 0 0 0 1px var(--line2); padding: 16px 16px 12px; max-width: 640px; }
-.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
-.brand { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--fg3); }
-h1 { font-size: 17px; font-weight: 620; letter-spacing: -0.01em; line-height: 1.3; }
-.sub { color: var(--fg2); font-size: 13.5px; margin-top: 2px; }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; margin: 14px 0 6px; }
-.stat { border-radius: 12px; background: var(--subtle); padding: 10px 12px; min-width: 0; }
-.stat b { display: block; font-size: 22px; font-weight: 620; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
-.stat span { color: var(--fg2); font-size: 12.5px; }
-.rows { margin-top: 10px; }
-.row { display: flex; align-items: center; gap: 12px; padding: 11px 2px; border-top: 1px solid var(--line); min-width: 0; }
-.row:first-child { border-top-color: transparent; }
+body { font: 400 14px/20px var(--sans); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; max-width: 640px; overflow: clip; }
+/* One opacity fade on the first render, nothing that moves: the same with reduced motion. */
+.card.in { animation: fade 150ms ease-out both; }
+@keyframes fade { from { opacity: 0; } }
+
+/* Header: the mark, the title, a count, the date. */
+.hd { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.mark { width: 20px; height: 13px; flex: none; color: var(--accent); }
+.hd h1 { font: 600 14px/20px var(--sans); letter-spacing: -0.005em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center;
+  font: 600 11.5px/20px var(--sans); background: var(--wait-bg); color: var(--wait); font-variant-numeric: tabular-nums; }
+.date { margin-left: auto; font: 500 12px/16px var(--sans); color: var(--fg3); white-space: nowrap; }
+
+.answer { padding: 14px 16px 0; font: 600 16px/22px var(--sans); letter-spacing: -0.01em; text-wrap: balance; }
+.answer .agent { color: var(--accent); }
+
+/* Tiles: label, number, sparkline, the change. */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 14px 16px 16px; }
+@media (min-width: 560px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tile .l { font-size: 12px; line-height: 16px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .m { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; min-height: 28px; }
+.tile b { font: 600 20px/28px var(--sans); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.tile b.zero { color: var(--fg3); }
+.tile.wait b { color: var(--wait); } .tile.bad b { color: var(--bad); } .tile.good b { color: var(--good); }
+.tile svg { width: 56px; height: 20px; flex: none; color: var(--accent); }
+.tile .d { font-size: 12px; line-height: 16px; color: var(--fg3); }
+.tile .d.up { color: var(--good); } .tile .d.down { color: var(--bad); }
+
+/* Rows: hairlines edge to edge; a tinted tile only on what needs you. */
+.rows { border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; min-width: 0; }
+.row + .row { border-top: 1px solid var(--line); }
+.ic { width: 28px; height: 28px; flex: none; border-radius: 8px; display: grid; place-items: center; background: var(--wait-bg); color: var(--wait); }
+.ic.bad { background: var(--bad-bg); color: var(--bad); }
+.ic svg { width: 15px; height: 15px; }
 .grow { flex: 1; min-width: 0; }
-.t { font-weight: 580; overflow-wrap: anywhere; }
-.s { color: var(--fg2); font-size: 13px; overflow-wrap: anywhere; }
-.tag { display: inline-block; margin-top: 4px; padding: 1px 8px; border-radius: 99px; font-size: 11.5px; font-weight: 580; }
-.tag.wait { background: var(--wait-bg); color: var(--wait); }
-.tag.bad { background: var(--bad-bg); color: var(--bad); }
-.tag.good { background: var(--good-bg); color: var(--good); }
-.tag.acc { background: var(--soft); color: var(--accent); }
-button { flex: none; min-height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line2);
-         background: var(--surface); color: var(--fg); font: 580 13px/1 var(--sans); cursor: pointer; }
+.t { font-weight: 550; overflow-wrap: anywhere; }
+.s { color: var(--fg2); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 999px; font: 550 11.5px/1 var(--sans);
+  border: 1px solid var(--line); background: var(--subtle); color: var(--fg2); }
+.tag.wait { background: var(--wait-bg); color: var(--wait); border-color: var(--wait-line); }
+.tag.bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-line); }
+.tag.good { background: var(--good-bg); color: var(--good); border-color: var(--good-line); }
+.tag.acc { background: var(--soft); color: var(--accent); border-color: var(--accent-line); }
+.you { display: inline-flex; align-items: center; gap: 4px; font: 500 11.5px/16px var(--sans); color: var(--fg3); white-space: nowrap; }
+.you svg { width: 11px; height: 11px; }
+.acts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.empty { padding: 14px 16px; color: var(--fg2); font-size: 13px; }
+
+button { flex: none; min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line2);
+  background: var(--surface); color: var(--fg); font: 550 13px/1 var(--sans); cursor: pointer; box-shadow: var(--shadow-xs);
+  transition-property: scale, background-color, border-color; transition-duration: 150ms; transition-timing-function: ease-out;
+  -webkit-tap-highlight-color: transparent; }
 button.pri { background: var(--accent); border-color: var(--accent); color: var(--on); }
+@media (hover: hover) { button:hover:not(:disabled) { background: var(--subtle); } button.pri:hover:not(:disabled) { background: var(--accent-h); border-color: var(--accent-h); } }
+@media (prefers-reduced-motion: no-preference) { button:not(:disabled):active { scale: 0.96; } }
+@media (pointer: coarse) { button { min-height: 40px; } }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button:disabled { opacity: .6; cursor: default; }
-.foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-        margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
-.note { color: var(--fg3); font-size: 12px; }
-.empty { color: var(--fg2); padding: 10px 2px; }
-@media (max-width: 380px) { .row { flex-wrap: wrap; } .row button { margin-left: auto; } }
+button:disabled { opacity: .55; cursor: default; }
+
+.ft { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid var(--line); }
+.note { color: var(--fg3); font-size: 12px; line-height: 16px; flex: 1 1 180px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* Narrow: the words keep the width; the button and "Only you" go under them. */
+@media (max-width: 420px) {
+  .row { flex-wrap: wrap; align-items: flex-start; }
+  .grow { flex: 1 1 calc(100% - 40px); }
+  .acts { flex-direction: row-reverse; align-items: center; gap: 10px; margin-left: auto; }
+  .ic { margin-top: 2px; }
+}
+@media (max-width: 340px) { .date { display: none; } }
 </style>
 </head>
 <body>
@@ -68,8 +122,9 @@ button:disabled { opacity: .6; cursor: default; }
 <script>
 (function () {
   'use strict';
-  var nextId = 0, pending = {};
+  var nextId = 0, pending = {}, firstRender = true;
   var card = document.getElementById('card');
+  var NS = 'http://www.w3.org/2000/svg';
 
   function send(msg) { window.parent.postMessage(msg, '*'); }
   function rpc(method, params) {
@@ -88,10 +143,62 @@ button:disabled { opacity: .6; cursor: default; }
     if (text !== undefined && text !== null) e.textContent = String(text);
     return e;
   }
+  // A small SVG, built node by node (never parsed from a string).
+  function svg(viewBox, cls, parts) {
+    var s = document.createElementNS(NS, 'svg');
+    s.setAttribute('viewBox', viewBox);
+    s.setAttribute('aria-hidden', 'true');
+    if (cls) s.setAttribute('class', cls);
+    parts.forEach(function (p) {
+      var n = document.createElementNS(NS, p[0]);
+      Object.keys(p[1]).forEach(function (k) { n.setAttribute(k, p[1][k]); });
+      s.appendChild(n);
+    });
+    return s;
+  }
+  // The Sellbird mark (sellbird-mark.svg), in the accent colour.
+  function mark() {
+    return svg('0 0 1040 640', 'mark', [['path', {fill: 'currentColor', d: 'M83 0C246 47 417 91 562 157C676 209 759 258 744 314C813 257 896 239 954 301L1034 324L944 359C837 473 731 548 563 524C506 516 464 513 427 519L0 631L407 406L224 213L555 300L420 428L663 315L630 281C407 229 264 237 83 0Z'}]]);
+  }
+  var STROKE = {fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'};
+  function lock() {
+    return svg('0 0 16 16', '', [['rect', Object.assign({x: '4', y: '7.5', width: '8', height: '6', rx: '1.2'}, STROKE)],
+                                 ['path', Object.assign({d: 'M5.8 7.5V5.6a2.2 2.2 0 0 1 4.4 0v1.9'}, STROKE)]]);
+  }
+  function flag(bad) {
+    return bad ? svg('0 0 16 16', '', [['path', Object.assign({d: 'M8 2.5 14 13H2Z'}, STROKE)], ['path', Object.assign({d: 'M8 6.5v3M8 11.3v.2'}, STROKE)]])
+               : svg('0 0 16 16', '', [['path', Object.assign({d: 'M4 14V2.5M4 3h7.5l-1.6 3 1.6 3H4'}, STROKE)]]);
+  }
+  function spark(values) {
+    var v = (values || []).map(function (x) { return Number(x) || 0; });
+    if (v.length < 2) return null;
+    var max = Math.max.apply(null, v.concat([1]));
+    var pts = v.map(function (x, i) { return (2 + i * 52 / (v.length - 1)).toFixed(1) + ',' + (18 - 15 * x / max).toFixed(1); });
+    var last = pts[pts.length - 1].split(',');
+    return svg('0 0 56 20', '', [['polyline', {points: pts.join(' '), fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6',
+                                               'stroke-linejoin': 'round', 'stroke-linecap': 'round'}],
+                                 ['circle', {cx: last[0], cy: last[1], r: '2.2', fill: 'currentColor'}]]);
+  }
+  function num(n) { return Number(n || 0).toLocaleString(); }
+  // The change against the period before, as the dashboard says it: a
+  // percent only on a base of 10 or more; otherwise "up from 3".
+  function change(now, before, days) {
+    if (before === null || before === undefined || !days) return null;
+    if (!before && !now) return ['None in the ' + days + ' days before either', ''];
+    if (!before) return ['Up from none in the ' + days + ' days before', 'up'];
+    var pct = Math.round(100 * (now - before) / before), dir = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+    if (before < 10 || Math.abs(pct) > 200) return [(pct > 0 ? 'Up from ' : pct < 0 ? 'Down from ' : 'Same as ') + num(before) + ' the ' + days + ' days before', dir];
+    return [(pct > 0 ? '+' : pct < 0 ? '−' : '') + Math.abs(pct) + '% vs the ' + days + ' days before', dir];
+  }
+
   function theme(ctx) {
     var t = ctx && ctx.theme;
     if (!t && window.matchMedia) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+    // The host's own font, when it gives one.
+    var vars = ctx && ctx.styles && ctx.styles.variables;
+    var font = vars && (vars['--font-sans'] || vars['--font-family']);
+    if (font && /^[\w\s,'"-]+$/.test(font)) document.documentElement.style.setProperty('--sans', font);
   }
   function resized() {
     notify('ui/notifications/size-changed',
@@ -113,27 +220,56 @@ button:disabled { opacity: .6; cursor: default; }
     }).then(function () { if (button) button.disabled = false; });
   }
 
-  function stats(list) {
-    var box = el('div', 'stats');
-    list.forEach(function (s) {
-      var d = el('div', 'stat');
-      d.appendChild(el('b', '', s[0]));
-      d.appendChild(el('span', '', s[1]));
+  // Tiles from `tiles`, or from the older `stats` ([value, label]) a host may still send.
+  function tiles(data) {
+    var list = data.tiles || (data.stats || []).map(function (s) { return {label: s[1], value: s[0]}; });
+    if (!list.length) return null;
+    var box = el('div', 'tiles');
+    list.forEach(function (t) {
+      var d = el('div', 'tile' + (t.tone ? ' ' + t.tone : ''));
+      d.appendChild(el('span', 'l', t.label));
+      var m = el('div', 'm');
+      m.appendChild(el('b', Number(t.value) ? '' : 'zero', num(t.value)));
+      var s = spark(t.series);
+      if (s) m.appendChild(s);
+      d.appendChild(m);
+      var c = t.note ? [t.note, ''] : change(Number(t.value) || 0, t.before, t.days);
+      if (c) d.appendChild(el('span', 'd' + (c[1] ? ' ' + c[1] : ''), c[0]));
       box.appendChild(d);
     });
     return box;
   }
   function row(item) {
-    var r = el('div', 'row'), g = el('div', 'grow');
+    var r = el('div', 'row');
+    if (item.attention) {
+      var ic = el('span', 'ic' + (item.tone === 'bad' ? ' bad' : ''));
+      ic.appendChild(flag(item.tone === 'bad'));
+      ic.appendChild(el('span', 'sr', item.tag || 'Needs you'));
+      r.appendChild(ic);
+    }
+    var g = el('div', 'grow');
     g.appendChild(el('p', 't', item.title));
     if (item.detail) g.appendChild(el('p', 's', item.detail));
-    if (item.tag) g.appendChild(el('span', 'tag ' + (item.tone || ''), item.tag));
+    if (item.tag && !(item.attention && item.tag === 'Needs you')) {
+      var tags = el('div', 'tags');
+      tags.appendChild(el('span', 'tag ' + (item.tone || ''), item.tag));
+      g.appendChild(tags);
+    }
     r.appendChild(g);
     if (item.page) {
+      var acts = el('div', 'acts');
       var b = el('button', item.primary ? 'pri' : '', item.action || 'Review');
       b.type = 'button';
       b.addEventListener('click', function () { open(item.page, b); });
-      r.appendChild(b);
+      acts.appendChild(b);
+      if (item.decision) {
+        var you = el('span', 'you');
+        you.title = 'Your agent can’t do this; only you can';
+        you.appendChild(lock());
+        you.appendChild(document.createTextNode('Only you'));
+        acts.appendChild(you);
+      }
+      r.appendChild(acts);
     }
     return r;
   }
@@ -141,24 +277,37 @@ button:disabled { opacity: .6; cursor: default; }
   function render(data) {
     if (!data || typeof data !== 'object') return;
     card.textContent = '';
-    var head = el('div', 'head');
-    head.appendChild(el('span', 'brand', 'Sellbird'));
-    if (data.when) head.appendChild(el('span', 'note', data.when));
-    card.appendChild(head);
-    card.appendChild(el('h1', '', data.title || 'Sellbird'));
-    if (data.subtitle) card.appendChild(el('p', 'sub', data.subtitle));
-    if (data.stats && data.stats.length) card.appendChild(stats(data.stats));
+    if (firstRender) { card.classList.add('in'); firstRender = false; }
+    var hd = el('div', 'hd');
+    hd.appendChild(mark());
+    hd.appendChild(el('h1', '', data.title || 'Sellbird'));
+    if (data.count) hd.appendChild(el('span', 'count', data.count));
+    hd.appendChild(el('span', 'date', data.when ||
+      new Date().toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'})));
+    card.appendChild(hd);
+    var text = data.answer || data.subtitle || '';
+    if (text) {
+      var p = el('p', 'answer');
+      var who = data.agent || '';
+      if (who && text.indexOf(who + ' ') === 0) {
+        p.appendChild(el('span', 'agent', who));
+        p.appendChild(document.createTextNode(text.slice(who.length)));
+      } else p.textContent = text;
+      card.appendChild(p);
+    }
+    var t = tiles(data);
+    if (t) card.appendChild(t);
     var rows = el('div', 'rows');
     (data.items || []).forEach(function (it) { rows.appendChild(row(it)); });
     if (!(data.items || []).length && data.empty) rows.appendChild(el('p', 'empty', data.empty));
-    card.appendChild(rows);
-    var foot = el('div', 'foot');
-    foot.appendChild(el('span', 'note', data.note || 'Nothing sends until you approve it in the dashboard.'));
+    if (rows.childNodes.length) card.appendChild(rows);
+    var ft = el('div', 'ft');
+    ft.appendChild(el('span', 'note', data.note || 'Nothing sends until you approve it in the dashboard.'));
     var all = el('button', '', data.open_label || 'Open the dashboard');
     all.type = 'button';
     all.addEventListener('click', function () { open(data.page || '', all); });
-    foot.appendChild(all);
-    card.appendChild(foot);
+    ft.appendChild(all);
+    card.appendChild(ft);
     resized();
   }
 
@@ -174,7 +323,7 @@ button:disabled { opacity: .6; cursor: default; }
   theme(null);
   rpc('ui/initialize', {
     protocolVersion: '2026-01-26',
-    appInfo: {name: 'sellbird-card', version: '1'}, clientInfo: {name: 'sellbird-card', version: '1'},
+    appInfo: {name: 'sellbird-card', version: '2'}, clientInfo: {name: 'sellbird-card', version: '2'},
     appCapabilities: {}, capabilities: {},
   }).then(function (res) {
     theme(res && res.hostContext);

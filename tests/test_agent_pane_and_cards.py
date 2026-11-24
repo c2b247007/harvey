@@ -332,3 +332,27 @@ def test_a_pane_cannot_make_links_for_more_panes(client, agent):  # noqa: F811
         assert http.get("/api/agent", headers=h).status_code == 401
     assert agent.post("/api/pane/code").status_code == 200
     assert client.post("/api/pane/code").status_code == 200
+
+
+def test_the_cards_carry_the_answer_and_the_series_for_their_sparklines():
+    numbers = {"range": 14, "has_previous": True, "series": {
+        "found": {"values": [0, 1, 2], "total": 3, "previous": 1},
+        "sent": {"values": [4, 0, 5], "total": 9, "previous": 3},
+        "replies": {"values": [0, 1, 0], "total": 1, "previous": 0}}}
+    report = {"name": "Claude", "day": {"found": 2, "written": 5, "sent": 0}}
+    today = {"stats": {"outbox_pending": 3, "prospects": 13, "open_conversations": 2, "needs_human": 1},
+             "items": [{"title": "3 emails waiting for approval", "detail": "x", "tone": "warn", "tab": "outbox"}]}
+    card = mcp_cards.today_card(today, None, numbers, report)
+    assert card["answer"] == "Claude found 2 people and wrote 5 emails in the last day. 3 emails are waiting for your OK."
+    tiles = {t["label"]: t for t in card["tiles"]}
+    assert tiles["People found"]["value"] == 13 and tiles["People found"]["series"] == [0, 1, 2]
+    assert tiles["People found"]["note"] == "+3 in 14 days"
+    assert tiles["Emails sent"]["value"] == 9 and tiles["Emails sent"]["before"] == 3
+    assert tiles["Conversations"]["value"] == 2 and tiles["Waiting on you"]["value"] == 4
+    # Without the numbers or the report, the card still stands, and the text is unchanged.
+    plain = mcp_cards.today_card(today, None)
+    assert "series" not in plain["tiles"][0] and plain["answer"].startswith("Nothing new since yesterday.")
+    camp = mcp_cards.campaign_card({"id": "c1", "name": "Dentists", "sent": 9, "replied": 1, "waiting": 2,
+                                    "reply_rate": 11}, numbers)
+    assert camp["tiles"][0]["series"] == [4, 0, 5] and camp["items"][0]["decision"] is True
+    assert camp["answer"] == "1 reply from 9 emails, a 11% reply rate. 2 emails wait for your OK."

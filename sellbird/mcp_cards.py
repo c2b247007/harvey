@@ -103,8 +103,55 @@ def _who(item: dict) -> str:
 
 
 # ── Shaping what the dashboard says into a card ──
+# Each card keeps ``stats`` (value, label) for plain text, and adds ``tiles``
+# for the card: a label, a number, a daily series for the sparkline when
+# there is one, and the same figure for the period before.
 
-def today_card(today: dict, suite: dict | None) -> dict:
+def _series(numbers: dict | None, key: str) -> dict:
+    """{"series", "value", "before", "days"} from /api/numbers, or {}."""
+    s = ((numbers or {}).get("series") or {}).get(key) if isinstance(numbers, dict) else None
+    if not isinstance(s, dict) or not isinstance(s.get("values"), list):
+        return {}
+    return {"series": [_n(v) for v in s["values"]], "value": _n(s.get("total")),
+            "before": s.get("previous") if (numbers or {}).get("has_previous") else None,
+            "days": _n((numbers or {}).get("range"))}
+
+
+def _tile(label: str, number, extra: dict | None = None, **more) -> dict:
+    """A tile. ``extra`` (a series from _series) may carry its own value;
+    ``value=`` in ``more`` wins over both."""
+    tile = {"label": label, "value": _n(number)}
+    tile.update({k: v for k, v in {**(extra or {}), **more}.items() if v not in (None, "")})
+    tile["value"] = _n(tile["value"])
+    return tile
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def _today_answer(report: dict | None, waiting: int, needs: int) -> tuple[str, str]:
+    """The sentence the app's Today opens with, and the agent's name."""
+    name = (report or {}).get("name") or "" if isinstance(report, dict) else ""
+    day = (report or {}).get("day") or {} if isinstance(report, dict) else {}
+    did = []
+    if _n(day.get("found")):
+        did.append("found " + _plural(_n(day["found"]), "person", "people"))
+    if _n(day.get("written")):
+        did.append("wrote " + _plural(_n(day["written"]), "email", "emails"))
+    if _n(day.get("sent")):
+        did.append("sent " + _plural(_n(day["sent"]), "email", "emails") + " you approved")
+    who = name or "Your agent"
+    if did:
+        first = who + " " + (", ".join(did[:-1]) + " and " + did[-1] if len(did) > 1 else did[0]) + " in the last day."
+    else:
+        first = "Nothing new since yesterday."
+    then = (" " + _plural(waiting, "email is", "emails are") + " waiting for your OK." if waiting
+            else " " + _plural(needs, "thing needs", "things need") + " you." if needs else " Nothing needs you.")
+    return first + then, name
+
+
+def today_card(today: dict, suite: dict | None, numbers: dict | None = None, report: dict | None = None) -> dict:
     st = today.get("stats") or {}
     items = today.get("items") or []
     needs = [i for i in items if i.get("tone") != "good"]
@@ -116,8 +163,23 @@ def today_card(today: dict, suite: dict | None) -> dict:
     suite_line = ""
     if suite and not suite.get("error") and suite.get("total"):
         suite_line = f"{suite['on']} of {suite['total']} parts of the suite are on."
+    waiting = _n(st.get("outbox_pending"))
+    answer, agent = _today_answer(report, waiting, len(needs))
+    tiles = [
+        _tile("People found", 0, _series(numbers, "found"), value=st.get("prospects")),
+        _tile("Emails sent", 0, _series(numbers, "sent")),
+        _tile("Conversations", 0, _series(numbers, "replies"), value=st.get("open_conversations")),
+        _tile("Waiting on you", waiting + _n(st.get("needs_human")), tone="wait" if waiting + _n(st.get("needs_human")) else ""),
+    ]
+    found = _series(numbers, "found")
+    if found:   # the series is the last days; the number above it is everyone
+        tiles[0]["note"] = f"+{found['value']} in {found['days']} days"
+        tiles[0].pop("before", None)
+    for item in rows:
+        item["attention"] = item["tag"] == "Needs you"
     return {
-        "kind": "today", "title": "Today",
+        "kind": "today", "title": "Today", "answer": answer, "agent": agent, "tiles": tiles,
+        "count": len(needs),
         "subtitle": ((f"{len(needs)} thing needs you." if len(needs) == 1 else f"{len(needs)} things need you.")
                      if needs else "Nothing needs you right now.") + (" " + suite_line if suite_line else ""),
         "stats": [[_n(st.get("outbox_pending")), "to approve"], [_n(st.get("open_conversations")), "conversations"],
@@ -156,8 +218,17 @@ def needs_you_card(outbox: dict, conversations, leads: dict, social: dict, texti
         rows.append({"title": "Text to " + who, "detail": _short(text.get("body")), "tag": "Draft text",
                      "tone": "acc", "page": "texts", "action": "Review"})
     pending = len(outbox.get("pending") or [])
+    for r in rows:   # a draft is a decision only you make; a handed-over conversation needs you
+        r["decision"] = r["page"] in ("outbox", "social", "texts")
+        r["attention"] = r["tone"] == "bad"
+    leads_new = len([x for x in (leads.get("leads") or []) if x.get("status") in ("new", "unreadable")])
+    posts = len(social.get("waiting") or []) + len(texting.get("pending") or [])
     return {
-        "kind": "needs_you", "title": "Waiting for you",
+        "kind": "needs_you", "title": "Waiting for you", "count": len(rows),
+        "answer": (_plural(len(rows), "thing is", "things are") + " waiting for your decision. Each opens in the dashboard, "
+                   "where only you can approve it." if rows else "Nothing is waiting for you."),
+        "tiles": [_tile("Emails", pending, tone="wait" if pending else ""), _tile("Conversations", len(handed), tone="bad" if handed else ""),
+                  _tile("Leads", leads_new), _tile("Posts and texts", posts)],
         "subtitle": (f"{len(rows)} things are waiting for your decision." if rows else "Nothing is waiting for you."),
         "stats": [[pending, "emails"], [len(handed), "conversations"],
                   [len([x for x in (leads.get("leads") or []) if x.get("status") in ("new", "unreadable")]), "leads"],
@@ -168,16 +239,25 @@ def needs_you_card(outbox: dict, conversations, leads: dict, social: dict, texti
     }
 
 
-def campaign_card(report: dict) -> dict:
+def campaign_card(report: dict, numbers: dict | None = None) -> dict:
+    sent, replied, waiting = _n(report.get("sent")), _n(report.get("replied")), _n(report.get("waiting"))
+    answer = ((_plural(replied, "reply", "replies") + " from " + _plural(sent, "email", "emails") +
+               f", a {_n(report.get('reply_rate'))}% reply rate." if sent else "Nothing has gone out yet.") +
+              (" " + _plural(waiting, "email waits", "emails wait") + " for your OK." if waiting else ""))
+    s_sent, s_replies = _series(numbers, "sent"), _series(numbers, "replies")
     return {
-        "kind": "campaign", "title": report.get("name") or "Campaign",
+        "kind": "campaign", "title": report.get("name") or "Campaign", "answer": answer,
+        "tiles": [_tile("Sent", sent, {k: v for k, v in s_sent.items() if k in ("series", "days")}),
+                  _tile("Replied", replied, {k: v for k, v in s_replies.items() if k in ("series", "days")}),
+                  _tile("Meetings", report.get("meetings"), tone="good" if _n(report.get("meetings")) else ""),
+                  _tile("Waiting for you", waiting, tone="wait" if waiting else "")],
         "subtitle": (f"{_n(report.get('people'))} people, {_n(report.get('reached'))} reached. "
                      f"Reply rate {_n(report.get('reply_rate'))}%."),
         "stats": [[_n(report.get("sent")), "sent"], [_n(report.get("replied")), "replied"],
                   [_n(report.get("meetings")), "meetings"], [_n(report.get("waiting")), "waiting for you"]],
         "items": ([{"title": (f"{_n(report.get('waiting'))} email waits for your approval" if _n(report.get("waiting")) == 1
                               else f"{_n(report.get('waiting'))} emails wait for your approval"), "tag": "Needs you",
-                    "tone": "wait", "page": "outbox", "action": "Review", "primary": True}]
+                    "tone": "wait", "page": "outbox", "action": "Review", "primary": True, "decision": True}]
                   if _n(report.get("waiting")) else []),
         "page": "campaigns", "open_label": "Open campaigns",
         "note": f"{_n(report.get('scheduled'))} approved and scheduled. Nothing else sends without you.",
@@ -242,7 +322,11 @@ def register(server, guarded, read) -> None:
         if today.get("ok") is False or today.get("error"):
             return _result(today.get("message") or today.get("error") or "Sellbird isn't reachable.", {"ok": False})
         suite = await read("/api/suite")
-        card = today_card(today, suite)
+        # For the sparklines and the answer line: optional, the card works without them.
+        numbers = await read("/api/numbers?days=14")
+        report = await read("/api/agent/report?limit=1")
+        card = today_card(today, suite, numbers if not numbers.get("error") else None,
+                          report if report.get("day") else None)
         return _result(as_text(card), card)
 
     @server.tool(meta={"ui": {"resourceUri": CARD_URIS["needs_you"]}})
@@ -266,5 +350,6 @@ def register(server, guarded, read) -> None:
         report = await read(f"/api/campaigns/{quote(campaign_id or 'latest', safe='')}/report")
         if report.get("ok") is False or not report.get("id"):
             return _result(report.get("message") or "There is no such campaign.", {"ok": False})
-        card = campaign_card(report)
+        numbers = await read(f"/api/numbers?days=30&campaign={quote(str(report['id']), safe='')}")
+        card = campaign_card(report, numbers if not numbers.get("error") else None)
         return _result(as_text(card), card)

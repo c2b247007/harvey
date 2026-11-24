@@ -55,6 +55,7 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", r"/api/inboxes/[^/]+/pause"), # one inbox; resuming is yours too
     ("GET", r"/api/calendar"),
     ("GET", r"/api/numbers"),
+    ("GET", r"/api/agent/report"),              # what it did and where things stand; for its cards
     ("GET", r"/api/stat/[^/]+"),
     ("GET", r"/api/pipeline"),
     ("GET", r"/api/events"),
@@ -122,6 +123,7 @@ ROUTE_WORDS: tuple[tuple[str, str], ...] = (
     (r"/api/inboxes/[^/]+/pause", "Pause one inbox"),
     (r"/api/calendar", "Read the calendar"),
     (r"/api/numbers", "Read the numbers"),
+    (r"/api/agent/report", "Read what it did and where things stand"),
     (r"/api/stat/[^/]+", "Read one number over time"),
     (r"/api/pipeline", "Read the pipeline"),
     (r"/api/events", "Read events"),
