@@ -356,3 +356,27 @@ def test_the_cards_carry_the_answer_and_the_series_for_their_sparklines():
                                     "reply_rate": 11}, numbers)
     assert camp["tiles"][0]["series"] == [4, 0, 5] and camp["items"][0]["decision"] is True
     assert camp["answer"] == "1 reply from 9 emails, a 11% reply rate. 2 emails wait for your OK."
+
+
+def test_the_waiting_card_speaks_plainly():
+    needs = mcp_cards.needs_you_card(
+        {"pending": []},
+        [{"status": "needs_human", "intent": "escalate", "first_name": "Pat", "last_name": "Example"},
+         {"status": "needs_human", "intent": "something_new"}],
+        {"leads": [{"status": "new", "message": "call me"},
+                   {"status": "new", "form_name": "Quote request"},
+                   {"status": "new", "phone": "+15550100"}]},
+        {"waiting": []}, {"pending": []})
+    titles = [i["title"] for i in needs["items"]]
+    assert titles[0] == "Pat Example needs a reply from you"
+    assert needs["items"][0]["detail"].startswith("Sellbird handed it to you: it needs a person to answer.")
+    assert "(" not in needs["items"][1]["detail"] and "something_new" not in json.dumps(needs)   # no raw codes
+    assert titles[2:] == ["New lead from your site form", "New lead from Quote request", "New lead: +15550100"]
+    assert needs["only_you"] is True and not any(i.get("decision") for i in needs["items"])    # once, on the header
+
+
+def test_the_setup_line_reads_as_one_sentence(client):  # noqa: F811
+    item = next((i for i in client.get("/api/today").json()["items"] if i.get("key") == "setup"), None)
+    if item:
+        parts = item["detail"].split(", ")
+        assert all(p[:1].islower() for p in parts[1:]), item["detail"]

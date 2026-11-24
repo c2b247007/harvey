@@ -106,6 +106,17 @@ button:disabled { opacity: .55; cursor: default; }
 
 .ft { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid var(--line); }
 .note { color: var(--fg3); font-size: 12px; line-height: 16px; flex: 1 1 180px; }
+.hd-you { margin-left: auto; } .hd-you + .date { margin-left: 10px; }
+/* When the host won't open a link: what to do instead, under what was clicked. */
+.row { flex-wrap: wrap; }
+.fb { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px 12px; border-radius: 10px;
+  background: var(--wait-bg); border: 1px solid var(--wait-line); }
+.fbt { font-weight: 550; color: var(--wait); }
+.fb .note { flex: none; }
+.fbrow { display: flex; gap: 6px; min-width: 0; }
+.fbin { flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--line2); border-radius: 8px; background: var(--surface);
+  color: var(--fg); font: 400 12.5px/1 var(--sans); text-overflow: ellipsis; }
+.fbin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* Narrow: the words keep the width; the button and "Only you" go under them. */
 @media (max-width: 420px) {
@@ -127,14 +138,17 @@ button:disabled { opacity: .55; cursor: default; }
   var NS = 'http://www.w3.org/2000/svg';
 
   function send(msg) { window.parent.postMessage(msg, '*'); }
-  function rpc(method, params) {
+  // A request to the host. It answers {result}, {error}, or nothing in time:
+  // each is told apart, so a refusal is never taken for success.
+  function rpc(method, params, wait) {
     var id = ++nextId;
     send({jsonrpc: '2.0', id: id, method: method, params: params || {}});
     return new Promise(function (resolve) {
       pending[id] = resolve;
-      setTimeout(function () { if (pending[id]) { delete pending[id]; resolve(null); } }, 8000);
+      setTimeout(function () { if (pending[id]) { delete pending[id]; resolve({timedOut: true}); } }, wait || 8000);
     });
   }
+  function result(r) { return r && !r.error && !r.timedOut ? (r.result || null) : null; }
   function notify(method, params) { send({jsonrpc: '2.0', method: method, params: params || {}}); }
 
   function el(tag, cls, text) {
@@ -200,24 +214,75 @@ button:disabled { opacity: .55; cursor: default; }
     var font = vars && (vars['--font-sans'] || vars['--font-family']);
     if (font && /^[\w\s,'"-]+$/.test(font)) document.documentElement.style.setProperty('--sans', font);
   }
+  // The card's own size. Not the page's scrollHeight: that never drops below
+  // the frame's current height, so a card could only ever grow.
+  var lastH = 0;
   function resized() {
-    notify('ui/notifications/size-changed',
-           {width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight});
+    var r = card.getBoundingClientRect();
+    var h = Math.ceil(r.height), w = Math.ceil(r.width);
+    if (h === lastH) return;
+    lastH = h;
+    notify('ui/notifications/size-changed', {width: w, height: h});
   }
 
   // Opening something in the dashboard: ask Sellbird for a one-use sign-in
-  // link to that page, then ask the host to open it.
-  function open(page, button) {
+  // link to that page (never the dashboard token), then ask the host to open
+  // it. A host may refuse links from a card (Codex opens only its own), or
+  // not answer: then the card says so and offers a prompt or the link to copy.
+  var PAGE_WORDS = {'': 'Today', today: 'Today', outbox: 'Outbound (what waits for my approval)', conversations: 'replies',
+    leads: 'leads', social: 'social posts', texts: 'texts', campaigns: 'campaigns', mentions: 'mentions', signals: 'signals'};
+  function open(page, button, where) {
     if (button) button.disabled = true;
-    rpc('tools/call', {name: 'dashboard_open', arguments: {page: page || ''}}).then(function (res) {
-      var url = res && res.structuredContent && res.structuredContent.url;
+    var url = '';
+    rpc('tools/call', {name: 'dashboard_open', arguments: {page: page || ''}}).then(function (r) {
+      var res = result(r);
+      url = res && res.structuredContent && res.structuredContent.url;
       if (!url && res && res.content && res.content[0] && res.content[0].text) {
         var m = /https?:\/\/127\.0\.0\.1:\d+\/#\S+|https?:\/\/localhost:\d+\/#\S+/.exec(res.content[0].text);
         url = m && m[0];
       }
-      if (url && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(url)) return rpc('ui/open-link', {url: url});
-      if (button) button.textContent = 'Ask your agent to open it';
-    }).then(function () { if (button) button.disabled = false; });
+      if (!(url && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(url))) { url = ''; return {notOpened: true}; }
+      return rpc('ui/open-link', {url: url}, 5000);
+    }).then(function (r) {
+      if (button) button.disabled = false;
+      var opened = r && !r.notOpened && result(r) && !result(r).isError;
+      if (!opened) fallback(where, page, url);
+    });
+  }
+  function copy(text, input, label) {
+    function done(ok) { label.textContent = ok ? 'Copied' : 'Select it and copy'; if (!ok && input) input.select(); }
+    try {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(legacyCopy(input)); });
+    } catch (e) { done(legacyCopy(input)); }
+  }
+  function legacyCopy(input) {
+    if (!input) return false;
+    try { input.select(); return document.execCommand('copy'); } catch (e) { return false; }
+  }
+  // Shown under the thing clicked when the host didn't open the link.
+  function fallback(where, page, url) {
+    var old = where.querySelector('.fb');
+    if (old) old.remove();
+    var box = el('div', 'fb');
+    box.setAttribute('role', 'status');
+    box.appendChild(el('p', 'fbt', 'This app didn\u2019t open the link from the card.'));
+    var prompt = 'Open Sellbird\u2019s ' + (PAGE_WORDS[page] || page || 'dashboard') + ' in your browser pane.';
+    box.appendChild(el('p', 's', 'Ask your agent to open it, or open the link in your browser.'));
+    var line = el('div', 'fbrow');
+    var pin = el('input', 'fbin'); pin.readOnly = true; pin.value = prompt; pin.setAttribute('aria-label', 'Prompt for your agent');
+    var pb = el('button', 'pri', 'Copy prompt'); pb.type = 'button';
+    pb.addEventListener('click', function () { copy(prompt, pin, pb); });
+    line.appendChild(pin); line.appendChild(pb); box.appendChild(line);
+    if (url) {
+      var line2 = el('div', 'fbrow');
+      var lin = el('input', 'fbin'); lin.readOnly = true; lin.value = url; lin.setAttribute('aria-label', 'Sign-in link, works once for two minutes');
+      var lb = el('button', '', 'Copy link'); lb.type = 'button';
+      lb.addEventListener('click', function () { copy(url, lin, lb); });
+      line2.appendChild(lin); line2.appendChild(lb); box.appendChild(line2);
+      box.appendChild(el('p', 'note', 'The link signs in once, within two minutes. Click the button again for a new one.'));
+    }
+    where.appendChild(box);
+    resized();
   }
 
   // Tiles from `tiles`, or from the older `stats` ([value, label]) a host may still send.
@@ -260,7 +325,7 @@ button:disabled { opacity: .55; cursor: default; }
       var acts = el('div', 'acts');
       var b = el('button', item.primary ? 'pri' : '', item.action || 'Review');
       b.type = 'button';
-      b.addEventListener('click', function () { open(item.page, b); });
+      b.addEventListener('click', function () { open(item.page, b, r); });
       acts.appendChild(b);
       if (item.decision) {
         var you = el('span', 'you');
@@ -282,6 +347,13 @@ button:disabled { opacity: .55; cursor: default; }
     hd.appendChild(mark());
     hd.appendChild(el('h1', '', data.title || 'Sellbird'));
     if (data.count) hd.appendChild(el('span', 'count', data.count));
+    if (data.only_you) {   // every row here is a decision only the person makes
+      var you = el('span', 'you hd-you');
+      you.title = 'Your agent can\u2019t approve any of this; only you can';
+      you.appendChild(lock());
+      you.appendChild(document.createTextNode('Only you'));
+      hd.appendChild(you);
+    }
     hd.appendChild(el('span', 'date', data.when ||
       new Date().toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'})));
     card.appendChild(hd);
@@ -305,7 +377,7 @@ button:disabled { opacity: .55; cursor: default; }
     ft.appendChild(el('span', 'note', data.note || 'Nothing sends until you approve it in the dashboard.'));
     var all = el('button', '', data.open_label || 'Open the dashboard');
     all.type = 'button';
-    all.addEventListener('click', function () { open(data.page || '', all); });
+    all.addEventListener('click', function () { open(data.page || '', all, ft); });
     ft.appendChild(all);
     card.appendChild(ft);
     resized();
@@ -315,7 +387,11 @@ button:disabled { opacity: .55; cursor: default; }
     if (e.source !== window.parent) return;
     var m = e.data;
     if (!m || m.jsonrpc !== '2.0') return;
-    if (m.id !== undefined && pending[m.id]) { var f = pending[m.id]; delete pending[m.id]; f(m.result || null); return; }
+    if (m.id !== undefined && pending[m.id]) {
+      var f = pending[m.id]; delete pending[m.id];
+      f(m.error ? {error: m.error} : {result: m.result || {}});
+      return;
+    }
     if (m.method === 'ui/notifications/tool-result') render((m.params || {}).structuredContent);
     else if (m.method === 'ui/notifications/host-context-changed') theme(m.params);
   });
@@ -326,6 +402,7 @@ button:disabled { opacity: .55; cursor: default; }
     appInfo: {name: 'sellbird-card', version: '2'}, clientInfo: {name: 'sellbird-card', version: '2'},
     appCapabilities: {}, capabilities: {},
   }).then(function (res) {
+    res = result(res);
     theme(res && res.hostContext);
     notify('ui/notifications/initialized');
   });

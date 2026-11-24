@@ -97,6 +97,24 @@ def _short(text, limit: int = 140) -> str:
     return text[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "..."
 
 
+# Why Sellbird handed a conversation over, in words (the handler's intent codes).
+HANDED_WHY = {
+    "escalate": "it needs a person to answer", "question": "they asked something it shouldn't answer alone",
+    "objection": "they pushed back", "interested": "they are interested", "accepted_offer": "they said yes to your offer",
+    "not_interested": "they aren't interested", "wrong_person": "they say they aren't the right person",
+    "ooo": "they are away", "unsubscribe": "they asked not to be emailed", "new_lead": "a new lead wrote in",
+}
+
+
+def _lead_name(lead: dict) -> str:
+    """Who a lead is: their name, address or number, else where it came from."""
+    who = lead.get("name") or " ".join(x for x in (lead.get("first_name"), lead.get("last_name")) if x)
+    who = who or lead.get("email") or lead.get("phone")
+    if who:
+        return "New lead: " + who
+    return "New lead from " + (lead.get("form_name") or "your site form")
+
+
 def _who(item: dict) -> str:
     ctx = item.get("context") or {}
     return ctx.get("contact") or item.get("to_email") or "Someone"
@@ -201,12 +219,13 @@ def needs_you_card(outbox: dict, conversations, leads: dict, social: dict, texti
                      "page": "outbox", "action": "Review", "primary": True})
     handed = [c for c in (conversations if isinstance(conversations, list) else []) if c.get("status") == "needs_human"]
     for c in handed[:4]:
-        why = c.get("intent", "").replace("_", " ")
-        rows.append({"title": "A conversation needs you",
-                     "detail": "Sellbird handed it to you" + (f" ({why})" if why else "") + ". Reply yourself, then close it or hand it back.",
+        why = HANDED_WHY.get(str(c.get("intent") or ""), "")
+        who = " ".join(x for x in (c.get("first_name"), c.get("last_name")) if x) or c.get("company") or ""
+        rows.append({"title": "A conversation needs you" if not who else f"{who} needs a reply from you",
+                     "detail": "Sellbird handed it to you" + (f": {why}" if why else "") + ". Reply yourself, then close it or hand it back.",
                      "tag": "Needs you", "tone": "bad", "page": "conversations", "action": "Review"})
     for lead in [x for x in (leads.get("leads") or []) if x.get("status") in ("new", "unreadable")][:4]:
-        rows.append({"title": "New lead: " + (lead.get("name") or lead.get("email") or lead.get("phone") or "someone"),
+        rows.append({"title": _lead_name(lead),
                      "detail": _short(lead.get("message")), "tag": "Lead", "tone": "wait",
                      "page": "leads", "action": "Review"})
     for post in (social.get("waiting") or [])[:3]:
@@ -218,13 +237,12 @@ def needs_you_card(outbox: dict, conversations, leads: dict, social: dict, texti
         rows.append({"title": "Text to " + who, "detail": _short(text.get("body")), "tag": "Draft text",
                      "tone": "acc", "page": "texts", "action": "Review"})
     pending = len(outbox.get("pending") or [])
-    for r in rows:   # a draft is a decision only you make; a handed-over conversation needs you
-        r["decision"] = r["page"] in ("outbox", "social", "texts")
+    for r in rows:   # every row here is yours to decide: "Only you" sits once, on the header
         r["attention"] = r["tone"] == "bad"
     leads_new = len([x for x in (leads.get("leads") or []) if x.get("status") in ("new", "unreadable")])
     posts = len(social.get("waiting") or []) + len(texting.get("pending") or [])
     return {
-        "kind": "needs_you", "title": "Waiting for you", "count": len(rows),
+        "kind": "needs_you", "title": "Waiting for you", "count": len(rows), "only_you": bool(rows),
         "answer": (_plural(len(rows), "thing is", "things are") + " waiting for your decision. Each opens in the dashboard, "
                    "where only you can approve it." if rows else "Nothing is waiting for you."),
         "tiles": [_tile("Emails", pending, tone="wait" if pending else ""), _tile("Conversations", len(handed), tone="bad" if handed else ""),

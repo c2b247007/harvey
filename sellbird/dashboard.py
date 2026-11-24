@@ -4042,7 +4042,9 @@ async def get_today():
             items.append({
                 "key": "setup", "tone": "warn",
                 "title": "Finish setting Sellbird up",
-                "detail": ", ".join(missing[:3]) or "Some required steps are incomplete.",
+                # "Add your keys, connect your email": one sentence, not three titles.
+                "detail": ", ".join(m if i == 0 else m[:1].lower() + m[1:] for i, m in enumerate(missing[:3]))
+                          or "Some required steps are incomplete.",
                 "action": "Open setup", "tab": "settings",
             })
 

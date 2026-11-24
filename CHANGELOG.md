@@ -32,7 +32,9 @@ minor versions can still change behaviour.
 - **The chat cards match the dashboard.** Today, Waiting for you and a campaign
   report open with the answer sentence, show stat tiles with sparklines and the
   change against the period before, and mark what only you can approve. They
-  still only show and link.
+  still only show and link. When the app won't open a link from a card (Codex
+  opens only its own), the card says so and offers a prompt for your agent or
+  the one-use sign-in link to copy, instead of doing nothing.
 - **Set up in groups** (Get started, Sending, Finding people, Inbound, Your
   agent, Account, Everything Sellbird does) with an index when there is room.
   Whole rows open what they are about on People, Companies, Leads and Replies.
