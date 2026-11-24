@@ -247,7 +247,7 @@ class SetupWizard:
         print(f"""
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║   Sellbird Setup Wizard                                    ║
+║   Sellbird Setup Wizard                                  ║
 ║   Let's get you closing deals.                           ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝""")
