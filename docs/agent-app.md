@@ -13,7 +13,7 @@ Ask your agent "Open Sellbird" or "Show me what is waiting for approval". It cal
 - **A pane session lasts twelve hours.** Set up, Your agent lists every signed-in pane, with **Sign panes out**. Cutting your agent off signs every pane out at once and stops new links. A restarted dashboard signs every pane out too.
 - **Pages:** `today`, `outbound` (what waits for approval), `replies`, `campaigns`, `signals`, `social`, `inbound` (leads), `texts`, `mentions`, `people`, `calendar`, `numbers`, `setup`, `suite`, or `person/<id>`.
 
-**What this changes.** A pane signed in this way is your session: whoever drives that pane can click what you can click there, including Approve. Your agent can drive its own browser pane. The agent's own key still can't approve, send or resume anything. Use the pane while you are watching it, and sign panes out when you are done.
+**What this changes.** A pane signed in this way is your session: whoever drives that pane can click what you can click there, including Approve. Your agent can drive its own browser pane. The agent's own key still can't approve, send or resume anything. A pane can't widen the agent's reach either: letting the agent back in, resuming sending, turning on autopilot, connecting or removing an agent, and making links for more panes answer only your own dashboard sign-in. A pane can still cut the agent off, pause sending, go back to approval and sign panes out. Use the pane while you are watching it, and sign panes out when you are done.
 
 ## Cards in the chat
 

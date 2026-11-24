@@ -4473,7 +4473,7 @@ function agentHtml(d) {
       ((d.panes || []).length
         ? (d.panes || []).map(x => r('Signed in in your agent\'s browser pane', 'Since ' + relTime(new Date(x.since * 1000).toISOString()) +
             '. Signs itself out in ' + Math.max(1, Math.round(x.minutes_left / 60)) + ' hours.', 'Open', 'wait')).join('') +
-          '<div class="row"><div class="grow"><p class="s">Whoever drives that pane can click what you can click there.</p></div>' +
+          '<div class="row"><div class="grow"><p class="s">Whoever drives that pane can click most of what you can, Approve included. It can never let your agent back in, resume sending, turn on autopilot, connect an agent or make links for more panes.</p></div>' +
           '<button class="btn btn-secondary btn-sm" onclick="signOutPanes()">Sign panes out</button></div>'
         : r('No pane is signed in', 'Your agent can open this dashboard in its own browser pane with a link that works once, for two minutes. ' +
             'It never gets your key. Cutting it off signs every pane out.')) +

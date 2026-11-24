@@ -42,6 +42,9 @@ minor versions can still change behaviour.
   entry it didn't write is left alone. The setup wizard ends by offering it, and Set up, Your agent has a
   Connect, Reconnect or Remove button for each agent. Those buttons answer
   only your own dashboard sign-in, never a browser pane your agent opened.
+  The same now holds for letting the agent back in, resuming sending,
+  turning on autopilot and making more pane links; a pane can still cut
+  the agent off, pause, go back to approval and sign panes out.
   On Windows it finds the Microsoft Store build of Claude desktop, edits the
   file instead of passing JSON through an npm `.cmd` shim, keeps CRLF line
   endings and a byte-order mark, and stops cleanly when another app has the

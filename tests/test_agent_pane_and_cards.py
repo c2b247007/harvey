@@ -267,3 +267,68 @@ def test_connect_buttons_are_yours_alone_not_a_pane_or_the_agent(client, agent, 
     assert client.get("/api/agents/connect").json()["agents"] == [{"agent": "claude-desktop"}]
     assert client.post("/api/agents/connect", json=body).json()["success"]
     assert calls == [("claude-desktop", "connect")]
+
+
+# ── A pane can take the agent's reach away, never give it more ──
+
+def _pane_headers(agent):  # noqa: F811
+    code = agent.post("/api/pane/code").json()["code"]
+    with _browser() as http:
+        return {"Authorization": f"Bearer {_redeem(http, code).json()['token']}"}
+
+
+def test_a_pane_cannot_let_the_agent_back_in_but_can_cut_it_off(client, agent):  # noqa: F811
+    h = _pane_headers(agent)
+    with _browser() as http:
+        assert http.post("/api/agent/access", json={"access": "off"}, headers=h).status_code == 200
+    # Cutting it off signed the pane out; a fresh pane still can't undo it.
+    client.post("/api/agent/access", json={"access": "on"})
+    h = _pane_headers(agent)
+    client.post("/api/agent/access", json={"access": "off"})   # pane signed out again
+    client.post("/api/agent/access", json={"access": "on"})
+    h = _pane_headers(agent)
+    with _browser() as http:
+        assert http.post("/api/agent/access", json={"access": "on"}, headers=h).status_code == 403
+    assert agent.post("/api/agent/access", json={"access": "on"}).status_code == 403
+    assert client.post("/api/agent/access", json={"access": "on"}).json()["access"] == "on"
+
+
+def test_a_pane_cannot_resume_sending_but_can_pause(client, agent):  # noqa: F811
+    h = _pane_headers(agent)
+    with _browser() as http:
+        assert http.post("/api/sending/pause", headers=h).status_code == 200
+        assert http.post("/api/sending/resume", headers=h).status_code == 403
+    assert agent.post("/api/sending/resume").status_code == 403
+    assert client.post("/api/sending/resume").json()["success"]
+
+
+def test_a_pane_cannot_turn_on_autopilot_but_can_go_back_to_approval(client, agent, tmp_path, monkeypatch):  # noqa: F811
+    import shutil
+    from sellbird.config import load_config
+    from sellbird.paths import PROJECT_ROOT
+    cfg = tmp_path / "sellbird.yaml"
+    shutil.copy(PROJECT_ROOT / "sellbird.yaml", cfg)
+    assert load_config(str(cfg)).channels.email.require_approval
+    monkeypatch.setattr(dash, "_resolve_config_file", lambda: cfg)
+    h = _pane_headers(agent)
+    on = {"mode": "autopilot", "confirm": "autopilot"}
+    with _browser() as http:
+        assert http.post("/api/sending-mode", json=on, headers=h).status_code == 403
+        assert load_config(str(cfg)).channels.email.require_approval
+        assert http.post("/api/sending-mode", json={"mode": "approval"}, headers=h).status_code == 200
+    assert agent.post("/api/sending-mode", json=on).status_code == 403
+    assert client.post("/api/sending-mode", json=on).status_code == 200
+
+
+def test_a_pane_cannot_make_links_for_more_panes(client, agent):  # noqa: F811
+    h = _pane_headers(agent)
+    with _browser() as http:
+        assert http.post("/api/pane/code", headers=h).status_code == 403
+        # Reading and moving around still work.
+        assert http.get("/api/agent", headers=h).status_code == 200
+        assert http.get("/api/sending-mode", headers=h).status_code == 200
+        # And it can sign panes out, itself included.
+        assert http.post("/api/pane/sign-out", headers=h).status_code == 200
+        assert http.get("/api/agent", headers=h).status_code == 401
+    assert agent.post("/api/pane/code").status_code == 200
+    assert client.post("/api/pane/code").status_code == 200

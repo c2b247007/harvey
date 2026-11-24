@@ -2078,6 +2078,10 @@ async def set_agent_access(request: Request):
     access = str(body.get("access") or "").strip().lower()
     if access not in ("on", "off"):
         return _refuse('access must be "on" or "off".', 400)
+    # Off works from anywhere; letting the agent back in is yours alone.
+    refused = _yours_alone(request) if access == "on" else None
+    if refused:
+        return refused
     state = _state()
     await state.init_db()
     await state.set_setting(AGENT_ACCESS_KEY, "off" if access == "off" else "")
@@ -2091,8 +2095,9 @@ async def set_agent_access(request: Request):
 
 def _yours_alone(request: Request):
     """Only the person's own dashboard sign-in. A browser pane the agent
-    opened (principal "pane") counts as you elsewhere, but must never wire
-    Sellbird into, or out of, an agent's config."""
+    opened (principal "pane") counts as you for reading and everyday work,
+    but never for what gives the agent more reach: wiring Sellbird into an
+    agent, letting the agent back in, resuming sending, autopilot."""
     if getattr(request.state, "principal", "") != "user":
         return _refuse("Only you can do this, from your own dashboard link, not from a "
                        "browser pane your agent opened.", 403)
@@ -2144,6 +2149,10 @@ async def pane_code(request: Request):
     """A sign-in code for the agent's browser pane: one use, two minutes.
     The agent puts it in the link's #fragment; the page swaps it for a pane
     session. The dashboard token itself never leaves this machine's file."""
+    # A pane can't make links for more panes: its own session would never end.
+    if getattr(request.state, "principal", "") == "pane":
+        return _refuse("A browser pane can't make sign-in links. Ask your agent, "
+                       "or use your own dashboard link.", 403)
     code = pane_sessions.mint()
     if code is None:
         return _refuse("Too many sign-in links are open. Wait two minutes and try again.", 429)
@@ -2497,6 +2506,10 @@ async def set_sending_mode(request: Request):
     mode = body.get("mode") if isinstance(body, dict) else None
     if mode not in ("approval", "autopilot"):
         return _refuse('expected {"mode": "approval"} or {"mode": "autopilot", "confirm": "autopilot"}', 400)
+    # Back to approval works from anywhere; autopilot is yours alone.
+    refused = _yours_alone(request) if mode == "autopilot" else None
+    if refused:
+        return refused
     if mode == "autopilot" and body.get("confirm") != "autopilot":
         return _refuse('Type "autopilot" to confirm: Sellbird will send email without asking you.', 400)
     path = _resolve_config_file()
@@ -2814,9 +2827,13 @@ async def outbox_reject(item_id: str):
 
 
 @app.post("/api/sending/{action}")
-async def sending_toggle(action: str):
+async def sending_toggle(action: str, request: Request):
     if action not in ("pause", "resume"):
         return JSONResponse({"success": False, "message": "unknown action"}, status_code=400)
+    # Pausing works from anywhere; turning sending back on is yours alone.
+    refused = _yours_alone(request) if action == "resume" else None
+    if refused:
+        return refused
     try:
         state = _state()
         await state.init_db()
