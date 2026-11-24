@@ -101,37 +101,42 @@
 
   <div id="today-kpis"><div class="stats"><div class="stat ph"><span>&nbsp;</span><div class="stat-main"><b class="v">&nbsp;</b></div><span>&nbsp;</span></div><div class="stat ph"><span>&nbsp;</span><div class="stat-main"><b class="v">&nbsp;</b></div><span>&nbsp;</span></div><div class="stat ph"><span>&nbsp;</span><div class="stat-main"><b class="v">&nbsp;</b></div><span>&nbsp;</span></div><div class="stat ph"><span>&nbsp;</span><div class="stat-main"><b class="v">&nbsp;</b></div><span>&nbsp;</span></div></div></div>
 
-  <div class="secs">
+  <div class="secs one today-secs" id="today-secs">
+    <section class="sec" id="today-setup-sec" hidden>
+      <h2>Finish setting up <span class="h-right" id="today-setup-count"></span></h2>
+      <div id="today-setup"></div>
+    </section>
     <section class="sec lead" id="today-needs">
       <h2>Needs you</h2>
       <div id="today-queue"><div class="w"><span class="skel"></span><span class="skel"></span><span class="skel"></span></div></div>
     </section>
-    <section class="sec">
-      <h2><span id="today-log-title">What your agent did</span> <a href="#activity" onclick="goTab('activity');return false">See all</a></h2>
-      <div id="today-activity"><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span></div>
-    </section>
-    <section class="sec">
-      <h2>Pipeline right now</h2>
-      <div class="w pad" id="live-status"></div>
-    </section>
-    <section class="sec">
-      <h2>People by stage <a href="#prospects" onclick="goTab('prospects');return false">Open People</a></h2>
-      <div class="w pad" id="today-figures"></div>
-      <div class="facts" id="today-facts"></div>
-    </section>
-    <section class="sec" id="today-runs-block">
-      <h2>Collector runs</h2>
-      <div class="w pad" id="today-runs"></div>
-    </section>
-    <section class="sec" id="today-setup-sec" hidden>
-      <h2>Finish setting up</h2>
-      <div id="today-setup"></div>
-    </section>
-    <section class="sec" id="today-suite-sec" hidden>
-      <h2>Your suite</h2>
-      <div class="w" id="today-suite"></div>
+    <section class="sec" id="today-log-sec">
+      <h2><span id="today-log-title">What your agent did</span> <a href="#log" onclick="goTab('log');return false">Show all</a></h2>
+      <div id="today-activity"><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span></div>
     </section>
   </div>
+</div>
+
+<!-- One number over time: a chart, a range and the records behind it -->
+<div id="stat" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">People found</h1>
+      <p></p>
+    </div>
+  </div>
+  <div id="stat-body"></div>
+</div>
+
+<!-- Everything the agent did, and everything you decided -->
+<div id="log" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">What your agent did</h1>
+      <p>Every line comes from a record: what your agent did through Sellbird, and what you decided.</p>
+    </div>
+  </div>
+  <section class="sec"><div id="log-body"><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span><span class="skel"></span></div></section>
 </div>
 
 <!-- Calendar: what goes out, day by day -->
@@ -325,8 +330,11 @@
   <div class="section-head">
     <div>
       <h1 tabindex="-1">Signals</h1>
-      <p>Sellbird proposes what it knows how to look for. You decide what actually
-         defines a good prospect. Nothing is collected until you confirm it.</p>
+      <p>Your agent suggests signals from what you sell. You confirm which ones count.
+         Nothing is collected until you do.</p>
+    </div>
+    <div class="page-actions">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="copyPrompt(SIGNALS_PROMPT)">Ask your agent to suggest signals</button>
     </div>
   </div>
   <div id="signals-summary"></div>
@@ -411,6 +419,7 @@
   <div class="section-head">
     <div><h1 tabindex="-1">People</h1><p>Everyone Sellbird has found, how sure it is of their address, and where each one stands.</p></div>
     <div class="page-actions">
+      <a class="lookfor" id="people-signals" href="#signals" onclick="goTab('signals');return false"><span>Looking for</span><svg class="icon chev" aria-hidden="true"><use href="#i-chevron"/></svg></a>
       <button class="btn btn-secondary btn-sm" onclick="downloadCsv('/api/export/prospects.csv', 'prospects.csv', this)"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Export deliverable</button>
       <button class="btn btn-ghost btn-sm" onclick="downloadCsv('/api/export/prospects.csv?all=true', 'prospects-all.csv', this)">Export all</button>
     </div>

@@ -60,6 +60,7 @@ def offer_view(config) -> dict:
     return {
         "entry": offer.entry or "",
         "entry_ideas": list(getattr(offer, "entry_ideas", []) or []),
+        "booking_url": getattr(offer, "booking_url", "") or "",
         "product": {"name": config.product.name, "description": config.product.description},
     }
 
@@ -171,7 +172,11 @@ EDITABLE = {
                 "objection_responses": dict},
     "persona": {"name": str, "role": str, "tone": str},
     "icp": {"industries": list, "titles": list, "company_size": str, "geography": list},
-    "offer": {"entry": str},
+    "offer": {"entry": str, "booking_url": str},
+    # CAN-SPAM's two lines under every cold email.
+    "compliance": {"postal_address": str, "opt_out_line": str},
+    # The addresses your own site's form sends from (form_mail reads these).
+    "inbound": {"form_senders": list},
 }
 MAX_TEXT = 2000
 MAX_ITEMS = 30
@@ -198,9 +203,16 @@ def company_view(config, root: Path, proposed: dict | None = None) -> dict:
         "icp": {"industries": list(icp.industries or []), "titles": list(icp.titles or []),
                 "company_size": icp.company_size, "geography": list(icp.geography or [])},
         "offer": {**offer_view(config), "proposed": proposed or None},
+        "compliance": {"postal_address": _compliance(config).postal_address,
+                       "opt_out_line": _compliance(config).opt_out_line},
         "knowledge": _skill_text(root, "product_knowledge"),
         "competitors": _skill_text(root, "competitive_intel"),
     }
+
+
+def _compliance(config):
+    from sellbird.config import compliance_of
+    return compliance_of(config)
 
 
 def _clean(kind, value):

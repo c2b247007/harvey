@@ -9,6 +9,30 @@ minor versions can still change behaviour.
 
 ### Changed
 
+- **Today, by importance.** One column: the answer, the four numbers, Finish
+  setting up (steps in order, the next one as the only primary button, gone
+  once done), Needs you, then the last five things your agent did with Show
+  all. Each number opens its own page: a chart over 7, 30 or 90 days or all
+  time, the change against the period before, and the records behind it.
+- **Numbers, rethought.** One range and one campaign filter for the page,
+  tiles with sparklines and change, a line chart with series you switch on and
+  off, a found-to-meeting funnel with the share kept at each step, and a
+  sortable breakdown by campaign or inbox. New read-only `/api/numbers` and
+  `/api/stat/{metric}`.
+- **Calendar, rebuilt.** Week (a time grid with a line at now) and Month (two
+  items a day and "+N more", click a day to see it), previous, next and Today,
+  and the arrow keys. Narrow screens get a list by day.
+- **Every warning says where it is fixed.** Setup steps, the postal address on
+  Outbound, the booking link and the rest open the screen with the field
+  ready. The postal address, opt-out line, booking link and your form's sender
+  address can now be edited in the dashboard.
+- **Inbound and signals as steps.** Leads from your website is three steps:
+  an inbox Sellbird reads, your form's emails sent there, a test. Choosing
+  signals is a named setup step, and People links to what Sellbird looks for.
+- **Set up in groups** (Get started, Sending, Finding people, Inbound, Your
+  agent, Account, Everything Sellbird does) with an index when there is room.
+  Whole rows open what they are about on People, Companies, Leads and Replies.
+
 - **Sequences have no fixed length.** `writer.sequence_length` (default 3) sets
   how many emails a sequence has, with no upper limit; the Writer used to ask
   for exactly three and drop anything past five. Follow-ups to a person stop

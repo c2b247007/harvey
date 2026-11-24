@@ -54,6 +54,8 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", r"/api/offer/propose"),       # you confirm it on Your company
     ("POST", r"/api/inboxes/[^/]+/pause"), # one inbox; resuming is yours too
     ("GET", r"/api/calendar"),
+    ("GET", r"/api/numbers"),
+    ("GET", r"/api/stat/[^/]+"),
     ("GET", r"/api/pipeline"),
     ("GET", r"/api/events"),
     ("GET", r"/api/texting"),
@@ -119,6 +121,8 @@ ROUTE_WORDS: tuple[tuple[str, str], ...] = (
     (r"/api/offer/propose", "Propose an offer for you to confirm"),
     (r"/api/inboxes/[^/]+/pause", "Pause one inbox"),
     (r"/api/calendar", "Read the calendar"),
+    (r"/api/numbers", "Read the numbers"),
+    (r"/api/stat/[^/]+", "Read one number over time"),
     (r"/api/pipeline", "Read the pipeline"),
     (r"/api/events", "Read events"),
     (r"/api/texting", "Read texts and consent"),

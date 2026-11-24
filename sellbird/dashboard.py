@@ -241,6 +241,22 @@ def _check_sellbird_pid() -> int | None:
 # ── Setup Status ──
 
 
+# Where each setup step is done in the dashboard: {fix: screen, field: input id, fix_label}.
+_SETUP_FIX = {
+    "venv": {"fix": "help", "fix_label": "How to install"},
+    "env_file": {"fix": "settings", "fix_label": "Open Sending and keys"},
+    "email_provider": {"fix": "settings", "fix_label": "Connect your email"},
+    "verifier": {"fix": "settings", "field": "reoon-key", "fix_label": "Add a key"},
+    "config": {"fix": "company", "field": "co-p-name", "fix_label": "Open Your company"},
+    "product_trained": {"fix": "company", "fix_label": "Open Your company"},
+    "linkedin": {"fix": "settings", "fix_label": "Open Sending and keys"},
+    "cloudflare": {"fix": "settings", "fix_label": "Open Sending and keys"},
+    "warmup_service": {"fix": "inboxes", "fix_label": "Open Inboxes"},
+    "find_sources": {"fix": "discover", "fix_label": "Open Find businesses"},
+    "signals": {"fix": "signals", "fix_label": "Review signals"},
+}
+
+
 @app.get("/api/setup-status")
 async def get_setup_status():
     """Check what's configured and what still needs setup."""
@@ -396,6 +412,28 @@ async def get_setup_status():
         "recommend": [recommended.job("businesses"), recommended.job("people")],
         "disclosure": recommended.DISCLOSURE,
     })
+
+    # 11. Who to look for: the agent suggests signals from what you sell; you
+    # confirm which count. A suggestion, like the one above: it never blocks.
+    try:
+        rows = await query_db("SELECT status, COUNT(*) AS n FROM signal_codes GROUP BY status")
+        by = {r["status"]: r["n"] for r in rows}
+    except Exception:
+        by = {}
+    checks.append({
+        "id": "signals",
+        "label": "Choose who to look for",
+        "done": by.get("confirmed", 0) > 0,
+        "required": False,
+        "shown": True,
+        "help": "Your agent suggests signals from what you sell. You confirm which ones count.",
+        "proposed": by.get("proposed", 0),
+        "confirmed": by.get("confirmed", 0),
+    })
+
+    # Where each step is fixed: the screen, and the field to start in.
+    for c in checks:
+        c.update(_SETUP_FIX.get(c["id"], {}))
 
     required_checks = [c for c in checks if c["required"]]
     completed_required = sum(1 for c in required_checks if c["done"])
@@ -1496,8 +1534,16 @@ async def get_leads():
         config = _events_config()
         inbound = getattr(config, "inbound", None)
         leads_ = await state.get_leads(limit=200)
+        # The inbox a form's emails should go to: the first one Sellbird
+        # reads, or the sender address from the config.
+        boxes = await query_db("SELECT address FROM mailboxes WHERE state != 'removed' ORDER BY created_at LIMIT 1")
+        inbox = (boxes[0]["address"] if boxes else "") or (getattr(getattr(config, "persona", None), "email", "") or "")
+        last_form = next((l for l in leads_ if l.get("via") == "form_email"), None)
         return {
             "leads": leads_,
+            "inbox_address": inbox,
+            "last_form_lead": ({"at": last_form.get("created_at"), "form_name": last_form.get("form_name") or ""}
+                               if last_form else None),
             "needs_you": await state.count_leads_needing_you(),
             "config_file": _resolve_config_file().name,
             "form_senders": list(getattr(inbound, "form_senders", []) or []),
@@ -2102,7 +2148,7 @@ async def agent_report(limit: int = 12):
     the agent made through its own key."""
     state = _state()
     await state.init_db()
-    limit = max(1, min(int(limit), 50))
+    limit = max(1, min(int(limit), 100))
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
 
     async def one(sql, params=()):
@@ -3219,6 +3265,165 @@ async def get_trend(days: int = 14, tz: int = 0):
     }
 
 
+# ── Numbers and the stat pages: daily series over a range ──
+# Every series counts real records by the local day they happened on. A range
+# of 0 days is "All": from the first record, at most _ALL_DAYS back.
+_ALL_DAYS = 730
+_METRIC_SQL = {
+    # metric: (table and column it is dated by, extra WHERE, campaign column)
+    "found": ("prospects", "created_at", "", None),
+    "sent": ("outbox", "sent_at", "AND status = 'sent'", "campaign_id"),
+    "replies": ("conversations", "created_at", "", "campaign_id"),
+    "meetings": ("meetings", "created_at", "AND status = 'booked'", None),
+}
+
+
+async def _range(days: int, tz: int):
+    """(labels, shift, previous-period first day or None) for `days` local days
+    ending today. days=0 reaches back to the first record."""
+    from datetime import datetime, timedelta, timezone
+    tz = max(-840, min(840, tz))
+    shift = f"{tz:+d} minutes"
+    today = (datetime.now(timezone.utc) + timedelta(minutes=tz)).date()
+    if days <= 0:
+        first = None
+        for table, col in (("prospects", "created_at"), ("outbox", "sent_at"), ("conversations", "created_at")):
+            rows = await query_db(f"SELECT MIN(date({col}, ?)) AS d FROM {table} WHERE {col} IS NOT NULL", (shift,))
+            d = rows[0]["d"] if rows else None
+            if d and (first is None or d < first):
+                first = d
+        span = 7
+        if first:
+            try:
+                span = (today - date.fromisoformat(first)).days + 1
+            except ValueError:
+                span = 7
+        days, prev = max(7, min(_ALL_DAYS, span)), None
+    else:
+        days = max(1, min(_ALL_DAYS, days))
+        prev = (today - timedelta(days=2 * days - 1)).isoformat()
+    labels = [(today - timedelta(days=n)).isoformat() for n in range(days - 1, -1, -1)]
+    return labels, shift, prev
+
+
+def _campaign_filter(metric: str, campaign: str) -> tuple[str, tuple]:
+    """SQL narrowing one metric to one campaign, or ("", ())."""
+    if not campaign:
+        return "", ()
+    col = _METRIC_SQL[metric][3]
+    if col:
+        return f"AND {col} = ?", (campaign,)
+    target = "id" if metric == "found" else "prospect_id"
+    return (f"AND {target} IN (SELECT j.value FROM campaigns c, json_each(c.prospect_ids_json) j "
+            f"WHERE c.id = ?)"), (campaign,)
+
+
+async def _series(metric: str, labels: list[str], shift: str, prev: str | None,
+                  campaign: str = "") -> dict:
+    table, col, where, _ = _METRIC_SQL[metric]
+    extra, args = _campaign_filter(metric, campaign)
+    rows = await query_db(
+        f"SELECT date({col}, ?) AS d, COUNT(*) AS n FROM {table} "
+        f"WHERE date({col}, ?) >= ? {where} {extra} GROUP BY d",
+        (shift, shift, prev or labels[0], *args))
+    counts = {r["d"]: r["n"] for r in rows}
+    values = [counts.get(d, 0) for d in labels]
+    before = sum(n for d, n in counts.items() if d and prev and prev <= d < labels[0]) if prev else None
+    return {"values": values, "total": sum(values), "previous": before}
+
+
+@app.get("/api/numbers")
+async def get_numbers(days: int = 30, tz: int = 0, campaign: str = ""):
+    """The Numbers place: four daily series over one range (and the same
+    length before it), a step funnel of the people found in the range, and a
+    breakdown by campaign and by inbox. Read only."""
+    try:
+        labels, shift, prev = await _range(days, tz)
+        series = {m: await _series(m, labels, shift, prev, campaign) for m in _METRIC_SQL}
+        start = labels[0]
+        cextra, cargs = _campaign_filter("found", campaign)
+        # The funnel follows one group: the people found in the range. Each
+        # step is a part of the one before, so it never widens.
+        cohort = (f"SELECT id FROM prospects WHERE date(created_at, ?) >= ? {cextra}")
+        cohort_args = (shift, start, *cargs)
+        emailed = f"SELECT DISTINCT prospect_id FROM outbox WHERE status = 'sent' AND prospect_id IN ({cohort})"
+        replied = f"SELECT DISTINCT prospect_id FROM conversations WHERE prospect_id IN ({emailed})"
+        met = (f"SELECT id FROM prospects WHERE id IN ({replied}) AND (stage IN ('meeting_booked', 'proposal', 'won') "
+               f"OR status = 'meeting' OR id IN (SELECT prospect_id FROM meetings WHERE status = 'booked'))")
+
+        async def count(q, args):
+            rows = await query_db(f"SELECT COUNT(*) AS n FROM ({q})", args)
+            return rows[0]["n"] if rows else 0
+        funnel = [
+            {"key": "found", "label": "Found", "n": await count(cohort, cohort_args)},
+            {"key": "emailed", "label": "Emailed", "n": await count(emailed, cohort_args)},
+            {"key": "replied", "label": "Replied", "n": await count(replied, cohort_args)},
+            {"key": "meeting", "label": "Meeting", "n": await count(met, cohort_args)},
+        ]
+        camps = await query_db("SELECT id, name, prospect_ids_json FROM campaigns ORDER BY created_at DESC")
+        sent_by = {r["campaign_id"]: r["n"] for r in await query_db(
+            "SELECT campaign_id, COUNT(*) AS n FROM outbox WHERE status = 'sent' AND date(sent_at, ?) >= ? "
+            "GROUP BY campaign_id", (shift, start))}
+        reply_by = {r["campaign_id"]: r["n"] for r in await query_db(
+            "SELECT campaign_id, COUNT(*) AS n FROM conversations WHERE date(created_at, ?) >= ? "
+            "GROUP BY campaign_id", (shift, start))}
+        by_campaign = []
+        for c in camps:
+            try:
+                people = len(json.loads(c.get("prospect_ids_json") or "[]"))
+            except (TypeError, ValueError):
+                people = 0
+            by_campaign.append({"id": c["id"], "name": c.get("name") or "Untitled campaign", "people": people,
+                                "sent": sent_by.get(c["id"], 0), "replies": reply_by.get(c["id"], 0)})
+        boxes = await query_db("SELECT id, address FROM mailboxes ORDER BY created_at")
+        box_sent = {r["mailbox_id"]: r["n"] for r in await query_db(
+            "SELECT mailbox_id, COUNT(*) AS n FROM outbox WHERE status = 'sent' AND date(sent_at, ?) >= ? "
+            "GROUP BY mailbox_id", (shift, start))}
+        box_reply = {r["mailbox_id"]: r["n"] for r in await query_db(
+            "SELECT mailbox_id, COUNT(*) AS n FROM conversations WHERE date(created_at, ?) >= ? "
+            "GROUP BY mailbox_id", (shift, start))}
+        by_inbox = [{"id": b["id"], "name": b["address"], "sent": box_sent.get(b["id"], 0),
+                     "replies": box_reply.get(b["id"], 0)} for b in boxes]
+        return {"days": labels, "range": days if days > 0 else 0, "has_previous": prev is not None,
+                "campaign": campaign, "series": series, "funnel": funnel,
+                "by_campaign": by_campaign, "by_inbox": by_inbox,
+                "campaigns": [{"id": c["id"], "name": c.get("name") or "Untitled campaign"} for c in camps]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# What each stat page lists under its chart.
+_STAT_LISTS = {
+    "found": ("SELECT id, first_name, last_name, title, company, email, email_status, created_at AS at "
+              "FROM prospects WHERE date(created_at, ?) >= ? ORDER BY created_at DESC LIMIT 200"),
+    "sent": ("SELECT o.id, o.prospect_id, o.to_email, o.subject, o.step, o.sent_at AS at, "
+             "p.first_name, p.last_name, p.company FROM outbox o LEFT JOIN prospects p ON p.id = o.prospect_id "
+             "WHERE o.status = 'sent' AND date(o.sent_at, ?) >= ? ORDER BY o.sent_at DESC LIMIT 200"),
+    "replies": ("SELECT c.id, c.prospect_id, c.stage, c.status, c.intent, c.created_at AS at, "
+                "p.first_name, p.last_name, p.company, p.email FROM conversations c "
+                "LEFT JOIN prospects p ON p.id = c.prospect_id "
+                "WHERE date(c.created_at, ?) >= ? ORDER BY c.created_at DESC LIMIT 200"),
+    "meetings": ("SELECT m.id, m.prospect_id, m.starts_at, m.created_at AS at, p.first_name, p.last_name, "
+                 "p.company, p.email FROM meetings m LEFT JOIN prospects p ON p.id = m.prospect_id "
+                 "WHERE m.status = 'booked' AND date(m.created_at, ?) >= ? ORDER BY m.created_at DESC LIMIT 200"),
+}
+
+
+@app.get("/api/stat/{metric}")
+async def get_stat(metric: str, days: int = 30, tz: int = 0):
+    """One stat's page: its daily series, the period before, and the records
+    behind it, newest first (200 at most). Read only."""
+    if metric not in _STAT_LISTS:
+        return JSONResponse({"error": "unknown stat"}, status_code=404)
+    try:
+        labels, shift, prev = await _range(days, tz)
+        s = await _series(metric, labels, shift, prev)
+        rows = await query_db(_STAT_LISTS[metric], (shift, labels[0]))
+        return {"metric": metric, "days": labels, "range": days if days > 0 else 0, **s, "items": rows}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/api/calendar")
 async def get_calendar(start: str = "", days: int = 7, tz: int = 0):
     """What goes out, day by day, for the Calendar place.
@@ -3252,6 +3457,23 @@ async def get_calendar(start: str = "", days: int = 7, tz: int = 0):
             day[key] += r["n"]
             if r["first"] and (day[f"first_{key}"] is None or r["first"] < day[f"first_{key}"]):
                 day[f"first_{key}"] = r["first"]
+        # The same mail by local hour, for the week's time grid.
+        for day in out.values():
+            day["hours"] = []
+        for r in await query_db(
+                "SELECT date(COALESCE(sent_at, send_at), ?) AS d, CAST(strftime('%H', COALESCE(sent_at, send_at), ?) AS INTEGER) AS h, "
+                "status, COUNT(*) AS n FROM outbox WHERE status IN ('pending_review', 'approved', 'sending', 'sent') "
+                "AND date(COALESCE(sent_at, send_at), ?) BETWEEN ? AND ? GROUP BY d, h, status",
+                (shift, shift, shift, labels[0], labels[-1])):
+            if r["d"] not in out or r["h"] is None:
+                continue
+            kind = {"pending_review": "waiting", "sent": "sent"}.get(r["status"], "scheduled")
+            hours = out[r["d"]]["hours"]
+            slot = next((x for x in hours if x["h"] == r["h"] and x["kind"] == kind), None)
+            if slot:
+                slot["n"] += r["n"]
+            else:
+                hours.append({"h": r["h"], "kind": kind, "n": r["n"]})
         for r in await query_db(
                 "SELECT date(sent_at, ?) AS d, COUNT(*) AS n FROM outbox WHERE status = 'sent' "
                 "AND date(sent_at, ?) BETWEEN ? AND ? GROUP BY d",

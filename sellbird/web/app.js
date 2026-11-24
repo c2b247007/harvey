@@ -549,6 +549,8 @@ function toggleVisibility(inputId) {
 // Numbers), and Set up is a list that opens each of its screens with a way back.
 const SCREENS = {
   today:         {place: 'today'},
+  stat:          {place: 'today', parent: 'today'},
+  log:           {place: 'today', parent: 'today'},
   outbox:        {place: 'outbound', pill: 'Waiting for you', count: 'nav-outbox'},
   conversations: {place: 'outbound', pill: 'Replies', count: 'nav-conversations'},
   campaigns:     {place: 'outbound', pill: 'Campaigns'},
@@ -585,8 +587,9 @@ const SCREEN_ALIASES = {outbound: 'outbox', inbound: 'leads', inbox: 'conversati
                         contacts: 'prospects', replies: 'conversations'};
 // Screens that are one decision or one form stay chat width.
 const CARD_SCREENS = ['company', 'settings', 'controls', 'help'];
-const PARENT_NAMES = {setup: 'Set up', prospects: 'People', mentions: 'Mentions'};
+const PARENT_NAMES = {setup: 'Set up', prospects: 'People', mentions: 'Mentions', today: 'Today'};
 let _personId = '';     // whose page the person screen shows
+let _statKey = 'found';  // which number the stat screen shows
 
 // A fragment is a screen, or "person/<id>" for one person's page.
 function fromHash() {
@@ -596,6 +599,11 @@ function fromHash() {
     return _personId ? 'person' : 'prospects';
   }
   if (raw === 'person' && !_personId) return 'prospects';
+  if (raw.slice(0, 5) === 'stat/') {
+    const key = raw.slice(5);
+    if (own(STAT_PAGES, key)) { _statKey = key; return 'stat'; }
+    return 'today';
+  }
   return raw || 'today';
 }
 let _lastScreen = {};   // the view each place was last on, so the dock returns to it
@@ -613,7 +621,7 @@ function renderScreenNav(id) {
   const s = SCREENS[id];
   let html = '';
   if (s.parent) {
-    html += '<button type="button" class="back" onclick="goTab(' + jsq(s.parent) + ')">' +
+    html += '<button type="button" class="back" onclick="goBack(' + jsq(s.parent) + ')">' +
       '<svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>' +
       escHtml(own(PARENT_NAMES, s.parent) || 'Back') + '</button>';
   }
@@ -654,7 +662,8 @@ function showTab(id, opts) {
   if (inner) inner.classList.toggle('is-card', CARD_SCREENS.includes(id));
   renderScreenNav(id);
   if (!opts.fromHash) {
-    const frag = '#' + (id === 'person' && _personId ? 'person/' + encodeURIComponent(_personId) : id);
+    const frag = '#' + (id === 'person' && _personId ? 'person/' + encodeURIComponent(_personId)
+                        : id === 'stat' ? 'stat/' + _statKey : id);
     try { if (window.location.hash !== frag) history.pushState(null, '', frag); } catch { /* ignore */ }
   }
   // After the first screen, a page change is a 150ms fade, never a slide.
@@ -664,7 +673,7 @@ function showTab(id, opts) {
     void document.body.offsetWidth;
     document.body.classList.add('routed');
   }
-  if (changed && opts.fromHash && _scrollAt[id] !== undefined) {
+  if (changed && (opts.fromHash || opts.back) && _scrollAt[id] !== undefined) {
     window.scrollTo(0, _scrollAt[id]);
   } else if (changed && !opts.keepScroll) {
     window.scrollTo(0, 0);
@@ -684,6 +693,35 @@ function goTab(id) {
 
 window.addEventListener('popstate', () => showTab(fromHash(), {fromHash: true}));
 
+// Back to the page this one belongs to, where you left it.
+function goBack(parent) {
+  showTab(parent, {back: true});
+}
+
+// Open the screen where something is fixed, and put the cursor in its field
+// once the screen has drawn it (screens fill in after their data arrives).
+function goFix(screen, field) {
+  showTab(screen);
+  if (!field) return;
+  const started = performance.now();
+  const tryFocus = () => {
+    const el = document.getElementById(field);
+    if (el && el.offsetParent !== null) {
+      el.focus({preventScroll: true});
+      el.scrollIntoView({block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+      return;
+    }
+    if (performance.now() - started < 3000) requestAnimationFrame(tryFocus);
+  };
+  requestAnimationFrame(tryFocus);
+}
+
+// A button that goes to the fix for something: the screen, and the field.
+function fixBtn(label, screen, field, cls) {
+  return '<button type="button" class="btn btn-sm ' + (cls || 'btn-secondary') + '" onclick="goFix(' + jsq(screen) +
+    (field ? ',' + jsq(field) : '') + ')">' + escHtml(label) + '</button>';
+}
+
 function loadCurrentTab() {
   switch (currentTab) {
     case 'calendar': loadCalendar(); break;
@@ -702,7 +740,9 @@ function loadCurrentTab() {
     case 'limits': loadLimits(); break;
     case 'agent': loadAgent(); break;
     case 'person': loadPerson(); break;
-    case 'today': loadLiveStatus(); loadRenameNotice(); loadToday(); loadTrend(); loadFunnel(); loadSetupStatus(); loadTodaySuite(); loadRuns(); loadTodayActivity(); break;
+    case 'today': loadTodayPage(); break;
+    case 'stat': loadStat(); break;
+    case 'log': loadLog(); break;
     case 'signals': loadSignals(); break;
     case 'discover': loadDiscoverProviders(); break;
     case 'companies': if (!companyDrill) loadCompanies(); break;
@@ -736,7 +776,7 @@ async function loadToday() {
   _todayStats = data.stats || {};
   renderFigures(_todayStats);
 
-  const items = data.items || [];
+  const items = needsItems(data);
   const needs = items.filter(i => i.tone !== 'good').length;
   await todayAnswer(data, needs);
   const panel = document.getElementById('today-needs');
@@ -782,10 +822,15 @@ function linkRow(tab, inner, label) {
     (label ? ' aria-label="' + escHtml(label) + '"' : '') + '>' + inner + icon('chevron', 'chev') + '</button>';
 }
 
+// What needs a decision. Unfinished setup has its own steps above Needs you.
+function needsItems(data) {
+  return ((data && data.items) || []).filter(i => i.key !== 'setup');
+}
+
 // Badge numbers from /api/today: the dock and the pills read the same ones.
 function applyCounts(data) {
   const st = (data && data.stats) || {};
-  navCount('nav-today', ((data && data.items) || []).filter(i => i.tone !== 'good').length);
+  navCount('nav-today', needsItems(data).filter(i => i.tone !== 'good').length);
   navCount('nav-outbox', st.outbox_pending || 0);
   navCount('nav-conversations', st.needs_human || 0);
   navCount('nav-leads', st.leads_needing_you || 0);
@@ -854,15 +899,18 @@ function renderFigures(stats) {
   const t = _trend || {};
   const sum = a => (a || []).reduce((x, y) => x + (Number(y) || 0), 0);
   const last7 = a => sum((a || []).slice(-7));
-  const card = (label, value, spark, note) =>
-    '<div class="stat"><span>' + label + '</span>' +
+  // Each tile opens its number over time; "Waiting on you" opens the Outbox.
+  const card = (key, label, value, spark, note) =>
+    '<a class="stat link" href="#' + (key === 'outbox' ? 'outbox' : 'stat/' + key) + '" onclick="' +
+      (key === 'outbox' ? 'goTab(\'outbox\')' : 'openStat(\'' + key + '\')') + ';return false">' +
+    '<span class="stat-l">' + label + icon('chevron', 'chev') + '</span>' +
     '<div class="stat-main"><b class="v' + (value ? '' : ' zero') + '">' + value + '</b>' + spark + '</div>' +
-    '<span>' + note + '</span></div>';
+    '<span>' + note + '</span></a>';
 
   // Instantly sends from its own servers, so the Outbox never sees them.
   const sent = stats.email_provider === 'instantly'
-    ? card('Emails sent', 'n/a', '', 'Instantly tracks sends')
-    : card('Emails sent', sum(t.sent), sparkBars(t.sent, 'Emails sent per day, last 14 days'),
+    ? card('sent', 'Emails sent', 'n/a', '', 'Instantly tracks sends')
+    : card('sent', 'Emails sent', sum(t.sent), sparkBars(t.sent, 'Emails sent per day, last 14 days'),
            'last 14 days · <b>' + (stats.outbox_approved || 0) + '</b> scheduled');
   const waiting = (stats.outbox_pending || 0) + (stats.needs_human || 0);
   const waitNote = [
@@ -876,12 +924,12 @@ function renderFigures(stats) {
     '<span><b>' + (stats.signals_confirmed || 0) + '</b> signals on</span>';
 
   el.innerHTML = '<div class="stats">' +
-    card('People found', stats.prospects || 0, sparkBars(t.found, 'Contacts found per day, last 14 days'),
+    card('found', 'People found', stats.prospects || 0, sparkBars(t.found, 'Contacts found per day, last 14 days'),
          '<b>+' + last7(t.found) + '</b> this week') +
     sent +
-    card('Conversations', stats.open_conversations || 0, sparkBars(t.replies, 'New replies per day, last 14 days'),
+    card('replies', 'Conversations', stats.open_conversations || 0, sparkBars(t.replies, 'New replies per day, last 14 days'),
          '<b>' + sum(t.replies) + '</b> new in 14 days') +
-    card('Waiting on you', waiting, '', waitNote) +
+    card('outbox', 'Waiting on you', waiting, '', waitNote) +
   '</div>';
 }
 
@@ -955,7 +1003,7 @@ async function loadTodayActivity() {
   const title = document.getElementById('today-log-title');
   if (title) title.textContent = 'What ' + agentName() + ' did';
   if (!r) return;  // offline: Today's queue says so
-  el.innerHTML = logHtml(r.log.slice(0, 8), 'Nothing yet. Everything ' + agentName() +
+  el.innerHTML = logHtml(r.log.slice(0, 5), 'Nothing yet. Everything ' + agentName() +
     ' does through Sellbird, and everything you decide, shows up here.');
 }
 
@@ -1023,55 +1071,13 @@ async function loadSetupStatus() {
   if (!el) return;
   const data = await api('/api/setup-status');
   const sec = document.getElementById('today-setup-sec');
-  const pct = (data && data.percent) || 0;
-  // Finished setup disappears completely rather than greeting you forever.
-  // A suggestion still open (how to find businesses and people) stays, alone.
-  const extra = data && data.checks ? data.checks.filter(c => c.shown && !c.required && !c.done) : [];
-  const gone = !data || !data.checks || (pct === 100 && !extra.length);
-  if (sec) sec.hidden = gone;
-  if (gone) { el.innerHTML = ''; return; }
-  if (pct === 100) {
-    el.innerHTML = '<div class="w pad setup-card">' + extra.map(c =>
-      '<div class="check-item current"><span class="check-icon pending"></span><div class="check-info">' +
-        '<div class="check-label">' + escHtml(c.label) + '<span class="optional-tag">optional</span></div>' +
-        '<div class="check-help">' + escHtml(c.help) + '</div>' + recommendHtml(c) + '</div></div>').join('') + '</div>';
-    return;
-  }
-
-  // The first unfinished required step is the one to do now.
-  const next = data.checks.find(c => c.required && !c.done);
-  const renderCheck = (c, optional) =>
-    '<div class="check-item' + (c === next ? ' current' : '') + '">' +
-      (c.done ? '<span class="check-icon done">' + icon('check') + '</span>'
-              : '<span class="check-icon pending"></span>') +
-      '<div class="check-info">' +
-        '<div class="check-label ' + (c.done ? 'done' : '') + '">' + escHtml(c.label) +
-          (optional ? '<span class="optional-tag">optional</span>' : '') + '</div>' +
-        (!c.done ? '<div class="check-help">' + escHtml(c.help) + '</div>' : '') +
-        (!c.done && c.id === 'warmup_service' ? warmupServiceActions(c) : '') +
-        (!c.done && c.recommend ? recommendHtml(c) : '') +
-      '</div></div>';
-
-  const required = data.checks.filter(c => c.required);
-  const shown = data.checks.filter(c => !c.required && c.shown && !c.done);
-  const optional = data.checks.filter(c => !c.required && !shown.includes(c));
-  const done = required.filter(c => c.done).length;
-
-  el.innerHTML =
-    '<div class="w pad setup-card">' +
-      '<div class="setup-head"><div>' +
-        '<p class="s">Sellbird starts finding prospects and sending once these are done.</p></div>' +
-        '<span class="setup-pct">' + done + ' of ' + required.length + ' done</span></div>' +
-      '<div class="bar thick" style="margin-bottom:8px"><span style="width:' + pct + '%;background:var(--accent)"></span></div>' +
-      required.map(c => renderCheck(c, false)).join('') +
-      shown.map(c => renderCheck(c, true)).join('') +
-      (optional.length
-        ? '<details style="margin-top:10px"><summary class="muted" ' +
-          'style="font-size:12px">' + optional.length + ' optional</summary>' +
-          '<div style="margin-top:6px">' +
-          optional.map(c => renderCheck(c, true)).join('') + '</div></details>'
-        : '') +
-    '</div>';
+  const html = setupRailHtml(data);
+  // Finished setup disappears rather than greeting you forever.
+  if (sec) sec.hidden = !html;
+  el.innerHTML = html;
+  const steps = setupSteps(data) || [];
+  const count = document.getElementById('today-setup-count');
+  if (count) count.textContent = steps.filter(c => c.done).length + ' of ' + steps.length + ' done';
 }
 
 // A recommended service for a job: what is free, the one we recommend and why,
@@ -2066,7 +2072,10 @@ async function loadOutbox() {
   if (data.compliance_notice && anyMail) {
     banner.innerHTML +=
       '<div class="banner wait">' + icon('alert') + '<div><b>Add your postal address</b>' +
-        '<p>' + escHtml(data.compliance_notice) + '</p></div></div>';
+        '<p>' + escHtml('Cold emails are going out without ' + [/postal_address/.test(data.compliance_notice) ? 'a postal address' : '',
+          /opt_out_line/.test(data.compliance_notice) ? 'a way to opt out' : ''].filter(Boolean).join(' or ') +
+          '. US law (CAN-SPAM) asks for both in every cold email.') + '</p>' +
+        '<div class="banner-acts">' + fixBtn('Add your address', 'company', 'co-c-address', 'btn-primary') + '</div></div></div>';
   }
 
   outboxLog();
@@ -2077,31 +2086,33 @@ async function loadOutbox() {
         : 'Every draft Sellbird writes lands here first. Approve one and it sends on schedule.') +
     '</div>';
 
-  const table = (title, rows, cols) => {
+  // Each group is a panel: a title, its count, one action.
+  const table = (title, rows, cols, action) => {
     if (!rows || !rows.length) return '';
-    let h = '<div class="subhead">' + title + ' <span class="hint">' + rows.length + '</span></div>' +
-      '<div class="table-card"><table class="nowrap clip"><thead><tr>' +
+    let h = '<section class="sec"><h2>' + title + ' <span class="h-right"><span class="count">' + rows.length + '</span>' + (action || '') + '</span></h2>' +
+      '<div class="table-scroll flat"><table class="nowrap clip"><thead><tr>' +
       cols.map(c => '<th>' + c[0] + '</th>').join('') + '</tr></thead><tbody>';
     for (const r of rows) {
       h += '<tr>' + cols.map(c => '<td' + (c[2] ? ' class="muted"' : '') + '>' +
         (c[3] ? c[1](r) : escHtml(String(c[1](r) ?? ''))) + '</td>').join('') + '</tr>';
     }
-    return h + '</tbody></table></div>';
+    return h + '</tbody></table></div></section>';
   };
+  const go = (label, fn) => '<button type="button" class="linkq" onclick="' + fn + '">' + label + icon('chevron', 'chev') + '</button>';
 
-  list.innerHTML =
-    table('Approved &amp; scheduled', data.approved, [
+  list.innerHTML = '<div class="secs one">' +
+    table('Approved and scheduled', data.approved, [
       ['To', r => r.to_email], ['Step', r => r.step], ['Subject', r => r.subject],
       ['Sends', r => r.status === 'sending' ? badge(r.status) : escHtml(formatDate(r.send_at)), true, true],
-    ]) +
+    ], go('See the calendar', "goTab('calendar')")) +
     table('Recently sent', data.sent, [
       ['To', r => r.to_email], ['Step', r => r.step], ['Subject', r => r.subject],
       ['Sent', r => formatDate(r.sent_at), true],
-    ]) +
+    ], go('Open the numbers', "openStat('sent')")) +
     table('Didn\'t send', data.failed, [
       ['To', r => r.to_email], ['Status', r => badge(r.status), false, true],
       ['Reason', r => r.error, true], ['Updated', r => formatDate(r.updated_at), true],
-    ]);
+    ], go('Check your inboxes', "goTab('inboxes')")) + '</div>';
 }
 
 // A short "What [agent] did here": the writing and sending lines of the log.
@@ -2191,7 +2202,8 @@ function sendingModeCard(m) {
       'to, or gives an address at, a site that isn’t yours, or quotes Sellbird’s own instructions: text from ' +
       'websites and replies can try to steer what it writes. The first reply after you undo an opt-out waits too.</p>' +
     '<p class="muted">Counted as yours: ' + domains + (m.booking_page ? '; your booking page ' + escHtml(m.booking_page) : '') +
-      '. Add others under <code>channels.email.link_domains</code> in <code>' + escHtml(m.file) + '</code>.</p>';
+      '. Add others under <code>channels.email.link_domains</code> in <code>' + escHtml(m.file) + '</code>, or ' +
+      '<button type="button" class="linklike" onclick="copyPrompt(\'Add my other websites to channels.email.link_domains in Sellbird.\')">ask your agent</button>.</p>';
   if (auto) {
     html += '<div class="convo-actions"><span class="muted">Turning it off works at once: emails autopilot ' +
       'approved that haven’t gone out come back to the Outbox.' +
@@ -2541,8 +2553,9 @@ function renderCompaniesPage(page) {
       ? '<a href="' + safeHref(website) + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' +
         escHtml(c.domain || website.replace(/^https?:\/\//i, '')) + '</a>'
       : escHtml(c.domain);
-    html += '<tr class="clickable" onclick="showCompanyContacts(' + i + ')">' +
-      '<td><div class="cell-stack"><span class="cell-main">' + escHtml(c.name) + '</span>' +
+    html += '<tr class="rowlink">' +
+      '<td><div class="cell-stack"><span class="cell-main"><a class="rowmain" href="#companies" onclick="showCompanyContacts(' + i +
+        ');return false">' + escHtml(c.name || c.domain || 'Unnamed') + '</a></span>' +
         '<span class="cell-sub">' + domain + '</span></div></td>' +
       '<td title="' + escHtml((c.fit_reasons || []).join(' · ')) + '">' +
         (typeof c.fit === 'number' ? meterHtml(c.fit) : '') + '</td>' +
@@ -2697,6 +2710,7 @@ async function loadProspects() {
         : agentName() + ' hasn\'t found anyone yet.',
       'People');
   }
+  lookingFor();
   if (!data.length) {
     el.innerHTML = emptyState(icon('contacts'), 'No one here yet',
       'Sellbird hasn\'t found any prospects. Once it\'s running, the Scout agent searches the web for people matching your ideal customer profile in <b>sellbird.yaml</b>.');
@@ -2714,6 +2728,17 @@ async function loadProspects() {
     document.getElementById('contact-search').value = _contactQuery;
   }
   renderContacts();
+}
+
+// A quiet way from People to what Sellbird looks for: the signals you confirmed.
+async function lookingFor() {
+  const el = document.getElementById('people-signals');
+  if (!el) return;
+  const d = await api('/api/setup-status');
+  const sig = d && Array.isArray(d.checks) ? d.checks.find(c => c.id === 'signals') : null;
+  if (!sig) return;
+  el.querySelector('span').textContent = sig.confirmed ? 'Looking for: ' + plural(sig.confirmed, 'signal', 'signals')
+    : sig.proposed ? plural(sig.proposed, 'signal', 'signals') + ' to confirm' : 'Choose who to look for';
 }
 
 function contactMatches(p, f) {
@@ -2772,9 +2797,9 @@ function contactRow(p, i) {
     ? '<button class="btn btn-ghost btn-sm" onclick="toggleOptOut(' + i + ')" ' +
       'aria-expanded="' + (_optOut.id === p.id) + '" title="What made Sellbird stop emailing them">' +
       (p.status === 'opted_out' ? 'Why?' : 'Opt-out history') + '</button>' : '';
-  return '<div class="row">' +
+  return '<div class="row rowlink">' +
     '<span class="who" aria-hidden="true">' + initials(p.first_name, p.last_name) + '</span>' +
-    '<div class="grow"><p class="t"><button type="button" class="linklike" onclick="openPerson(' + jsq(p.id) + ')">' + name + '</button></p>' +
+    '<div class="grow"><p class="t">' + personLink(p.id, name) + '</p>' +
       (role ? '<p class="s">' + role + '</p>' : '') +
       (reach ? '<p class="s">' + reach + '</p>' : '') +
       (p.next_step ? '<p class="s">Next: ' + escHtml(p.next_step) + '</p>' : '') +
@@ -3164,9 +3189,9 @@ function convoCard(c) {
     : '';
   const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.company || 'Unknown';
   const stage = own(STAGE_LABELS, c.stage) ? '<span class="tag">' + STAGE_LABELS[c.stage] + '</span>' : '';
-  return '<div class="convo-card"><div class="convo-head">' +
+  return '<div class="convo-card"><div class="convo-head' + (c.prospect_id ? ' rowlink' : '') + '">' +
     '<span class="avatar">' + initials(c.first_name, c.last_name) + '</span>' +
-    '<div><h3>' + escHtml(name) + '</h3><div class="sub">' +
+    '<div><h3>' + personLink(c.prospect_id, escHtml(name)) + '</h3><div class="sub">' +
       escHtml([c.company, c.prospect_email].filter(Boolean).join(' · ')) + ' · ' + relTime(c.updated_at) + '</div></div>' +
     // An escalation's intent badge says the same as its status: show one.
     '<div class="tags">' + (c.intent && !(c.status === 'needs_human' && c.intent === 'escalate') ? badge(c.intent) : '') +
@@ -3649,216 +3674,419 @@ async function loadActivity() {
 // what went. The engine records that a meeting was agreed, not its time, so
 // meetings are a list under the week, not blocks inside it.
 
-let _calOffset = 0;   // weeks from today
+// ── Calendar: a week of hours, a month of days, or a list when narrow ──
+// Mail is counted by the hour it goes out; a meeting with a time sits at it,
+// one without a time sits above the hours.
 
-function calStart() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + 7 * _calOffset);   // today first: what goes out next
-  return d;
-}
+let _calView = (() => { try { return sessionStorage.getItem('sb-cal') === 'month' ? 'month' : 'week'; } catch { return 'week'; } })();
+let _calAnchor = null;      // a Date inside the week or month on screen
+let _calDay = '';           // the day opened in the month view
+let _calData = null;
+const CAL_HOUR = 44;        // pixels per hour in the week grid
+const CAL_KINDS = {waiting: 'Waiting for you', scheduled: 'Scheduled', sent: 'Sent'};
 
 function isoDay(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-
-function calMove(n) { _calOffset = n === 0 ? 0 : _calOffset + n; loadCalendar(); }
+function calToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function calMonday(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }
+function calRange() {
+  const a = _calAnchor || calToday();
+  if (_calView === 'week') return {start: calMonday(a), days: 7};
+  const first = new Date(a.getFullYear(), a.getMonth(), 1);
+  return {start: calMonday(first), days: 42};
+}
+function calMove(n) {
+  const a = new Date(_calAnchor || calToday());
+  if (n === 0) _calAnchor = calToday();
+  else if (_calView === 'week') { a.setDate(a.getDate() + 7 * n); _calAnchor = a; }
+  else { _calAnchor = new Date(a.getFullYear(), a.getMonth() + n, 1); }
+  _calDay = '';
+  loadCalendar();
+}
+function calSetView(v) {
+  _calView = v === 'month' ? 'month' : 'week';
+  try { sessionStorage.setItem('sb-cal', _calView); } catch { /* fine */ }
+  loadCalendar();
+}
+function calOpenDay(iso) {
+  _calDay = iso;
+  const body = document.getElementById('cal-day');
+  if (body && _calData) body.innerHTML = calDayHtml(_calData, iso);
+  document.querySelectorAll('.mcell').forEach(c => c.classList.toggle('sel', c.dataset.day === iso));
+}
+document.addEventListener('keydown', e => {
+  if (currentTab !== 'calendar' || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable], .chart svg')) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); calMove(-1); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); calMove(1); }
+  else if (e.key === 't' || e.key === 'T') calMove(0);
+});
 
 async function loadCalendar() {
   const el = document.getElementById('calendar-body');
   if (!el) return;
-  const start = calStart();
-  const data = await api('/api/calendar?start=' + isoDay(start) + '&days=7&tz=' + -new Date().getTimezoneOffset());
+  const r = calRange();
+  el.classList.add('refetch');
+  const data = await api('/api/calendar?start=' + isoDay(r.start) + '&days=' + r.days + tzParam());
+  el.classList.remove('refetch');
   if (!data) { el.innerHTML = offlineState(); return; }
   if (data.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the calendar', escHtml(data.error)); return; }
-  el.innerHTML = calendarHtml(data, isoDay(new Date()));
-  const meetings = (data.meetings || []).length;
-  const scheduled = (data.days || []).reduce((n, d) => n + (d.scheduled || 0), 0);
-  const waiting = (data.days || []).reduce((n, d) => n + (d.waiting || 0), 0);
+  _calData = data;
+  const keep = el.querySelector('.calgrid-scroll');
+  const scrollTop = keep ? keep.scrollTop : null;
+  el.innerHTML = calendarHtml(data);
+  const grid = el.querySelector('.calgrid-scroll');
+  if (grid) grid.scrollTop = scrollTop !== null ? scrollTop : Math.max(0, (calFirstHour(data) - calStartHour(data)) * CAL_HOUR - 8);
+  if (!_calRO && typeof ResizeObserver !== 'undefined') {
+    _calRO = new ResizeObserver(() => {
+      const narrow = el.clientWidth < 640;
+      if (narrow !== _calNarrow && _calData && currentTab === 'calendar') el.innerHTML = calendarHtml(_calData);
+    });
+    _calRO.observe(el);
+  }
+  const inRange = (data.days || []).filter(d => _calView === 'week' || calInMonth(d.date));
+  const meetings = inRange.reduce((n, d) => n + calEntries(data, d.date).filter(e => e.kind === 'meet').length, 0);
+  const scheduled = inRange.reduce((n, d) => n + (d.scheduled || 0), 0);
+  const waiting = inRange.reduce((n, d) => n + (d.waiting || 0), 0);
+  const span = _calView === 'week' ? 'this week' : 'this month';
   setAnswer('calendar', toneBadge('info', plural(meetings, 'meeting', 'meetings')),
-    (meetings ? plural(meetings, 'meeting', 'meetings') + ' this week' : 'No meetings this week') +
+    (meetings ? plural(meetings, 'meeting', 'meetings') + ' ' + span : 'No meetings ' + span) +
     (scheduled ? ', and ' + plural(scheduled, 'email goes', 'emails go') + ' out on schedule.' : '.') +
     (waiting ? ' ' + plural(waiting, 'email waits', 'emails wait') + ' for your OK first.' : ''), 'Calendar');
 }
+let _calRO = null, _calNarrow = null;
 
-function calendarHtml(data, today) {
-  const n = (v, one, many) => v + ' ' + (v === 1 ? one : many);
-  const clock = t => t ? timeOfDay(t) : '';
+function calInMonth(iso) {
+  const a = _calAnchor || calToday();
+  return iso.slice(0, 7) === isoDay(new Date(a.getFullYear(), a.getMonth(), 1)).slice(0, 7);
+}
+// The hours the week shows: 7 to 20, widened to fit anything outside them.
+function calHours(data) {
+  return (data.days || []).flatMap(d => calEntries(data, d.date).filter(e => e.h !== null).map(e => e.h));
+}
+function calStartHour(data) { return Math.max(0, Math.floor(Math.min(7, ...calHours(data)))); }
+function calEndHour(data) { return Math.min(24, Math.max(20, ...calHours(data).map(h => Math.floor(h) + 1))); }
+// The week opens scrolled to 8 in the morning, or the first thing before it.
+function calFirstHour(data) {
+  const hs = calHours(data).filter(h => h >= 6);
+  return Math.floor(Math.min(8, ...(hs.length ? hs : [8])));
+}
+function meetName(m) { return [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Someone'; }
+function localHM(ts) { const d = parseTs(ts); return isNaN(d) ? null : d.getHours() + d.getMinutes() / 60; }
+
+// Everything on one day, as entries: [{kind, label, sub, h, n, person}]
+function calEntries(data, iso) {
+  const d = (data.days || []).find(x => x.date === iso) || {};
+  const out = [];
+  // A meeting's day is your local day, not the stored (UTC) one.
+  (data.meetings || []).filter(m => m.starts_at ? isoDay(parseTs(m.starts_at)) === iso : m.day === iso).forEach(m => out.push({
+    kind: 'meet', h: m.starts_at ? localHM(m.starts_at) : null, label: meetName(m),
+    sub: 'Meeting' + (m.company ? ', ' + m.company : ''), person: m.id}));
+  (d.hours || []).slice().sort((a, b) => a.h - b.h).forEach(x => out.push({
+    kind: x.kind, h: x.h, n: x.n, label: plural(x.n, 'email', 'emails'), sub: CAL_KINDS[x.kind] || ''}));
+  if (d.replies) out.push({kind: 'reply', h: null, n: d.replies, label: plural(d.replies, 'reply', 'replies'), sub: 'New conversations'});
+  return out;
+}
+function calWhen(h) {
+  if (h === null || h === undefined) return '';
+  const d = new Date(); d.setHours(Math.floor(h), Math.round((h % 1) * 60), 0, 0);
+  return d.toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
+}
+function calEntryClick(e) {
+  return e.person ? 'openPerson(' + jsq(e.person) + ')' : e.kind === 'reply' ? "goTab('conversations')" : "goTab('outbox')";
+}
+
+function calendarHtml(data) {
+  const el = document.getElementById('calendar-body');
+  _calNarrow = !!el && el.clientWidth < 640;
+  const r = calRange();
+  const a = _calAnchor || calToday();
+  const end = new Date(r.start); end.setDate(end.getDate() + 6);
+  const md = d => d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+  const title = _calView === 'week'
+    ? md(r.start) + ' to ' + (r.start.getMonth() === end.getMonth() ? String(end.getDate()) : md(end)) + ', ' + end.getFullYear()
+    : a.toLocaleDateString(undefined, {month: 'long', year: 'numeric'});
+  const onToday = _calView === 'week' ? isoDay(r.start) === isoDay(calMonday(calToday()))
+    : a.getFullYear() === calToday().getFullYear() && a.getMonth() === calToday().getMonth();
+  const bar = '<div class="calbar"><h2 class="cal-title">' + escHtml(title) + '</h2>' +
+    '<div class="cal-nav"><button type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Previous ' + _calView + '" title="Previous (left arrow)" onclick="calMove(-1)">' +
+      '<svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg></button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" onclick="calMove(0)"' + (onToday ? ' aria-disabled="true"' : '') + ' title="Today (T)">Today</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Next ' + _calView + '" title="Next (right arrow)" onclick="calMove(1)">' +
+      '<svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg></button></div>' +
+    '<div class="seg" role="group" aria-label="View">' + [['week', 'Week'], ['month', 'Month']].map(v =>
+      '<button type="button" class="' + (v[0] === _calView ? 'on' : '') + '" aria-pressed="' + (v[0] === _calView) + '" onclick="calSetView(\'' + v[0] + '\')">' + v[1] + '</button>').join('') +
+    '</div></div>';
+  const paused = data.paused ? '<div class="banner bad">' + icon('alert') + '<div><b>Sending is paused</b><p>' +
+    escHtml(data.paused) + '. Scheduled mail stays queued until you resume it.</p>' +
+    '<div class="banner-acts">' + fixBtn('Open the Outbox', 'outbox', '', 'btn-secondary') + '</div></div></div>' : '';
+  let body;
+  if (_calNarrow) body = calAgendaHtml(data);
+  else if (_calView === 'week') body = calWeekHtml(data);
+  else body = calMonthHtml(data) + '<div id="cal-day">' + calDayHtml(data, _calDay || (calInMonth(isoDay(calToday())) ? isoDay(calToday()) : '')) + '</div>';
+  const key = '<div class="keyrow"><span><i class="ckey waiting"></i>Waiting for you</span><span><i class="ckey scheduled"></i>Scheduled</span>' +
+    '<span><i class="ckey sent"></i>Sent</span><span><i class="ckey meet"></i>Meeting</span></div>';
+  return paused + '<section class="sec cal">' + bar + body + key + '</section>' + calMeetingsHtml(data);
+}
+
+function calWeekHtml(data) {
+  const today = isoDay(calToday());
+  const h0 = calStartHour(data), h1 = calEndHour(data);
   const days = data.days || [];
-  const fmt = iso => new Date(iso + 'T00:00:00');
-  const range = days.length
-    ? fmt(days[0].date).toLocaleDateString('en-US', {month: 'short', day: 'numeric'}) + ' to ' +
-      fmt(days[days.length - 1].date).toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
-    : '';
-  const week = days.map(d => {
-    const dt = fmt(d.date);
-    const evs = [];
-    if (d.waiting) evs.push('<button type="button" class="ev wait" onclick="goTab(\'outbox\')">' +
-      '<span class="time">' + (clock(d.first_waiting) || 'Held') + '</span>' +
-      '<span class="t">' + n(d.waiting, 'email', 'emails') + '</span>' +
-      '<span class="s">Waiting for your approval</span></button>');
-    if (d.scheduled) evs.push('<button type="button" class="ev" onclick="goTab(\'outbox\')">' +
-      '<span class="time">' + (clock(d.first_scheduled) ? 'From ' + clock(d.first_scheduled) : 'Scheduled') + '</span>' +
-      '<span class="t">' + n(d.scheduled, 'email', 'emails') + '</span>' +
-      '<span class="s">Approved and scheduled</span></button>');
-    if (d.sent) evs.push('<button type="button" class="ev sent" onclick="goTab(\'outbox\')">' +
-      '<span class="time">Sent</span>' +
-      '<span class="t">' + n(d.sent, 'email', 'emails') + '</span>' +
-      '<span class="s">' + (d.replies ? n(d.replies, 'reply', 'replies') + ' that day' : 'Went out') + '</span></button>');
-    else if (d.replies) evs.push('<button type="button" class="ev sent" onclick="goTab(\'conversations\')">' +
-      '<span class="time">Replies</span><span class="t">' + n(d.replies, 'reply', 'replies') + '</span>' +
-      '<span class="s">New conversations</span></button>');
-    (data.meetings || []).filter(m => m.day === d.date).forEach(m => evs.unshift(
-      '<button type="button" class="ev meet" onclick="goTab(\'prospects\')">' +
-      '<span class="time">' + clock(m.starts_at) + '</span>' +
-      '<span class="t">' + (escHtml([m.first_name, m.last_name].filter(Boolean).join(' ')) || escHtml(m.email)) + '</span>' +
-      '<span class="s">Meeting' + (m.company ? ', ' + escHtml(m.company) : '') + '</span></button>'));
-    const cls = d.date === today ? ' today' : d.date < today ? ' past' : '';
-    return '<div class="day' + cls + '"><div class="day-h"><b>' +
-      dt.toLocaleDateString('en-US', {weekday: 'short'}) + ' ' + dt.getDate() + '</b><span>' +
-      (d.date === today ? 'Today' : '') + '</span></div>' +
-      (evs.join('') || '<p class="day-none">Nothing ' + (d.date < today ? 'went out' : 'scheduled') + '</p>') + '</div>';
+  const head = '<div class="wk-head"><span></span>' + days.map(d => {
+    const dt = new Date(d.date + 'T00:00:00');
+    return '<span class="wk-d' + (d.date === today ? ' today' : '') + '"><small>' + dt.toLocaleDateString(undefined, {weekday: 'short'}) +
+      '</small><b>' + dt.getDate() + '</b></span>';
+  }).join('') + '</div>';
+  // Above the hours: meetings with no time, and replies.
+  const allday = days.map(d => calEntries(data, d.date).filter(e => e.h === null));
+  const alldayRow = allday.some(x => x.length) ? '<div class="wk-all"><span class="wk-lbl">All day</span>' + allday.map(list =>
+    '<div class="wk-allcell">' + list.map(e => '<button type="button" class="chip ' + e.kind + '" onclick="' + calEntryClick(e) + '">' +
+      escHtml(e.label) + '</button>').join('') + '</div>').join('') + '</div>' : '';
+  let hours = '';
+  const hourName = h => { const d = new Date(); d.setHours(h, 0, 0, 0); return d.toLocaleTimeString(undefined, {hour: 'numeric'}); };
+  for (let h = h0; h < h1; h++) hours += '<div class="wk-hr" style="top:' + (h - h0) * CAL_HOUR + 'px"><span>' + hourName(h) + '</span></div>';
+  const now = new Date();
+  const nowH = now.getHours() + now.getMinutes() / 60;
+  const cols = days.map(d => {
+    const list = calEntries(data, d.date).filter(e => e.h !== null);
+    // Mail in the same hour shares the slot side by side.
+    const byHour = {};
+    list.forEach(e => { const k = Math.floor(e.h); (byHour[k] = byHour[k] || []).push(e); });
+    const blocks = list.map(e => {
+      const same = byHour[Math.floor(e.h)], i = same.indexOf(e), n = same.length;
+      const top = (e.h - h0) * CAL_HOUR + 1, height = e.kind === 'meet' ? Math.max(22, CAL_HOUR / 2) : CAL_HOUR - 3;
+      return '<button type="button" class="ev ' + e.kind + '" style="top:' + top + 'px;height:' + height + 'px;left:calc(' + (100 * i / n) +
+        '% + 2px);width:calc(' + (100 / n) + '% - 4px)" onclick="' + calEntryClick(e) + '" title="' + escHtml(calWhen(e.h) + ', ' + e.label + ', ' + e.sub) + '">' +
+        '<b>' + escHtml(e.label) + '</b><span>' + escHtml(e.kind === 'meet' ? calWhen(e.h) : e.sub) + '</span></button>';
+    }).join('');
+    const line = d.date === isoDay(now) && nowH >= h0 && nowH < h1
+      ? '<i class="nowline" style="top:' + Math.round((nowH - h0) * CAL_HOUR) + 'px" aria-hidden="true"></i>' : '';
+    return '<div class="wk-col' + (d.date === isoDay(now) ? ' today' : d.date < isoDay(now) ? ' past' : '') + '">' + blocks + line + '</div>';
   }).join('');
+  return '<div class="wk">' + head + alldayRow + '<div class="calgrid-scroll"><div class="wk-body" style="height:' + (h1 - h0) * CAL_HOUR + 'px">' +
+    '<div class="wk-hours">' + hours + '</div>' + cols + '</div></div></div>';
+}
+
+function calMonthHtml(data) {
+  const today = isoDay(calToday());
+  const names = [];
+  const mon = calMonday(calToday());
+  for (let i = 0; i < 7; i++) { const d = new Date(mon); d.setDate(d.getDate() + i); names.push(d.toLocaleDateString(undefined, {weekday: 'short'})); }
+  const cells = (data.days || []).map(d => {
+    const list = calEntries(data, d.date);
+    const show = list.slice(0, 2), more = list.length - show.length;
+    const dt = new Date(d.date + 'T00:00:00');
+    const out = !calInMonth(d.date);
+    const label = dt.toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'}) +
+      (list.length ? ', ' + list.map(e => e.label + ' ' + e.sub.toLowerCase()).join(', ') : ', nothing');
+    return '<button type="button" class="mcell' + (out ? ' out' : '') + (d.date === today ? ' today' : '') + (d.date === _calDay ? ' sel' : '') +
+      '" data-day="' + d.date + '" aria-label="' + escHtml(label) + '" onclick="calOpenDay(\'' + d.date + '\')"><span class="mnum">' + dt.getDate() + '</span>' +
+      show.map(e => '<span class="chip ' + e.kind + '">' + escHtml(e.label) + '</span>').join('') +
+      (more > 0 ? '<span class="more">+' + more + ' more</span>' : '') + '</button>';
+  }).join('');
+  return '<div class="month"><div class="m-names" aria-hidden="true">' + names.map(n => '<span>' + escHtml(n) + '</span>').join('') + '</div>' +
+    '<div class="m-grid">' + cells + '</div></div>';
+}
+
+function calDayHtml(data, iso) {
+  if (!iso) return '<p class="cal-hint">Pick a day to see what is on it.</p>';
+  const list = calEntries(data, iso);
+  const dt = new Date(iso + 'T00:00:00');
+  return '<div class="cal-dayhead">' + escHtml(dt.toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'})) + '</div>' +
+    '<div class="w">' + (list.map(calRow).join('') || '<div class="row"><div class="grow"><p class="s">Nothing ' +
+      (iso < isoDay(calToday()) ? 'went out' : 'is scheduled') + ' this day.</p></div></div>') + '</div>';
+}
+function calRow(e) {
+  const link = e.person ? personLink(e.person, escHtml(e.label))
+    : '<a class="rowmain" href="#' + (e.kind === 'reply' ? 'conversations' : 'outbox') + '" onclick="' + calEntryClick(e) + ';return false">' + escHtml(e.label) + '</a>';
+  return '<div class="row rowlink"><i class="ckey ' + e.kind + '" aria-hidden="true"></i><div class="grow"><p class="t">' + link + '</p>' +
+    '<p class="s">' + escHtml(e.sub) + '</p></div><span class="time">' + (calWhen(e.h) || (e.kind === 'meet' ? 'No time given' : '')) + '</span>' +
+    icon('chevron', 'chev') + '</div>';
+}
+
+// Narrow: one list, a day at a time, today always there.
+function calAgendaHtml(data) {
+  const today = isoDay(calToday());
+  const days = (data.days || []).filter(d => _calView === 'week' || calInMonth(d.date));
+  const blocks = days.map(d => {
+    const list = calEntries(data, d.date);
+    if (!list.length && d.date !== today) return '';
+    const dt = new Date(d.date + 'T00:00:00');
+    return '<div class="ag-day' + (d.date === today ? ' today' : '') + '"><div class="cal-dayhead">' +
+      escHtml(dt.toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'})) + (d.date === today ? ' <span class="tag info">Today</span>' : '') +
+      '</div><div class="w">' + (list.map(calRow).join('') || '<div class="row"><div class="grow"><p class="s">Nothing today.</p></div></div>') + '</div></div>';
+  }).join('');
+  return '<div class="agenda">' + (blocks || '<p class="cal-hint">Nothing ' + (_calView === 'week' ? 'this week' : 'this month') + '.</p>') + '</div>';
+}
+
+function calMeetingsHtml(data) {
   const meetings = data.meetings || [];
-  const meetRows = meetings.length
-    ? meetings.map(m => '<div class="row"><span class="who" aria-hidden="true">' + initials(m.first_name, m.last_name) + '</span>' +
-        '<div class="grow"><p class="t">' + (escHtml([m.first_name, m.last_name].filter(Boolean).join(' ')) || escHtml(m.email)) + '</p>' +
+  const rows = meetings.length
+    ? meetings.map(m => '<div class="row rowlink"><span class="who" aria-hidden="true">' + initials(m.first_name, m.last_name) + '</span>' +
+        '<div class="grow"><p class="t">' + personLink(m.id, escHtml(meetName(m))) + '</p>' +
         '<p class="s">' + escHtml([m.title, m.company].filter(Boolean).join(', ')) + '</p></div>' +
         '<span class="time">' + (m.starts_at ? escHtml(formatDate(m.starts_at)) : 'Booked ' + relTime(m.updated_at)) + '</span>' +
-        '<span class="tag good">' + (m.starts_at ? 'Meeting' : 'Booked, no time given') + '</span>' +
-        '<button class="btn btn-secondary btn-sm rowbtn" onclick="goTab(\'prospects\')">Open</button></div>').join('')
+        '<span class="tag good">' + (m.starts_at ? 'Meeting' : 'No time given') + '</span>' + icon('chevron', 'chev') + '</div>').join('')
     : '<div class="row"><div class="grow"><p class="t">No meetings booked yet</p>' +
-      '<p class="s">When someone books, mark it on People or let your agent record it. Their follow-ups stop.</p></div></div>';
+      '<p class="s">When someone books, mark it on their page in People, or let your agent record it. Their follow-ups stop.</p></div></div>';
   const link = safeHref(data.booking_url);
-  const linkRow = '<div class="row"><div class="grow"><p class="t">Your booking link</p><p class="s">' +
-    (link ? '<a href="' + link + '" target="_blank" rel="noopener noreferrer">' + escHtml(data.booking_url) + '</a>. ' +
-            'Replies to interested people offer it.'
-          : 'None set. Add <code>product.offer.booking_url</code> to sellbird.yaml and replies will offer it.') +
-    '</p></div></div>';
-  return (data.paused ? '<div class="banner bad">' + icon('alert') + '<div><b>Sending is paused</b><p>' +
-      escHtml(data.paused) + '. Scheduled mail stays queued until you resume it in the Outbox.</p></div></div>' : '') +
-    '<div class="cal-bar"><b>' + escHtml(range) + '</b>' +
-      '<button class="btn btn-secondary btn-sm" onclick="calMove(-1)">Earlier</button>' +
-      '<button class="btn btn-secondary btn-sm" onclick="calMove(0)"' + (_calOffset === 0 ? ' disabled' : '') + '>Today</button>' +
-      '<button class="btn btn-secondary btn-sm" onclick="calMove(1)">Later</button></div>' +
-    '<div class="week">' + week + '</div>' +
-    '<div class="keyrow"><span><i class="dot" style="background:var(--wait)"></i>Waiting for you</span>' +
-      '<span><i class="dot d1"></i>Scheduled</span><span><i class="dot" style="background:var(--good)"></i>Sent</span>' +
-      '<span><i class="dot d4"></i>Meeting</span></div>' +
-    '<div class="secs" style="margin-top:24px"><section class="sec"><h2>Meetings booked</h2><div class="w">' + meetRows +
-      '<p class="w-f">A booking stops that person\'s follow-ups. The meeting itself lives on your own calendar.</p></div></section>' +
-      '<section class="sec"><h2>Booking</h2><div class="w">' + linkRow + '</div></section></div>';
+  const booking = '<div class="row"><div class="grow"><p class="t">Your booking link</p><p class="s">' +
+    (link ? '<a href="' + link + '" target="_blank" rel="noopener noreferrer">' + escHtml(data.booking_url) + '</a>. Replies to interested people offer it.'
+          : 'None yet. With one, replies to interested people offer it.') + '</p></div>' +
+    fixBtn(link ? 'Change' : 'Add a booking link', 'company', 'co-o-booking', link ? 'btn-secondary' : 'btn-primary') + '</div>';
+  return '<div class="secs one" style="margin-top:24px"><section class="sec"><h2>Meetings booked <span class="h-right">' + meetings.length + '</span></h2><div class="w">' + rows +
+    '<p class="w-f">A booking stops that person\'s follow-ups. The meeting itself lives on your own calendar.</p></div></section>' +
+    '<section class="sec"><h2>Booking</h2><div class="w">' + booking + '</div></section></div>';
 }
 
 // ── Numbers: what the work brought in ──
 
-let _numbersWeeks = 6;
-function setNumbersWeeks(n) { _numbersWeeks = n; loadNumbers(); }
+// ── Numbers: one range and one filter for the whole page ──
 
-// Daily counts folded into whole weeks, oldest first, the last one ending today.
-function weekly(days, values, weeks) {
-  const out = [];
-  for (let w = 0; w < weeks; w++) {
-    const end = days.length - 7 * (weeks - 1 - w);
-    const slice = (values || []).slice(Math.max(0, end - 7), end);
-    const first = days[Math.max(0, end - 7)];
-    out.push({total: slice.reduce((x, y) => x + (Number(y) || 0), 0), label: first ? first.slice(5).replace('-', '/') : ''});
-  }
-  return out;
+const NUM_SERIES = [['found', 'People found'], ['sent', 'Emails sent'], ['replies', 'Replies'], ['meetings', 'Meetings']];
+let _numbers = null;
+let _numCampaign = (() => { try { return sessionStorage.getItem('sb-num-campaign') || ''; } catch { return ''; } })();
+let _numShown = new Set(['sent', 'replies']);
+let _numBreak = 'campaign';
+let _numSort = {by: 'sent', dir: -1};
+
+function setNumCampaign(v) {
+  _numCampaign = v;
+  try { sessionStorage.setItem('sb-num-campaign', v); } catch { /* fine */ }
+  loadNumbers();
 }
-
-function columnChart(title, series) {
-  const max = Math.max(...series.map(s => s.total), 1);
-  return '<div class="w chartbox"><div class="w-h"><h3>' + title + '</h3></div>' +
-    '<div class="chart" role="img" aria-label="' + title + ': ' + series.map(s => s.total).join(', ') + '">' +
-    series.map(s => '<div class="col2"><span class="tot">' + s.total + '</span>' +
-      '<div class="stack' + (s.total ? '' : ' zero') + '" style="--h:' + (s.total / max).toFixed(3) + '"></div>' +
-      '<span class="lab">' + escHtml(s.label) + '</span></div>').join('') + '</div></div>';
+function toggleNumSeries(key) {
+  if (_numShown.has(key)) _numShown.delete(key); else _numShown.add(key);
+  if (!_numbers) return;
+  const box = document.getElementById('num-series');
+  if (box) box.innerHTML = numSeriesButtons();
+  _charts['num-chart'] = numChartSpec(_numbers);
+  const el = document.getElementById('num-chart');
+  if (el) drawChart(el, _charts['num-chart']);
+}
+function setNumBreak(v) { _numBreak = v; _numSort = {by: 'sent', dir: -1}; paintNumBreak(); }
+function sortNum(by) {
+  _numSort = {by, dir: _numSort.by === by ? -_numSort.dir : (by === 'name' ? 1 : -1)};
+  paintNumBreak();
 }
 
 async function loadNumbers() {
   const el = document.getElementById('numbers-body');
   if (!el) return;
-  const weeks = _numbersWeeks;
-  const [trend, stats, campaigns, inboxes, pipe] = await Promise.all([
-    api('/api/trend?days=' + weeks * 7 + '&tz=' + -new Date().getTimezoneOffset()),
-    api('/api/stats'), api('/api/campaigns'), api('/api/inboxes'), api('/api/pipeline'),
-  ]);
-  if (!trend || !Array.isArray(trend.days)) { el.innerHTML = offlineState(); return; }
-  if (pipe && !pipe.error) _pipeline = pipe;
-  el.innerHTML = numbersHtml(weeks, trend, stats, campaigns, inboxes);
-  const sum = a => (a || []).reduce((x, y) => x + (Number(y) || 0), 0);
-  const sent = sum(trend.sent), replies = sum(trend.replies);
-  setAnswer('numbers', sent ? toneBadge('info', (100 * replies / sent).toFixed(1) + '% reply rate') : toneBadge('', 'Nothing sent yet'),
-    sent ? plural(replies, 'reply', 'replies') + ' from ' + plural(sent, 'email', 'emails') + ' in the last ' + weeks + ' weeks.'
-         : 'Nothing has gone out in the last ' + weeks + ' weeks, so there is nothing to measure yet.', 'Numbers');
+  el.classList.add('refetch');
+  const d = await api('/api/numbers?days=' + _rangeDays + tzParam() + (_numCampaign ? '&campaign=' + encodeURIComponent(_numCampaign) : ''));
+  el.classList.remove('refetch');
+  if (currentTab !== 'numbers') return;
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the numbers', escHtml(d.error)); return; }
+  if (_numCampaign && !(d.campaigns || []).some(c => c.id === _numCampaign)) { setNumCampaign(''); return; }
+  _numbers = d;
+  const sent = d.series.sent.total, replies = d.series.replies.total;
+  const rate = sent ? Math.round(1000 * replies / sent) / 10 : 0;
+  const camp = _numCampaign ? ((d.campaigns || []).find(c => c.id === _numCampaign) || {}).name : '';
+  setAnswer('numbers', sent ? toneBadge('info', rate + '% reply rate') : toneBadge('', 'Nothing sent yet'),
+    (sent ? plural(replies, 'reply', 'replies') + ' from ' + plural(sent, 'email', 'emails') + ' in ' + rangeWords(d.range) + '.'
+          : 'Nothing went out in ' + rangeWords(d.range) + ', so there is nothing to measure yet.') +
+    (camp ? ' Only ' + escHtml(camp) + '.' : ''), 'Numbers');
+  const keep = window.scrollY;
+  el.innerHTML = numbersHtml(d);
+  mountCharts(el);
+  paintNumBreak();
+  if (Math.abs(window.scrollY - keep) > 1) window.scrollTo(0, keep);
 }
 
-function numbersHtml(weeks, trend, stats, campaigns, inboxes) {
-  const sum = a => (a || []).reduce((x, y) => x + (Number(y) || 0), 0);
-  const found = sum(trend.found), sent = sum(trend.sent), replies = sum(trend.replies);
-  const pipe = (stats && stats.pipeline) || {};
-  const stat = (label, value, note) => '<div class="stat"><span>' + label + '</span>' +
-    '<div class="stat-main"><b class="v' + (value ? '' : ' zero') + '">' + value + '</b></div><span>' + note + '</span></div>';
-  const rate = sent ? (100 * replies / sent).toFixed(1) + '%' : 0;
-  let html = '<div class="chips" style="margin-bottom:18px" role="group" aria-label="Period">' +
-    [[2, 'Last 2 weeks'], [6, 'Last 6 weeks'], [12, 'Last 12 weeks']].map(c =>
-      '<button type="button" class="chip-btn' + (c[0] === weeks ? ' on' : '') + '" aria-pressed="' + (c[0] === weeks) +
-      '" onclick="setNumbersWeeks(' + c[0] + ')">' + c[1] + '</button>').join('') + '</div>' +
-    '<div class="stats">' +
-      stat('People found', found, 'in ' + weeks + ' weeks') +
-      stat('Emails sent', sent, 'approved and sent') +
-      stat('Replies', replies, 'new conversations') +
-      stat('Reply rate', rate, sent ? 'replies per email sent' : 'nothing sent yet') +
-      stat('Meetings booked', ((_pipeline && _pipeline.stages) || {}).meeting_booked || 0, 'right now') +
-    '</div>';
+function numChartSpec(d) {
+  return {title: 'Over time', labels: d.days, range: d.range, height: 260,
+          series: NUM_SERIES.map(([k, label]) => ({key: k, label, slot: SERIES_SLOT[k], values: d.series[k].values, hidden: !_numShown.has(k)}))};
+}
+function numSeriesButtons() {
+  return NUM_SERIES.map(([k, label]) => '<button type="button" class="sbtn' + (_numShown.has(k) ? ' on' : '') + '" aria-pressed="' + _numShown.has(k) +
+    '" onclick="toggleNumSeries(\'' + k + '\')"><i class="key s' + SERIES_SLOT[k] + '"></i>' + label + '</button>').join('');
+}
 
-  const total = (stats && stats.prospects && stats.prospects.total) || 0;
-  const camps = Array.isArray(campaigns) ? campaigns : [];
-  const campRows = camps.map(c => {
-    const rs = c.recipients || [];
-    const replied = rs.filter(r => ['replied', 'interested', 'meeting', 'accepted_offer'].includes(r.status)).length;
-    const reached = rs.filter(r => r.status !== 'new' && r.status !== 'queued').length;
-    const pct = reached ? Math.round(1000 * replied / reached) / 10 : 0;
-    return '<div class="row"><div class="grow"><p class="t">' + escHtml(c.name || 'Untitled campaign') + '</p>' +
-      '<p class="s">' + rs.length + (rs.length === 1 ? ' person, ' : ' people, ') + reached + ' emailed, ' +
-      replied + (replied === 1 ? ' reply' : ' replies') + '</p></div>' +
-      '<div class="hbar"><i style="width:' + Math.min(100, pct * 4) + '%"></i></div>' +
-      '<span class="tag' + (pct >= 5 ? ' good' : '') + '">' + pct + '%</span></div>';
-  }).join('');
-  const byStage = (_pipeline && _pipeline.stages) || {};
-  const stages = Object.keys(stageNames()).map(k => [escHtml(stageNames()[k]), byStage[k] || 0]);
-  const bySource = (_pipeline && _pipeline.sources) || {};
-  const sourceRows = Object.keys(bySource).sort((a, b) => bySource[b] - bySource[a]).map(k =>
-    '<div class="row"><div class="grow"><p class="t">' + escHtml(sourceName(k)) + '</p></div>' +
-    '<div class="hbar"><i style="width:' + (total ? Math.round(100 * bySource[k] / total) : 0) + '%"></i></div>' +
-    '<span class="tag">' + bySource[k] + '</span></div>').join('');
-  const stageRows = stages.map(s => '<div class="row"><div class="grow"><p class="t">' + s[0] + '</p></div>' +
-    '<div class="hbar"><i style="width:' + (total ? Math.round(100 * (s[1] || 0) / total) : 0) + '%"></i></div>' +
-    '<span class="tag">' + (s[1] || 0) + '</span></div>').join('');
-  const boxes = (inboxes && inboxes.native && inboxes.inboxes) || [];
-  const boxRows = boxes.map(ib => {
-    const cap = Math.max(1, Number(ib.cold_cap) || 0), n = Number(ib.cold_sent_today) || 0;
-    return '<div class="row"><div class="grow"><p class="t">' + escHtml(ib.address || 'Main mailbox') + '</p>' +
-      '<p class="s">' + n + ' of ' + Number(ib.cold_cap) + ' cold emails today</p></div>' +
-      '<div class="hbar"><i style="width:' + Math.min(100, Math.round(100 * n / cap)) + '%"></i></div>' + inboxBadge(ib) + '</div>';
-  }).join('');
-
-  html += '<div class="secs">' +
-    '<section class="sec"><h2>Each week</h2>' + columnChart('Emails sent each week', weekly(trend.days, trend.sent, weeks)) + '</section>' +
-    '<section class="sec"><h2>&nbsp;</h2>' + columnChart('Replies each week', weekly(trend.days, trend.replies, weeks)) + '</section>' +
-    '<section class="sec"><h2>By campaign</h2><div class="w">' +
-      (campRows || '<div class="row"><div class="grow"><p class="t">No campaigns yet</p>' +
-        '<p class="s">Reply share shows here once a campaign has gone out.</p></div></div>') +
-      '<p class="w-f">Share of people emailed who replied.</p></div></section>' +
-    '<section class="sec"><h2>Where people stand</h2><div class="w">' + stageRows +
-      '<p class="w-f">' + total + (total === 1 ? ' person' : ' people') + ' in all.</p></div></section>' +
-    (sourceRows ? '<section class="sec"><h2>By source</h2><div class="w">' + sourceRows +
-      '<p class="w-f">Where each person came from.</p></div></section>' : '') +
-    (boxRows ? '<section class="sec"><h2>By inbox, today</h2><div class="w">' + boxRows + '</div></section>' : '') +
+function numbersHtml(d) {
+  const camps = d.campaigns || [];
+  const controls = '<div class="numbar">' + rangeTabs('loadNumbers') +
+    (camps.length ? '<label class="qselect"><span class="sr-only">Campaign</span><select onchange="setNumCampaign(this.value)">' +
+      '<option value="">All campaigns</option>' + camps.map(c => '<option value="' + escHtml(c.id) + '"' + (c.id === _numCampaign ? ' selected' : '') + '>' +
+      escHtml(c.name) + '</option>').join('') + '</select></label>' : '') + '</div>';
+  const tile = ([k, label]) => {
+    const s = d.series[k];
+    return '<a class="stat link" href="#stat/' + k + '" onclick="openStat(\'' + k + '\');return false"><span class="stat-l">' + label + icon('chevron', 'chev') + '</span>' +
+      '<div class="stat-main"><b class="v' + (s.total ? '' : ' zero') + '">' + num(s.total) + '</b>' + numSpark(s.values, k) + '</div>' +
+      changeHtml(s.total, d.has_previous ? s.previous : null, d.range) + '</a>';
+  };
+  const f = d.funnel || [];
+  const first = (f[0] && f[0].n) || 0;
+  const funnel = first ? '<ol class="funnel">' + f.map((st, i) => {
+    const prev = i ? f[i - 1].n : 0;
+    const conv = i ? (prev ? Math.round(100 * st.n / prev) : 0) : null;
+    return '<li class="fstep"><div class="fhead"><span class="fl">' + escHtml(st.label) + '</span><b>' + num(st.n) + '</b>' +
+      (conv === null ? '<span class="fc">everyone found</span>' : '<span class="fc">' + conv + '% of ' + escHtml(f[i - 1].label.toLowerCase()) + '</span>') + '</div>' +
+      '<div class="fbar" role="img" aria-label="' + escHtml(st.label + ': ' + st.n + (conv === null ? '' : ', ' + conv + '% of the step before')) + '">' +
+      '<i style="width:' + Math.max(st.n ? 1.5 : 0, 100 * st.n / first).toFixed(2) + '%"></i></div></li>';
+  }).join('') + '</ol>'
+    : '<p class="cal-hint">Nobody was found in ' + rangeWords(d.range) + (_numCampaign ? ' for this campaign' : '') + ', so there is no funnel yet.</p>';
+  return controls +
+    '<div class="stats">' + NUM_SERIES.map(tile).join('') + '</div>' +
+    '<div class="secs one">' +
+      '<section class="sec"><h2>Over time <span class="h-right series-btns" id="num-series" role="group" aria-label="Series">' + numSeriesButtons() + '</span></h2>' +
+        '<div class="chart-pad">' + chartHtml('num-chart', numChartSpec(d)) + '</div></section>' +
+      '<section class="sec"><h2>From found to meeting <span class="h-right">The people found in ' + rangeWords(d.range) + '</span></h2>' +
+        '<div class="pad">' + funnel + '</div></section>' +
+      '<section class="sec"><h2>Breakdown <span class="h-right"><span class="seg" role="group" aria-label="Break down by">' +
+        [['campaign', 'By campaign'], ['inbox', 'By inbox']].map(v => '<button type="button" data-break="' + v[0] + '" class="' + (v[0] === _numBreak ? 'on' : '') +
+        '" aria-pressed="' + (v[0] === _numBreak) + '" onclick="setNumBreak(\'' + v[0] + '\')">' + v[1] + '</button>').join('') +
+        '</span></span></h2><div id="num-break"></div></section>' +
     '</div>' +
     '<p class="ask">Ask your coding agent: <b>"Which Sellbird campaign has the best reply rate, and why?"</b></p>';
-  return html;
+}
+function numSpark(values, k) {
+  const v = (values || []).slice(-30);
+  if (v.length < 2) return '';
+  const max = Math.max(1, ...v);
+  const pts = v.map((n, i) => (2 + i * 60 / (v.length - 1)).toFixed(1) + ',' + (20 - 17 * n / max).toFixed(1));
+  const last = pts[pts.length - 1].split(',');
+  return '<svg class="sparkline" viewBox="0 0 64 22" aria-hidden="true"><polyline points="' + pts.join(' ') +
+    '" fill="none" stroke="var(--s' + SERIES_SLOT[k] + ')" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.2" fill="var(--s' + SERIES_SLOT[k] + ')"/></svg>';
+}
+
+function paintNumBreak() {
+  const el = document.getElementById('num-break');
+  if (!el || !_numbers) return;
+  document.querySelectorAll('[data-break]').forEach(b => { const on = b.dataset.break === _numBreak; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  const camp = _numBreak === 'campaign';
+  const rows = (camp ? _numbers.by_campaign : _numbers.by_inbox) || [];
+  if (!rows.length) {
+    el.innerHTML = '<div class="w"><div class="row"><div class="grow"><p class="t">' + (camp ? 'No campaigns yet' : 'No inboxes yet') + '</p>' +
+      '<p class="s">' + (camp ? 'A campaign shows here once Sellbird writes one.' : 'Add an inbox and what it sends shows here.') + '</p></div>' +
+      (camp ? '' : fixBtn('Open Inboxes', 'inboxes', '', 'btn-secondary')) + '</div></div>';
+    return;
+  }
+  const rate = r => r.sent ? r.replies / r.sent : -1;
+  const cols = [['name', camp ? 'Campaign' : 'Inbox', false]].concat(camp ? [['people', 'People', true]] : [])
+    .concat([['sent', 'Sent', true], ['replies', 'Replies', true], ['rate', 'Reply rate', true]]);
+  const val = (r, k) => k === 'rate' ? rate(r) : k === 'name' ? String(r.name || '').toLowerCase() : Number(r[k] || 0);
+  const sorted = rows.slice().sort((a, b) => {
+    const x = val(a, _numSort.by), y = val(b, _numSort.by);
+    return (x < y ? -1 : x > y ? 1 : 0) * _numSort.dir;
+  });
+  const head = cols.map(c => {
+    const on = _numSort.by === c[0];
+    return '<th class="' + (c[2] ? 'num' : '') + '" aria-sort="' + (on ? (_numSort.dir > 0 ? 'ascending' : 'descending') : 'none') + '">' +
+      '<button type="button" class="sortbtn" onclick="sortNum(\'' + c[0] + '\')">' + c[1] +
+      '<span class="sortmark" aria-hidden="true">' + (on ? (_numSort.dir > 0 ? '&uarr;' : '&darr;') : '') + '</span></button></th>';
+  }).join('');
+  el.innerHTML = '<div class="table-scroll flat"><table class="nowrap"><thead><tr>' + head + '</tr></thead><tbody>' + sorted.map(r =>
+    '<tr' + (camp ? ' class="rowlink"' : '') + '><td>' + (camp ? '<a class="rowmain" href="#numbers" onclick="setNumCampaign(' + jsq(r.id) + ');return false">' + escHtml(r.name) + '</a>' : escHtml(r.name)) + '</td>' +
+    (camp ? '<td class="num">' + num(r.people) + '</td>' : '') +
+    '<td class="num">' + num(r.sent) + '</td><td class="num">' + num(r.replies) + '</td>' +
+    '<td class="num">' + (r.sent ? (Math.round(1000 * r.replies / r.sent) / 10) + '%' : '<span class="muted">none sent</span>') + '</td></tr>').join('') +
+    '</tbody></table></div>' +
+    '<p class="w-f">' + (camp ? 'Sent and replies in ' + rangeWords(_numbers.range) + '. Open a campaign to see only its numbers.' : 'Sent and replies in ' + rangeWords(_numbers.range) + ', by the inbox that sent them.') + '</p>';
 }
 
 // ── Set up: everything built and connected, one row each ──
@@ -3918,6 +4146,7 @@ async function loadSetup() {
   if (today && !today.error) { applyCounts(today); _todayStats = today.stats || {}; }
   el.innerHTML = setupHtml(_todayStats, engine, mode, setup);
   applyTheme(currentTheme());
+  watchSetupIndex();
   if (!_report) await loadAgentReport();
   const left = setup && setup.checks ? setup.checks.filter(c => c.required && !c.done).length : 0;
   const chip = _report ? _report.chip : '';
@@ -3927,60 +4156,99 @@ async function loadSetup() {
       : 'Everything below is what it can do for you, and what is on.'), 'Set up');
 }
 
+// Set up, in groups: get started, sending, finding people, inbound, your
+// agent, account, and everything Sellbird does. Wide: an index on the left.
+const SETUP_GROUPS = [
+  ['su-start', 'Get started'], ['su-sending', 'Sending'], ['su-finding', 'Finding people'], ['su-inbound', 'Inbound'],
+  ['su-agent', 'Your agent'], ['su-account', 'Account'], ['su-suite', 'Everything Sellbird does'],
+];
+function setupJump(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+  const h = el.querySelector('h2');
+  if (h) { h.setAttribute('tabindex', '-1'); h.focus({preventScroll: true}); }
+}
+let _setupIO = null;
+function watchSetupIndex() {
+  if (_setupIO) _setupIO.disconnect();
+  if (typeof IntersectionObserver === 'undefined') return;
+  const links = {};
+  document.querySelectorAll('.su-index a').forEach(a => { links[a.dataset.for] = a; });
+  _setupIO = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      Object.values(links).forEach(a => a.removeAttribute('aria-current'));
+      if (links[e.target.id]) links[e.target.id].setAttribute('aria-current', 'true');
+    });
+  }, {rootMargin: '-20% 0px -70% 0px'});
+  SETUP_GROUPS.forEach(([id]) => { const el = document.getElementById(id); if (el) _setupIO.observe(el); });
+}
+
 function setupHtml(st, engine, mode, setup) {
   st = st || {};
-  const row = (to, title, sub, tag, tone) => '<button type="button" class="row link" onclick="goTab(' + jsq(to) + ')">' +
+  const row = (to, title, sub, tag, tone) => '<div class="row rowlink">' +
     '<span class="who" aria-hidden="true">' + icon(SETUP_ICONS[to] || 'settings') + '</span>' +
-    '<div class="grow"><p class="t">' + title + '</p><p class="s">' + sub + '</p>' +
-    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>' + icon('chevron', 'chev') + '</button>';
-  const left = setup && setup.checks ? setup.checks.filter(c => c.required && !c.done).length : 0;
+    '<div class="grow"><p class="t"><a class="rowmain" href="#' + to + '" onclick="goTab(' + jsq(to) + ');return false">' + title + '</a></p><p class="s">' + sub + '</p></div>' +
+    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + icon('chevron', 'chev') + '</div>';
+  const steps = setupSteps(setup) || [];
+  const left = steps.filter(c => c.required && !c.done).length;
   const auto = mode && mode.mode === 'autopilot';
   const running = !!(engine && engine.running);
   const suite = _suite && !_suite.error ? _suite : null;
-  return '<div class="secs">' +
-    '<section class="sec span"><h2>Everything Sellbird does</h2><div class="w">' +
-      row('suite', suite ? suite.on + ' of ' + suite.total + ' parts of the suite on' : 'Every part of the suite',
-          'See every feature, what it does and what is left to switch on',
-          suite && suite.total > suite.on ? (suite.total - suite.on) + ' to go' : '', 'wait') +
-    '</div></section>' +
-    '<section class="sec"><h2>Your business</h2><div class="w">' +
-      row('company', 'Your company', 'What you sell, who you sell to, and the offer every first email ends with', '', '') +
+  const sig = steps.find(c => c.id === 'signals');
+  const sec = (id, title, inner, hint) => '<section class="sec" id="' + id + '"><h2>' + title + (hint ? ' <span class="h-right">' + hint + '</span>' : '') + '</h2>' + inner + '</section>';
+  const rail = setupRailHtml(setup, true);
+  const doneSteps = steps.filter(c => c.done).length;
+  const index = '<nav class="su-index" aria-label="Set up sections"><ol>' + SETUP_GROUPS.map(([id, name]) =>
+    '<li><a href="#setup" data-for="' + id + '" onclick="setupJump(\'' + id + '\');return false">' + escHtml(name) + '</a></li>').join('') + '</ol></nav>';
+  return '<div class="su">' + index + '<div class="secs one su-main">' +
+    sec('su-start', 'Get started', rail || '<p class="cal-hint">Couldn\'t read the setup steps.</p>', steps.length ? doneSteps + ' of ' + steps.length + ' done' : '') +
+    sec('su-sending', 'Sending', '<div class="w">' +
       row('inboxes', 'Inboxes', 'The addresses Sellbird sends from, and how much each has sent today', '', '') +
-      row('records', 'Email records', 'SPF, DKIM, DMARC and MX on each domain you send from, and what to fix', '', '') +
-    '</div></section>' +
-    '<section class="sec"><h2>Sending and the engine</h2><div class="w">' +
-      row('settings', 'Sending and keys', 'Approval or autopilot, your email provider, and the keys for checking addresses',
+      row('records', 'Domains and email records', 'SPF, DKIM, DMARC and MX on each domain you send from, and what to fix', '', '') +
+      row('settings', 'Sending mode and keys', 'Approval or autopilot, your email provider, and the keys for checking addresses',
           left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
       row('limits', 'Limits and rules', 'The stop button, daily limits, quiet hours, and anything that sends without you', '', '') +
-      row('neveremail', 'Opt-outs and bounces', 'Everyone Sellbird will never email again, and why', '', '') +
-      row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') +
+      row('neveremail', 'Opt-outs and bounces', 'Everyone Sellbird will never email again, and why', '', '') + '</div>') +
+    sec('su-finding', 'Finding people', '<div class="w">' +
+      row('company', 'Your company', 'What you sell, who you sell to, the offer every first email ends with, your address', '', '') +
+      row('signals', 'Signals', 'Your agent suggests what marks a good prospect; you confirm which ones count',
+          sig ? (sig.confirmed ? sig.confirmed + ' on' : sig.proposed ? sig.proposed + ' to confirm' : 'None yet') : '',
+          sig && sig.confirmed ? 'good' : sig && sig.proposed ? 'wait' : '') +
+      row('discover', 'Find businesses', 'Where Sellbird looks for companies, what each source costs, and a search you run', '', '') + '</div>') +
+    sec('su-inbound', 'Inbound', '<div class="w">' +
+      row('leads', 'Leads from your forms', 'Send your form\'s emails to an inbox Sellbird reads; each one becomes a lead', '', '') +
+      row('mentionsetup', 'Brand mentions', 'What Sellbird watches for, and where it looks', '', '') +
+      row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') + '</div>') +
+    sec('su-agent', 'Your agent', '<div class="w">' +
+      row('agent', 'Connect and permissions', 'Connect ' + escHtml(agentName()) + ', what it may do, everything it did, and the switch that cuts it off', '', '') + '</div>' +
+      '<div class="cant"><p class="cant-h">What ' + escHtml(agentName()) + ' can\'t do</p>' +
+      ['Approve or send an email, a reply or a text', 'Buy anything or start a paid search', 'Turn sending back on, or turn on autopilot',
+       'Let itself back in after you cut it off'].map(x => '<div>' + LOCK_SVG + '<span>' + x + '</span></div>').join('') +
+      '<p>Those stay your clicks, here.</p></div>') +
+    sec('su-account', 'Account', '<div class="w">' +
       row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
           engine ? (running ? 'Running' : 'Stopped') : '', running ? 'good' : '') +
-    '</div></section>' +
-    '<section class="sec"><h2>Connections and records</h2><div class="w">' +
-      row('agent', 'Your agent', 'What your coding agent may do, everything it did, and the switch that cuts it off', '', '') +
       row('events', 'Events and webhooks', 'Send every reply, new lead, booking and stage change to the tools you already use', '', '') +
       row('activity', 'Activity', 'Every action Sellbird took, newest first', '', '') +
       row('help', 'Help', 'How it works, where files live, and fixes for the usual problems', '', '') +
-    '</div></section>' +
-    '<section class="sec"><h2>This dashboard</h2><div class="w">' +
       '<div class="row"><div class="grow"><p class="t">Appearance</p><p class="s">Match your computer, or pick light or dark</p></div>' +
       '<div class="theme-switch" role="group" aria-label="Appearance">' +
         [['auto', 'Match your computer', 'monitor'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']].map(t =>
           '<button type="button" data-theme-opt="' + t[0] + '" onclick="setTheme(\'' + t[0] + '\')" title="' + t[1] +
           '" aria-label="' + t[1] + '">' + icon(t[2]) + '</button>').join('') + '</div></div>' +
       '<div class="row"><div class="grow"><a class="follow-link" href="https://x.com/sellbirdagent" target="_blank" rel="noopener" ' +
-        'title="News and updates on X">' + icon('x') + '<span>Follow @sellbirdagent for releases and the roadmap</span></a></div></div>' +
-    '</div></section>' +
-    '<section class="sec"><h2>What your agent can\'t do</h2><div class="cant">' +
-      ['Approve or send an email, a reply or a text', 'Buy anything or start a paid search', 'Turn sending back on, or turn on autopilot',
-       'Let itself back in after you cut it off'].map(x => '<div>' + LOCK_SVG + '<span>' + x + '</span></div>').join('') +
-      '<p>Those stay your clicks, here. <a href="#agent" onclick="goTab(\'agent\');return false">Everything it may do</a></p></div></section>' +
-    '</div>' +
+        'title="News and updates on X">' + icon('x') + '<span>Follow @sellbirdagent for releases and the roadmap</span></a></div></div></div>') +
+    sec('su-suite', 'Everything Sellbird does', '<div class="w">' +
+      row('suite', suite ? suite.on + ' of ' + suite.total + ' parts of the suite on' : 'Every part of the suite',
+          'See every feature, what it does and what is left to switch on',
+          suite && suite.total > suite.on ? (suite.total - suite.on) + ' to go' : '', 'wait') + '</div>') +
+    '</div></div>' +
     '<p class="ask">Your coding agent can do most of this for you. Ask it: <b>"Check my Sellbird setup and tell me what is left."</b></p>';
 }
 
-const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
+const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover', leads: 'inboxes', mentionsetup: 'message',
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
                      events: 'arrow', suite: 'sparkle', texting: 'message', records: 'check', neveremail: 'flag',
                      limits: 'alert', agent: 'sparkle'};
@@ -4015,8 +4283,8 @@ function leadRow(l) {
   const fields = Object.keys(l.fields || {}).filter(k => l.fields[k] && String(l.fields[k]) !== l.message)
     .map(k => '<p class="s"><b>' + escHtml(k) + '</b> ' + escHtml(l.fields[k]) + '</p>').join('');
   const open = l.status !== 'dismissed' && l.status !== 'held';
-  return '<div class="row lead-row"><span class="who" aria-hidden="true">' + icon(l.source === 'form' ? 'pen' : 'message') + '</span>' +
-    '<div class="grow"><p class="t">' + leadWho(l) + ' <span class="tag ' + a[1] + '">' + a[0] + '</span></p>' +
+  return '<div class="row lead-row' + (l.prospect_id ? ' rowlink' : '') + '"><span class="who" aria-hidden="true">' + icon(l.source === 'form' ? 'pen' : 'message') + '</span>' +
+    '<div class="grow"><p class="t">' + personLink(l.prospect_id, leadWho(l)) + ' <span class="tag ' + a[1] + '">' + a[0] + '</span></p>' +
       '<p class="s">' + escHtml(LEAD_SOURCE[l.source] || 'Other') + (l.form_name ? ' · ' + escHtml(l.form_name) : '') +
         ' · ' + (LEAD_VIA[l.via] || 'Added') + ' · ' + relTime(l.created_at) +
         (l.email && l.name ? ' · ' + escHtml(l.email) : '') + (l.phone ? ' · ' + escHtml(l.phone) : '') + '</p>' +
@@ -4049,15 +4317,9 @@ async function loadLeads() {
       : 'Nobody is waiting for an answer. A form fill or a lead your agent adds shows up here.',
     'Inbound');
   const file = escHtml(d.config_file || 'sellbird.yaml');
-  const r = (t, sub, tag, tone) => '<div class="row"><div class="grow"><p class="t">' + t + '</p><p class="s">' + sub + '</p></div>' +
-    (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>';
-  const senders = (d.form_senders || []).map(escHtml).join(', ');
-  el.innerHTML = '<div class="secs">' +
-    '<section class="sec"><h2>Open</h2><div class="w">' +
-      (open.map(leadRow).join('') || '<div class="row"><div class="grow"><p class="t">No open leads</p>' +
-        '<p class="s">A form fill or a lead your agent adds shows up here, with the answer drafted for it.</p></div></div>') +
-      '<p class="w-f">What a lead typed is shown as they typed it. Sellbird never acts on it, and nothing is sent until you approve the answer.</p></div></section>' +
-    '<section class="sec"><h2>Add a lead</h2><div class="w pad">' +
+  const setup = inboundStepsHtml(d, file);
+  const ready = d.reads_inbox && !!d.last_form_lead;
+  const addForm = '<section class="sec" id="lead-add"><h2>Add a lead by hand</h2><div class="w pad">' +
       '<div class="form-row"><div class="form-group"><label class="form-label" for="lead-email">Email</label>' +
         '<input class="form-input" id="lead-email" type="email" autocomplete="off" placeholder="pat@example.com"></div>' +
       '<div class="form-group"><label class="form-label" for="lead-name">Name</label>' +
@@ -4069,23 +4331,69 @@ async function loadLeads() {
       '<div class="form-row"><div class="form-group"><label class="form-label" for="lead-source">Where they came from</label>' +
         '<select class="form-input" id="lead-source">' + Object.keys(LEAD_SOURCE).map(k => '<option value="' + k + '">' + LEAD_SOURCE[k] + '</option>').join('') + '</select></div>' +
       '<button class="btn btn-primary btn-sm" onclick="addLead()">Add lead</button></div>' +
-      '<p class="form-hint">An email or a phone is enough. Adding a lead emails nobody: the first answer is drafted and waits in the Outbox.</p></div></section>' +
-    '<section class="sec"><h2>How leads arrive</h2><div class="w">' +
-      r('Form emails', !d.reads_inbox ? 'Sellbird reads an inbox only with Gmail, Microsoft 365 or SMTP. On Instantly, add leads by hand or through your agent.'
-          : 'Your form tool emails you each submission. Send those to an inbox Sellbird reads and each one becomes a lead. ' +
-            (senders ? 'Senders you listed: ' + senders + '.' : 'List the address your own site\'s form sends from under <code>inbound.form_senders</code> in ' + file + '.'),
-        d.reads_inbox ? 'Checked each cycle' : 'Off', d.reads_inbox ? 'good' : '') +
-      r('Form tools Sellbird knows', (d.known_senders || []).map(escHtml).join(', ') + '. Turn off with <code>inbound.known_form_tools: false</code>.',
-        d.known_form_tools ? 'On' : 'Off', d.known_form_tools ? 'good' : '') +
-      r('Your agent', 'It can add a lead from anywhere it can read, and draft the answer. Ask it: "Add the leads from my quote form."', 'On', 'good') +
-      r('First answers', d.draft_answers ? 'Sellbird drafts one on its next cycle, up to ' + (d.max_drafts_per_day || 0) + ' a day. Turn off with <code>inbound.draft_answers: false</code>.'
-          : 'Off. Leads are recorded and the answer is left to you or your agent.', d.draft_answers ? 'On' : 'Off', d.draft_answers ? 'good' : '') +
-      r('Approval', d.answers_wait_for_approval ? 'A first answer always waits for you, even on autopilot: the address was typed by a stranger.'
-          : 'First answers follow your sending mode (<code>inbound.answers_wait_for_approval: false</code>).',
-        d.answers_wait_for_approval ? 'Always waits' : 'Sending mode', d.answers_wait_for_approval ? 'acc' : 'wait') +
-      '<p class="w-f">Sellbird hosts no forms and needs no public address. It checks in; nothing has to reach it.</p></div></section>' +
-    (rest.length ? '<section class="sec"><h2>Earlier</h2><div class="w">' + rest.map(leadRow).join('') + '</div></section>' : '') +
-    '</div>';
+      '<p class="form-hint">An email or a phone is enough. Adding a lead emails nobody: the first answer is drafted and waits in the Outbox.</p></div></section>';
+  const openSec = '<section class="sec"><h2>Open <span class="h-right">' + open.length + '</span></h2><div class="w">' +
+      (open.map(leadRow).join('') || '<div class="row"><div class="grow"><p class="t">No open leads</p>' +
+        '<p class="s">A form fill or a lead your agent adds shows up here, with the answer drafted for it.</p></div></div>') +
+      '<p class="w-f">What a lead typed is shown as they typed it. Sellbird never acts on it, and nothing is sent until you approve the answer.</p></div></section>';
+  const rules = '<p class="ask">' + (d.draft_answers ? 'Sellbird drafts a first answer to each lead, up to ' + (d.max_drafts_per_day || 0) + ' a day' : 'First answers are left to you or your agent') +
+      (d.answers_wait_for_approval ? ', and every one waits for you, even on autopilot.' : ', following your sending mode.') +
+      ' Sellbird hosts no forms and needs no public address.</p>';
+  el.innerHTML = '<div class="secs one">' + (ready ? openSec + setup : setup + openSec) + addForm +
+    (rest.length ? '<section class="sec"><h2>Earlier <span class="h-right">' + rest.length + '</span></h2><div class="w">' + rest.map(leadRow).join('') + '</div></section>' : '') +
+    '</div>' + rules;
+}
+
+// Inbound as steps a person can follow: an inbox Sellbird reads, your form's
+// emails sent to it, and a test that shows it worked.
+function inboundStepsHtml(d, file) {
+  const addr = d.inbox_address || '';
+  const senders = d.form_senders || [];
+  const s1 = !!(d.reads_inbox && addr), s2 = senders.length > 0 || !!d.last_form_lead, s3 = !!d.last_form_lead;
+  const next = !s1 ? 1 : !s2 ? 2 : !s3 ? 3 : 0;
+  const step = (n, done, title, body) => '<li class="rstep ' + (done ? 'done' : n === next ? 'next' : 'todo') + '">' +
+    '<span class="rdot" aria-hidden="true">' + (done ? CHECK_SVG : n) + '</span><div class="rbody"><p class="t">' + title +
+    '<span class="sr-only">' + (done ? ', done' : '') + '</span></p>' + body + '</div></li>';
+  const main = n => n === next ? 'btn-primary' : 'btn-secondary';
+  return '<section class="sec" id="inbound-setup"><h2>' + (next ? 'Set up leads from your website' : 'Leads from your website') +
+    ' <span class="h-right">' + [s1, s2, s3].filter(Boolean).length + ' of 3 done</span></h2><ol class="rail">' +
+    step(1, s1, 'Connect an inbox Sellbird reads',
+      s1 ? '<p class="s">Sellbird reads <b>' + escHtml(addr) + '</b> each cycle.</p>'
+        : '<p class="s">' + (d.reads_inbox ? 'Connect the mailbox your form\'s emails will go to.'
+            : 'Sellbird reads an inbox only with Gmail, Microsoft 365 or SMTP. On Instantly, add leads by hand or through your agent.') + '</p>' +
+          '<div class="step-acts">' + fixBtn('Connect an inbox', 'inboxes', '', main(1)) + '</div>') +
+    step(2, s2, 'Send your form\'s emails there',
+      '<p class="s">In your form tool\'s notification settings, send each submission to ' +
+        (addr ? '<b>' + escHtml(addr) + '</b>. <button type="button" class="linkq" onclick="copyText(' + jsq(addr) + ')">Copy the address</button> ' : 'that inbox. ') +
+        (d.known_form_tools ? 'Emails from ' + escHtml((d.known_senders || []).slice(0, 4).join(', ')) + ' and other common form tools are recognised on their own.' : '') + '</p>' +
+      '<div class="form-group senders"><label class="form-label" for="form-senders">The address your own site\'s form sends from <span class="hint">one per line, if it isn\'t one of those</span></label>' +
+        '<textarea class="form-input" id="form-senders" rows="2" placeholder="forms@example.com">' + escHtml(senders.join('\n')) + '</textarea></div>' +
+      '<div class="step-acts"><button type="button" class="btn btn-sm ' + main(2) + '" onclick="saveFormSenders()">Save</button></div>' +
+      '<p class="s muted">Or in ' + file + ': <code>inbound.form_senders</code></p>') +
+    step(3, s3, 'Send a test',
+      s3 ? '<p class="s">It worked: a lead' + (d.last_form_lead.form_name ? ' from ' + escHtml(d.last_form_lead.form_name) : '') + ' arrived ' + relTime(d.last_form_lead.at) + '.</p>'
+        : '<p class="s">Fill in your own form once. The lead shows up here within one cycle, with its first answer drafted.</p>' +
+          '<div class="step-acts"><button type="button" class="btn btn-sm ' + main(3) + '" onclick="loadLeads()">Check again</button>' +
+          '<button type="button" class="btn btn-sm btn-ghost" onclick="goFix(\'leads\', \'lead-email\')">Or add a lead by hand</button></div>') +
+    '</ol></section>';
+}
+
+async function saveFormSenders() {
+  const v = document.getElementById('form-senders').value;
+  const list = splitLines(v);
+  if (list.some(x => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x) && !/^[^@\s]+\.[^@\s]+$/.test(x))) {
+    showToast('Each line is an email address or a domain.', 'error'); return;
+  }
+  const r = await api('/api/company', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                       body: JSON.stringify({section: 'inbound', fields: {form_senders: list}})});
+  if (r && r.success) { showToast('Saved. Sellbird reads emails from ' + (list.length ? 'those senders' : 'known form tools') + ' as leads.', 'success'); loadLeads(); }
+  else showToast((r && r.message) || 'Couldn\'t save.', 'error');
+}
+
+async function copyText(text) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
+  showToast(ok ? 'Copied.' : text, ok ? 'success' : 'info');
 }
 
 async function addLead() {
@@ -4236,7 +4544,9 @@ async function loadMentionSetup() {
     return '<div class="row"><div class="grow"><p class="t">' + escHtml(s.label) + '</p><p class="s">' + escHtml(s.cost) + '.' +
       (s.needs.length ? ' Needs <code>' + s.needs.map(escHtml).join('</code> and <code>') + '</code> in .env.' : '') +
       (!s.on ? ' Add <code>' + escHtml(s.key) + '</code> to <code>mentions.sources</code> in ' + file + ' to use it.' : '') + '</p></div>' +
-      '<span class="tag ' + state[1] + '">' + state[0] + '</span></div>';
+      '<span class="tag ' + state[1] + '">' + state[0] + '</span>' +
+      (s.on && !s.ready && s.needs.length ? fixBtn('Add the key', 'settings', '', 'btn-secondary') : '') +
+      (!s.on ? '<button type="button" class="btn btn-sm btn-ghost" onclick="copyPrompt(' + jsq('Turn on the ' + s.label + ' source for Sellbird mentions (add ' + s.key + ' to mentions.sources).') + ')">Ask your agent</button>' : '') + '</div>';
   }).join('');
   el.innerHTML = (d.last_problems ? '<div class="banner wait mode-banner">' + icon('alert') + '<div><b>The last check had a problem</b><p>' +
       escHtml(d.last_problems) + '. The other sources still ran.</p></div></div>' : '') +
@@ -4547,8 +4857,8 @@ function recordsHtml(d) {
   const domains = d.domains || [];
   if (!domains.length) {
     return '<div class="w">' + emptyState(icon('inboxes'), 'No sending address yet',
-      'Connect an inbox under <b>Set up, Inboxes</b>, or set <code>persona.email</code> in ' +
-      escHtml(d.config_file || 'sellbird.yaml') + '. Sellbird checks the domain after the @.') + '</div>';
+      'Connect an inbox and Sellbird checks the domain after the @. (Or set <code>persona.email</code> in ' +
+      escHtml(d.config_file || 'sellbird.yaml') + '.)<div class="banner-acts">' + fixBtn('Connect an inbox', 'inboxes', '', 'btn-primary') + '</div>') + '</div>';
   }
   const word = {ok: 'Ready', warn: 'Works, could be better', fail: 'Needs fixing', unknown: 'Could not check'};
   const tone = {ok: 'good', warn: 'wait', fail: 'bad', unknown: ''};
@@ -5067,6 +5377,350 @@ function labelTables(root) {
   }).observe(inner, {childList: true, subtree: true});
 })();
 
+// ══════════════════════════════════════════════════════════════
+// Feedback round (2026-11-24): ranges, charts, stat pages, the setup rail,
+// whole rows that open, and the full log.
+// ══════════════════════════════════════════════════════════════
+
+// ── One range for the session: 7, 30 or 90 days, or All ──
+const RANGES = [[7, '7 days'], [30, '30 days'], [90, '90 days'], [0, 'All']];
+function savedRange() {
+  try {
+    const raw = sessionStorage.getItem('sb-range');
+    if (raw !== null && RANGES.some(r => String(r[0]) === raw)) return Number(raw);
+  } catch { /* storage blocked: the default */ }
+  return 30;
+}
+let _rangeDays = savedRange();
+function setRange(days, then) {
+  _rangeDays = days;
+  try { sessionStorage.setItem('sb-range', String(days)); } catch { /* fine */ }
+  document.querySelectorAll('.rtabs .rtab').forEach(b => {
+    const on = Number(b.dataset.days) === days;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  then();
+}
+// Quiet text tabs. `fn` names the loader to run again.
+function rangeTabs(fn) {
+  return '<div class="rtabs" role="group" aria-label="Range">' + RANGES.map(r =>
+    '<button type="button" class="rtab' + (r[0] === _rangeDays ? ' on' : '') + '" data-days="' + r[0] +
+    '" aria-pressed="' + (r[0] === _rangeDays) + '" onclick="setRange(' + r[0] + ',' + fn + ')">' + r[1] + '</button>').join('') +
+    '</div>';
+}
+function rangeWords(days) { return days ? 'the last ' + days + ' days' : 'all time'; }
+function tzParam() { return '&tz=' + -new Date().getTimezoneOffset(); }
+function shortDay(iso) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+}
+function num(n) { return Number(n || 0).toLocaleString(); }
+
+// Change against the period before, signed, with the earlier figure.
+function changeHtml(now, before, days) {
+  if (before === null || before === undefined) return '<span class="delta">Since the first record</span>';
+  if (!before && !now) return '<span class="delta">None in the ' + days + ' days before either</span>';
+  if (!before) return '<span class="delta up">Up from none in the ' + days + ' days before</span>';
+  const pct = Math.round(100 * (now - before) / before);
+  const dir = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+  return '<span class="delta ' + dir + '">' + (pct > 0 ? '+' : pct < 0 ? '&minus;' : '') + Math.abs(pct) + '% vs the ' +
+    days + ' days before (' + num(before) + ')</span>';
+}
+
+// ── Charts: hand-built SVG, a crosshair and one tooltip for every series ──
+// Series colours follow the thing, never its rank: found is always slot 1.
+const SERIES_SLOT = {found: 1, sent: 2, replies: 3, meetings: 4};
+const _charts = {};
+const _chartRO = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(entries => {
+  for (const e of entries) {
+    const el = e.target;
+    if (!_charts[el.id] || el._w === Math.round(e.contentRect.width)) continue;
+    cancelAnimationFrame(el._raf);
+    el._raf = requestAnimationFrame(() => drawChart(el, _charts[el.id]));
+  }
+}) : null;
+
+// Past 120 days a point is a week, so the line stays readable.
+function binned(labels, values, every) {
+  if (every <= 1) return {labels: labels.slice(), values: (values || []).map(v => Number(v) || 0)};
+  const L = [], V = [];
+  for (let i = labels.length; i > 0; i -= every) {
+    const s = Math.max(0, i - every);
+    L.unshift(labels[s]);
+    V.unshift((values || []).slice(s, i).reduce((a, b) => a + (Number(b) || 0), 0));
+  }
+  return {labels: L, values: V};
+}
+function binOf(spec) { return spec.labels.length > 120 ? 7 : 1; }
+function niceMax(v) {
+  if (v <= 4) return 4;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 4, 5, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+function pointLabel(iso, every) { return every > 1 ? 'Week of ' + shortDay(iso) : shortDay(iso); }
+
+function chartHtml(id, spec) {
+  _charts[id] = spec;
+  return '<div class="chart" id="' + id + '" style="height:' + (spec.height || 220) + 'px"></div>' + chartTable(spec);
+}
+function chartTable(spec) {
+  const every = binOf(spec);
+  const cols = spec.series.map(s => ({label: s.label, ...binned(spec.labels, s.values, every)}));
+  if (!cols.length) return '';
+  const rows = cols[0].labels.map((d, i) => '<tr><td>' + escHtml(pointLabel(d, every)) + '</td>' +
+    cols.map(c => '<td class="num">' + num(c.values[i]) + '</td>').join('') + '</tr>').reverse().join('');
+  return '<details class="chart-table"><summary>Show the numbers</summary><div class="table-scroll"><table class="nowrap">' +
+    '<thead><tr><th>' + (every > 1 ? 'Week' : 'Day') + '</th>' + cols.map(c => '<th class="num">' + escHtml(c.label) + '</th>').join('') +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></details>';
+}
+function mountCharts(root) {
+  (root || document).querySelectorAll('.chart[id]').forEach(el => {
+    if (!_charts[el.id]) return;
+    drawChart(el, _charts[el.id]);
+    if (_chartRO && !el._observed) { _chartRO.observe(el); el._observed = true; }
+  });
+}
+
+function drawChart(el, spec) {
+  const w = Math.max(200, Math.round(el.clientWidth));
+  const h = el.clientHeight || spec.height || 220;
+  el._w = w;
+  const every = binOf(spec);
+  const shown = spec.series.filter(s => !s.hidden).map(s => ({...s, ...binned(spec.labels, s.values, every)}));
+  const labels = binned(spec.labels, [], every).labels;
+  const n = labels.length;
+  const top = Math.max(0, ...shown.flatMap(s => s.values));
+  const max = niceMax(Math.max(1, top));
+  const padL = 10 + 7 * num(max).length, padR = 14, padT = 14, padB = 26;
+  const x = i => padL + (n <= 1 ? (w - padL - padR) / 2 : i * (w - padL - padR) / (n - 1));
+  const y = v => padT + (h - padT - padB) * (1 - v / max);
+  const f = v => Math.round(v * 10) / 10;
+  let svg = '';
+  [0, max / 2, max].forEach(t => {
+    svg += '<line class="grid" x1="' + padL + '" x2="' + (w - padR) + '" y1="' + f(y(t)) + '" y2="' + f(y(t)) + '"/>' +
+      '<text class="tick" x="' + (padL - 8) + '" y="' + f(y(t) + 4) + '" text-anchor="end">' + num(t) + '</text>';
+  });
+  const xt = n > 2 ? [0, Math.floor((n - 1) / 2), n - 1] : n === 2 ? [0, 1] : [0];
+  xt.forEach((i, k) => {
+    const anchor = xt.length === 1 ? 'middle' : k === 0 ? 'start' : k === xt.length - 1 ? 'end' : 'middle';
+    svg += '<text class="tick" x="' + f(x(i)) + '" y="' + (h - 6) + '" text-anchor="' + anchor + '">' + escHtml(shortDay(labels[i])) + '</text>';
+  });
+  shown.forEach(s => {
+    const pts = s.values.map((v, i) => f(x(i)) + ',' + f(y(v)));
+    const line = 'M' + pts.join('L');
+    if (spec.area || shown.length === 1) {
+      svg += '<path class="area s' + s.slot + '" d="' + line + 'L' + f(x(n - 1)) + ',' + f(y(0)) + 'L' + f(x(0)) + ',' + f(y(0)) + 'Z"/>';
+    }
+    svg += '<path class="line s' + s.slot + '" d="' + line + '"/>';
+  });
+  shown.forEach(s => {
+    svg += '<circle class="end s' + s.slot + '" r="4" cx="' + f(x(n - 1)) + '" cy="' + f(y(s.values[n - 1] || 0)) + '"/>';
+  });
+  svg += '<line class="xh" y1="' + padT + '" y2="' + (h - padB) + '" x1="0" x2="0"/>' +
+    shown.map(s => '<circle class="hov s' + s.slot + '" r="4" cx="0" cy="0"/>').join('');
+  const total = shown.map(s => s.label + ' ' + num(s.values.reduce((a, b) => a + b, 0))).join(', ');
+  el.innerHTML = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" tabindex="0" role="img" aria-label="' +
+    escHtml((spec.title || 'Chart') + ', ' + rangeWords(spec.range) + ': ' + (total || 'nothing shown') + '. Arrow keys read each point.') +
+    '">' + svg + '</svg><div class="ctip" role="status" aria-live="polite"></div>';
+  if (!shown.length) {
+    el.insertAdjacentHTML('beforeend', '<p class="chart-none">Pick a series to show.</p>');
+    return;
+  }
+  const svgEl = el.firstChild, tip = el.querySelector('.ctip');
+  const xh = svgEl.querySelector('.xh'), dots = svgEl.querySelectorAll('.hov');
+  let at = -1;
+  const show = i => {
+    at = Math.max(0, Math.min(n - 1, i));
+    const cx = f(x(at));
+    xh.setAttribute('x1', cx); xh.setAttribute('x2', cx);
+    svgEl.classList.add('hovering');
+    shown.forEach((s, k) => { dots[k].setAttribute('cx', cx); dots[k].setAttribute('cy', f(y(s.values[at] || 0))); });
+    tip.innerHTML = '<span class="ct-d">' + escHtml(pointLabel(labels[at], every)) + '</span>' + shown.map(s =>
+      '<span class="ct-r"><i class="key s' + s.slot + '"></i><b>' + num(s.values[at]) + '</b><span>' + escHtml(s.label) + '</span></span>').join('');
+    tip.classList.add('on');
+    const tw = tip.offsetWidth;
+    tip.style.translate = Math.round(cx + 12 + tw > w ? cx - 12 - tw : cx + 12) + 'px 0';
+  };
+  const hide = () => { at = -1; svgEl.classList.remove('hovering'); tip.classList.remove('on'); };
+  svgEl.addEventListener('pointermove', e => {
+    const r = svgEl.getBoundingClientRect();
+    const step = n > 1 ? (w - padL - padR) / (n - 1) : 1;
+    show(Math.round((e.clientX - r.left - padL) / step));
+  });
+  svgEl.addEventListener('pointerleave', hide);
+  svgEl.addEventListener('blur', hide);
+  svgEl.addEventListener('keydown', e => {
+    const k = {ArrowRight: 1, ArrowLeft: -1}[e.key];
+    if (k) { e.preventDefault(); show(at < 0 ? n - 1 : at + k); }
+    else if (e.key === 'Home') { e.preventDefault(); show(0); }
+    else if (e.key === 'End') { e.preventDefault(); show(n - 1); }
+    else if (e.key === 'Escape') hide();
+  });
+}
+
+// ── Whole rows open what they are about ──
+// The row's own link (a.rowmain) stays the real link, for the keyboard and a
+// middle click. Anything else interactive inside the row keeps its own click.
+const ROW_INTERACTIVE = 'a, button, select, input, textarea, label, summary, details, [role="button"], [contenteditable]';
+document.addEventListener('click', e => {
+  const row = e.target.closest('.rowlink');
+  if (!row || e.target.closest(ROW_INTERACTIVE)) return;
+  const sel = window.getSelection && String(window.getSelection());
+  if (sel) return;   // selecting text is not opening
+  const a = row.querySelector('a.rowmain');
+  if (!a) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey) { window.open(a.href, '_blank', 'noopener'); return; }
+  a.click();
+});
+document.addEventListener('auxclick', e => {
+  if (e.button !== 1) return;
+  const row = e.target.closest('.rowlink');
+  if (!row || e.target.closest(ROW_INTERACTIVE)) return;
+  const a = row.querySelector('a.rowmain');
+  if (a) { e.preventDefault(); window.open(a.href, '_blank', 'noopener'); }
+});
+function personLink(id, label) {
+  if (!id) return label;
+  return '<a class="rowmain" href="#person/' + encodeURIComponent(id) + '" onclick="openPerson(' + jsq(id) + ');return false">' + label + '</a>';
+}
+function personName(r) {
+  return [r.first_name, r.last_name].filter(Boolean).map(escHtml).join(' ') || escHtml(r.email || r.to_email || '') || 'Unnamed';
+}
+
+// ── The stat pages: one number over time, and the records behind it ──
+const STAT_PAGES = {
+  found: {title: 'People found', unit: ['person found', 'people found'], list: 'Who was found',
+          none: 'Nobody was found in this range. Sellbird adds people as it reads company sites.'},
+  sent: {title: 'Emails sent', unit: ['email sent', 'emails sent'], list: 'What went out',
+         none: 'Nothing went out in this range. An email sends once you approve it.'},
+  replies: {title: 'Conversations', unit: ['new conversation', 'new conversations'], list: 'Who replied',
+            none: 'Nobody replied in this range.'},
+  meetings: {title: 'Meetings booked', unit: ['meeting booked', 'meetings booked'], list: 'Who booked',
+             none: 'No meetings were booked in this range.'},
+};
+function openStat(key) {
+  _statKey = own(STAT_PAGES, key) ? key : 'found';
+  showTab('stat');
+}
+async function loadStat() {
+  const key = _statKey, page = STAT_PAGES[key];
+  const el = document.getElementById('stat-body');
+  if (!el) return;
+  el.classList.add('refetch');
+  const d = await api('/api/stat/' + key + '?days=' + _rangeDays + tzParam());
+  el.classList.remove('refetch');
+  if (key !== _statKey || currentTab !== 'stat') return;
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read ' + page.title.toLowerCase(), escHtml(d.error)); return; }
+  const days = d.range;
+  const before = days ? d.previous : null;
+  const tone = before === null ? 'info' : d.total > before ? 'good' : d.total < before ? 'warn' : '';
+  const pct = before ? Math.round(100 * (d.total - before) / before) : null;
+  setAnswer('stat', toneBadge(tone, pct === null ? rangeWords(days).replace(/^the /, '') : (pct > 0 ? '+' : '') + pct + '%'),
+    num(d.total) + ' ' + (d.total === 1 ? page.unit[0] : page.unit[1]) + ' in ' + rangeWords(days) + '.', page.title);
+  document.title = page.title + ' · Sellbird';
+  const items = d.items || [];
+  el.innerHTML = '<div class="secs one"><section class="sec"><h2>' + escHtml(page.title) + ' over time</h2>' +
+    '<div class="statbar"><div class="hero"><b>' + num(d.total) + '</b>' + changeHtml(d.total, before, days) + '</div>' +
+      rangeTabs('loadStat') + '</div>' +
+    '<div class="chart-pad">' + chartHtml('stat-chart', {title: page.title, labels: d.days, range: days, area: true, height: 240,
+      series: [{key, label: page.title, slot: SERIES_SLOT[key], values: d.values}]}) + '</div></section>' +
+    '<section class="sec stat-list"><h2>' + escHtml(page.list) + ' <span class="hint">' +
+      (items.length >= 200 ? 'The newest 200' : num(items.length)) + '</span></h2><div class="w">' +
+      (items.length ? items.map(r => statRow(key, r)).join('')
+        : '<div class="row"><div class="grow"><p class="s">' + escHtml(page.none) + '</p></div></div>') +
+    '</div></section></div>';
+  mountCharts(el);
+}
+function statRow(key, r) {
+  const pid = key === 'found' ? r.id : r.prospect_id;
+  const name = personName(r);
+  let sub = '', tag = '';
+  if (key === 'found') {
+    sub = [r.title, r.company].filter(Boolean).map(escHtml).join(', ') || escHtml(r.email || '');
+    if (r.email_status) tag = '<span class="tag' + (r.email_status === 'verified' ? ' good' : r.email_status === 'risky' ? ' wait' : '') + '">' + escHtml(r.email_status) + '</span>';
+  } else if (key === 'sent') {
+    sub = escHtml(r.subject || '(no subject)') + (r.step > 1 ? ' · follow-up ' + escHtml(String(r.step - 1)) : '');
+  } else if (key === 'replies') {
+    sub = escHtml(r.company || r.email || '');
+    tag = own(STAGE_LABELS, r.stage) ? '<span class="tag">' + escHtml(STAGE_LABELS[r.stage]) + '</span>' : '';
+  } else {
+    sub = escHtml(r.company || '') + (r.starts_at ? ' · ' + escHtml(formatDate(r.starts_at)) : '');
+  }
+  return '<div class="row' + (pid ? ' rowlink' : '') + '"><span class="who" aria-hidden="true">' + initials(r.first_name, r.last_name) + '</span>' +
+    '<div class="grow"><p class="t">' + personLink(pid, name) + '</p>' + (sub ? '<p class="s">' + sub + '</p>' : '') + '</div>' +
+    tag + '<span class="time">' + relTime(r.at) + '</span>' + (pid ? icon('chevron', 'chev') : '') + '</div>';
+}
+
+// ── The full log ──
+async function loadLog() {
+  const el = document.getElementById('log-body');
+  if (!el) return;
+  const d = await api('/api/agent/report?limit=100');
+  if (d && !d.error && d.day) { _report = d; renderAgentChip(); }
+  const h1 = document.querySelector('#log .section-head h1');
+  if (h1) h1.textContent = 'What ' + agentName() + ' did';
+  if (!d) { el.innerHTML = offlineState(); return; }
+  el.innerHTML = logHtml(d.log || [], 'Nothing yet. Everything ' + agentName() + ' does through Sellbird, and everything you decide, shows up here.') +
+    ((d.log || []).length >= 100 ? '<p class="w-f">The newest 100. Set up, Activity has every action Sellbird took.</p>' : '');
+}
+
+// ── Today, in order: the answer, the numbers, finish setting up, needs you, the log ──
+async function loadTodayPage() {
+  const secs = document.getElementById('today-secs');
+  // The first time, the panels wait for all three answers and appear
+  // together, so nothing on screen moves as each one arrives.
+  if (secs && !secs.dataset.ready) secs.classList.add('pending');
+  loadRenameNotice();
+  loadTrend();
+  await Promise.all([loadToday(), loadSetupStatus(), loadTodayActivity()]);
+  if (secs) { secs.dataset.ready = '1'; secs.classList.remove('pending'); }
+}
+
+const SIGNALS_PROMPT = 'Look at what I sell in Sellbird and suggest the signals that mark a good prospect for me. ' +
+  'Propose them with signals_propose so I can confirm them on the Signals screen.';
+
+// The steps a person follows to finish setting up, with the next one as the
+// one primary button. Shared by Today and Set up.
+function setupSteps(data) {
+  if (!data || !Array.isArray(data.checks)) return null;
+  return data.checks.filter(c => c.required || c.shown);
+}
+function stepActions(c, primary) {
+  const main = primary ? 'btn-primary' : 'btn-secondary';
+  if (c.id === 'signals') {
+    return '<div class="step-acts">' + (c.proposed
+      ? '<button type="button" class="btn btn-sm ' + main + '" onclick="goTab(\'signals\')">Review ' + plural(c.proposed, 'signal', 'signals') + '</button>' +
+        '<button type="button" class="btn btn-sm btn-ghost" onclick="copyPrompt(SIGNALS_PROMPT)">Ask for more</button>'
+      : '<button type="button" class="btn btn-sm ' + main + '" onclick="copyPrompt(SIGNALS_PROMPT)">Ask your agent to suggest signals</button>' +
+        '<button type="button" class="btn btn-sm btn-ghost" onclick="goTab(\'signals\')">Open Signals</button>') + '</div>';
+  }
+  if (c.id === 'warmup_service') return warmupServiceActions(c);
+  if (c.recommend && !primary) return recommendHtml(c);
+  return '<div class="step-acts">' + (c.fix ? fixBtn(c.fix_label || 'Open', c.fix, c.field, main) : '') + '</div>' +
+    (c.recommend ? recommendHtml(c) : '');
+}
+function setupRailHtml(data, always) {
+  const steps = setupSteps(data);
+  if (!steps) return '';
+  const left = steps.filter(c => !c.done);
+  if (!left.length && !always) return '';
+  const next = steps.find(c => c.required && !c.done) || left[0];
+  return '<ol class="rail">' + steps.map((c, i) => {
+    const state = c.done ? 'done' : c === next ? 'next' : 'todo';
+    const why = state === 'next' || (c.id === 'signals' && !c.done);
+    return '<li class="rstep ' + state + '"><span class="rdot" aria-hidden="true">' + (c.done ? CHECK_SVG : String(i + 1)) + '</span>' +
+      '<div class="rbody"><p class="t">' + escHtml(c.label) + (c.required ? '' : '<span class="optional-tag">optional</span>') +
+        '<span class="sr-only">' + (c.done ? ', done' : state === 'next' ? ', next' : '') + '</span></p>' +
+        (why ? '<p class="s">' + escHtml(c.help) + '</p>' + stepActions(c, state === 'next') : '') +
+      '</div>' +
+      (state === 'todo' && c.id !== 'signals' && c.fix ? '<button type="button" class="linkq" onclick="goFix(' + jsq(c.fix) + (c.field ? ',' + jsq(c.field) : '') + ')">' +
+        escHtml(c.fix_label || 'Open') + icon('chevron', 'chev') + '</button>' : '') +
+      '</li>';
+  }).join('') + '</ol>';
+}
+
 // ── Init & live refresh ──
 
 document.body.classList.add('first-load');
@@ -5080,10 +5734,6 @@ setInterval(() => { if (!document.hidden && !_locked) loadAgentReport(); }, 3000
 // Agent status: quick poll (not while locked: it would only be refused)
 setInterval(() => { if (!_locked) loadSellbirdStatus(); }, 8000);
 
-// Live status panel: refreshed while the Today tab is open and visible.
-setInterval(() => {
-  if (!document.hidden && !_locked && currentTab === 'today') loadLiveStatus();
-}, 10000);
 
 // Nav counts stay live wherever you are, so "something needs me" is visible
 // from any tab without polling that tab's contents.
@@ -5100,7 +5750,7 @@ setInterval(async () => {
 setInterval(() => {
   if (document.hidden || _locked) return;
   switch (currentTab) {
-    case 'today': loadToday(); loadTrend(); loadFunnel(); loadRuns(); loadTodayActivity(); break;
+    case 'today': loadToday(); loadTrend(); loadSetupStatus(); loadTodayActivity(); break;
     case 'calendar': loadCalendar(); break;
     case 'numbers': loadNumbers(); break;
     case 'companies': if (!companyDrill) loadCompanies(); break;
@@ -5208,6 +5858,20 @@ async function loadCompany() {
     <div class="offer-actions"><button class="btn btn-primary btn-sm" onclick="saveCompanySection('persona')">Save</button></div>
   </section>
 
+  <section class="card company-card" aria-labelledby="co-law-h" id="co-law">
+    <div class="company-card-head"><h3 id="co-law-h">Booking and the law</h3>
+      <span class="hint">Under every cold email, and in replies to interested people</span></div>
+    <div class="form-group"><label class="form-label" for="co-c-address">Postal address <span class="hint">a street address, PO box or virtual mailbox you get mail at</span></label>
+      <input class="form-input" id="co-c-address" autocomplete="street-address" value="${ce((data.compliance || {}).postal_address || '')}" placeholder="100 Example Street, Springfield"></div>
+    <div class="form-group"><label class="form-label" for="co-c-optout">Opt-out line</label>
+      <input class="form-input" id="co-c-optout" value="${ce((data.compliance || {}).opt_out_line || '')}"></div>
+    <p class="desc">US law (CAN-SPAM) asks for both in every cold email. Sellbird adds them under each one; never to replies.</p>
+    <div class="offer-actions"><button class="btn btn-primary btn-sm" onclick="saveCompanySection('compliance')">Save</button></div>
+    <div class="form-group" style="margin-top:16px"><label class="form-label" for="co-o-booking">Booking link <span class="hint">offered to people who want to meet</span></label>
+      <input class="form-input" id="co-o-booking" type="url" value="${ce(o.booking_url || '')}" placeholder="https://cal.example.com/you/15min"></div>
+    <div class="offer-actions"><button class="btn btn-primary btn-sm" onclick="saveCompanySection('offer')">Save link</button></div>
+  </section>
+
   <section class="card company-card" aria-labelledby="co-obj-h">
     <div class="company-card-head"><h3 id="co-obj-h">Objections and answers</h3>
       <span class="hint">How replies handle pushback</span></div>
@@ -5264,6 +5928,11 @@ async function saveCompanySection(section, objectionsOnly) {
               company_size: v('co-i-size'), geography: splitLines(v('co-i-geo'))};
   } else if (section === 'persona') {
     fields = {name: v('co-s-name'), role: v('co-s-role'), tone: v('co-s-tone')};
+  } else if (section === 'compliance') {
+    fields = {postal_address: v('co-c-address'), opt_out_line: v('co-c-optout')};
+  } else if (section === 'offer') {
+    fields = {booking_url: v('co-o-booking').trim()};
+    if (fields.booking_url && !/^https:\/\//i.test(fields.booking_url)) { showToast('A booking link starts with https://', 'error'); return; }
   }
   const r = await api('/api/company', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                        body: JSON.stringify({section, fields})});
