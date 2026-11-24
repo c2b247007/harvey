@@ -42,7 +42,8 @@
 html, body { background: transparent; }
 body { font: 400 14px/20px var(--sans); color: var(--fg); -webkit-font-smoothing: antialiased; }
 
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; max-width: 640px; overflow: clip; }
+/* The card takes the whole width the host gives it; a cap only when the host is very wide. */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; width: 100%; max-width: 960px; overflow: clip; }
 /* One opacity fade on the first render, nothing that moves: the same with reduced motion. */
 .card.in { animation: fade 150ms ease-out both; }
 @keyframes fade { from { opacity: 0; } }
@@ -219,15 +220,16 @@ button:disabled { opacity: .55; cursor: default; }
     var font = vars && (vars['--font-sans'] || vars['--font-family']);
     if (font && /^[\w\s,'"-]+$/.test(font)) document.documentElement.style.setProperty('--sans', font);
   }
-  // The card's own size. Not the page's scrollHeight: that never drops below
-  // the frame's current height, so a card could only ever grow.
+  // The card's own height. Not the page's scrollHeight: that never drops below
+  // the frame's current height, so a card could only ever grow. Height only:
+  // a width would ask the host to shrink the frame to the card, and the card
+  // should fill whatever width the host gives it.
   var lastH = 0;
   function resized() {
-    var r = card.getBoundingClientRect();
-    var h = Math.ceil(r.height), w = Math.ceil(r.width);
+    var h = Math.ceil(card.getBoundingClientRect().height);
     if (h === lastH) return;
     lastH = h;
-    notify('ui/notifications/size-changed', {width: w, height: h});
+    notify('ui/notifications/size-changed', {height: h});
   }
 
   // Opening something in the dashboard, in one click, without the chat.
@@ -244,18 +246,26 @@ button:disabled { opacity: .55; cursor: default; }
     host.codex = info.client_type === 'codex_desktop' || /codex/i.test(String(info.name || ''));
     host.name = host.codex ? 'Codex' : /claude/i.test(String(info.name || '')) ? 'Claude' : String(info.title || info.name || '');
   }
+  // A tool on Sellbird's server, through the host. `reached` is false when the
+  // host refused or never answered: some hosts (Claude Code today) don't pass
+  // a card's tool calls on to the server at all.
   function call(name, page) {
     return rpc('tools/call', {name: name, arguments: {page: page || ''}}, 8000).then(function (r) {
       var res = result(r);
-      return (res && res.structuredContent) || {};
+      var s = (res && !res.isError && res.structuredContent) || {};
+      s.reached = !!(res && !res.isError && res.structuredContent);
+      return s;
     });
   }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function open(page, button, where) {
     if (button) button.disabled = true;
-    var navigate = function () { return call('dashboard_navigate', page).then(function (s) { return !!s.delivered; }); };
+    var reached = true;
+    var navigate = function () {
+      return call('dashboard_navigate', page).then(function (s) { if (!s.reached) reached = false; return !!s.delivered; });
+    };
     var viaLink = function () {
-      if (host.codex) return Promise.resolve(false);
+      if (host.codex || !reached) return Promise.resolve(false);
       return call('dashboard_open', page).then(function (s) {
         var u = s.url;
         if (!(u && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(u))) return false;
@@ -274,6 +284,7 @@ button:disabled { opacity: .55; cursor: default; }
       var old = where.querySelector('.fb'); if (old) old.remove();
       if (how === 'tab') status(where, 'Opened in your Sellbird tab.');
       else if (how === 'opened') status(where, 'Opened Sellbird in a new tab.');
+      else if (!reached) unpassed(where, page);
       else fallback(where);
       resized();
     }
@@ -296,11 +307,20 @@ button:disabled { opacity: .55; cursor: default; }
   }
   // No Sellbird tab is open, and the host didn't open one: one quiet line.
   function fallback(where) {
+    quiet(where, 'Open Sellbird in your side panel first, then click again.', 'Open Sellbird in your browser pane.');
+  }
+  // The host never passed the click to Sellbird, so no tab could hear it.
+  // Asking the agent works: its own call to dashboard_navigate goes through.
+  function unpassed(where, page) {
+    var app = host.name || 'This app';
+    quiet(where, app + ' doesn’t pass card clicks to Sellbird yet. Ask your agent instead.',
+          'Show ' + (page || 'today') + ' in my Sellbird tab.');
+  }
+  function quiet(where, text, prompt) {
     var box = el('div', 'fb quiet');
     box.setAttribute('role', 'status');
     var line = el('div', 'fbrow');
-    line.appendChild(el('p', 's', 'Open Sellbird in your side panel first, then click again.'));
-    var prompt = 'Open Sellbird in your browser pane.';
+    line.appendChild(el('p', 's', text));
     var pin = el('input', 'fbin sr'); pin.readOnly = true; pin.value = prompt; pin.tabIndex = -1;
     var pb = el('button', '', 'Copy prompt'); pb.type = 'button';
     pb.title = 'Copies \u201c' + prompt + '\u201d to paste to your agent';

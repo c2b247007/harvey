@@ -37,7 +37,9 @@ minor versions can still change behaviour.
   "go to" channel: only a page name travels, never a token or a code, and only
   signed-in tabs listen. With no tab open the app may open a one-use sign-in
   link (Codex won't: it opens only https links from a card); otherwise the card
-  says to open Sellbird first. A card never posts into the chat.
+  says to open Sellbird first. A card never posts into the chat. Claude Code
+  doesn't yet pass a card's clicks on to Sellbird; there the card says so and
+  offers a prompt to copy instead. Cards fill the width the app gives them.
 - **Set up in groups** (Get started, Sending, Finding people, Inbound, Your
   agent, Account, Everything Sellbird does) with an index when there is room.
   Whole rows open what they are about on People, Companies, Leads and Replies.
