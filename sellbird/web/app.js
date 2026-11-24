@@ -661,6 +661,10 @@ function showTab(id, opts) {
   const inner = document.getElementById('inner');
   if (inner) inner.classList.toggle('is-card', CARD_SCREENS.includes(id));
   renderScreenNav(id);
+  // The tab's title follows the page (a stat page sets its own once it loads).
+  const pageHead = document.querySelector('#' + id + ' .section-head h1');
+  const pageName = pageHead ? pageHead.textContent.trim() : '';
+  document.title = id === 'today' || !pageName ? 'Sellbird' : pageName + ' · Sellbird';
   if (!opts.fromHash) {
     const frag = '#' + (id === 'person' && _personId ? 'person/' + encodeURIComponent(_personId)
                         : id === 'stat' ? 'stat/' + _statKey : id);
@@ -4122,7 +4126,7 @@ async function loadSuite() {
             '" onclick="goTab(' + jsq(f.screen) + ')">' + SUITE_BUTTON[f.state] + '</button>' +
             (f.state !== 'on' ? '<span class="sc-hint">or ask your agent</span>' : '') + '</div>' : '') +
         '</div>').join('') + '</div></section>').join('') + '</div>' +
-    '<p class="ask">Phone line and hosted forms need an address the internet can reach, so they are in hosted Sellbird only. ' +
+    '<p class="ask">Phone line and hosted forms need an address the internet can reach, so they are coming with hosted Sellbird, not this app. ' +
     'Ask your agent: <b>"What is left to switch on in Sellbird?"</b></p>';
 }
 
@@ -5111,7 +5115,7 @@ async function loadAgentConnect() {
   }).join('');
   el.innerHTML = (rows || '<div class="row"><div class="grow"><p class="t">No agent found here</p><p class="s">Install Claude Code, Claude desktop or Codex, then come back.</p></div></div>') +
     '<p class="w-f">Your agent gets its own key, never yours, and no key goes into its settings. A copy of each settings file is kept before it changes. ' +
-    'ChatGPT and claude.ai in a browser can\'t reach Sellbird on this computer: use Codex, or hosted Sellbird.</p>';
+    'ChatGPT and claude.ai in a browser can\'t reach Sellbird on this computer: on a ChatGPT plan, use Codex.</p>';
 }
 
 async function connectAgent(agent, action, btn, otherFolder) {

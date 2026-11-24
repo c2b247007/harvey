@@ -642,7 +642,7 @@ def compliance_notice(config) -> str:
     if not missing:
         return ""
     return (
-        "Cold emails are going out without " + " or ".join(missing) + ". US law "
+        "Cold emails will go out without " + " or ".join(missing) + ". US law "
         "(CAN-SPAM) requires both in every cold email. Set them in sellbird.yaml "
         "(or sellbird.local.yaml if you trained Sellbird)."
     )

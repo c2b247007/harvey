@@ -456,7 +456,7 @@ FINDING_CHOICE_KEY = "finding_sources_choice"
 # Every part of the suite: where it lives, and what "on" means for it here.
 # A part that only the hosted product can do (it needs a public address) is
 # listed as such and has no button.
-SUITE_STATES = {"on": "On", "set": "Needs setting up", "off": "Off", "hosted": "In hosted Sellbird"}
+SUITE_STATES = {"on": "On", "set": "Needs setting up", "off": "Off", "hosted": "Coming with hosted Sellbird"}
 
 
 @app.get("/api/suite")

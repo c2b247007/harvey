@@ -228,7 +228,10 @@ def cmd_status(args):
 
         print("\n  Sellbird Pipeline Status")
         print("  " + "=" * 40)
-        print(f"  Prospects:            {summary['prospects']}")
+        by_status = summary.get("prospects") or {}
+        total = sum(by_status.values())
+        detail = ", ".join(f"{status} {n}" for status, n in sorted(by_status.items()) if n)
+        print(f"  Prospects:            {total}" + (f" ({detail})" if detail else ""))
         print(f"  Ready to write for:   {summary.get('writable_prospects', 0)} "
               "(new, with a verified or catch-all email)")
         write_failed = (summary.get("prospects") or {}).get("write_failed", 0)
@@ -847,6 +850,10 @@ def cmd_warmup(args):
     smtp_user = os.getenv("SMTP_USERNAME", "").strip() if email.provider == "smtp" else ""
     sender = smtp_user if "@" in smtp_user else config.persona.email
     domain = (args.domain or sender.rpartition("@")[2]).strip().lower().rstrip(".")
+    if not args.domain and domain == "yourcompany.com":     # the template's placeholder, not yours
+        print("\n  No sending address set yet (persona.email is still the example)."
+              "\n  Run 'sellbird setup', or pass your domain: sellbird warmup yourdomain.com\n")
+        raise SystemExit(1)
     if not d.DOMAIN_RE.match(domain):
         print("\n  No valid sending domain found. Pass one: sellbird warmup yourdomain.com\n")
         raise SystemExit(1)

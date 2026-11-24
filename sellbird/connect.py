@@ -35,7 +35,7 @@ NONE_FOUND = ("No agent found on this machine: no Claude Code, no Claude desktop
               "Install one, then run sellbird connect again. To add Sellbird by hand, "
               "sellbird mcp install --print shows the entry.")
 CHATGPT_NOTE = ("ChatGPT and claude.ai in a browser can't reach Sellbird on this machine. "
-                "Use Codex (it comes with a ChatGPT plan) or hosted Sellbird.")
+                "Use Codex: it comes with a ChatGPT plan.")
 AFTER = {
     "claude": "In Claude Code, start a new session and ask: \"Open Sellbird\".",
     "claude_desktop": ("In Claude desktop, quit it completely and open it again, then ask: "

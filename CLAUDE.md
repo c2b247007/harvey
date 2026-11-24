@@ -318,7 +318,7 @@ Leave `address_source` as `"unknown"`, since Sellbird builds most addresses from
 
 ### Step 8: Connect their agent
 
-Offer this once: `sellbird connect` adds Sellbird to every agent on the machine (Claude Code, Claude desktop, Codex) so they can ask "Open Sellbird" or "What needs me?" there. It shows the change and asks for a yes, so have them run it in their own terminal (or run it with them watching, never with `--yes` unless they said so). The dashboard has the same as buttons (Set up, Your agent, one Connect per agent); a pane you opened can't press them, so tell the user to click it in their own browser. Claude desktop needs a full quit and reopen afterwards. ChatGPT and claude.ai in a browser can't reach a local Sellbird: point ChatGPT users to Codex or hosted Sellbird. `sellbird connect --remove` undoes it.
+Offer this once: `sellbird connect` adds Sellbird to every agent on the machine (Claude Code, Claude desktop, Codex) so they can ask "Open Sellbird" or "What needs me?" there. It shows the change and asks for a yes, so have them run it in their own terminal (or run it with them watching, never with `--yes` unless they said so). The dashboard has the same as buttons (Set up, Your agent, one Connect per agent); a pane you opened can't press them, so tell the user to click it in their own browser. Claude desktop needs a full quit and reopen afterwards. ChatGPT and claude.ai in a browser can't reach a local Sellbird: point ChatGPT users to Codex. `sellbird connect --remove` undoes it.
 
 ### Step 9: Start Sellbird
 
