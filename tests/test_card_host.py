@@ -126,3 +126,71 @@ def test_the_card_fills_the_frame_and_reports_only_its_height(browser):
     sizes = [m["params"] for m in page.evaluate("window.seen") if m["method"] == "ui/notifications/size-changed"]
     assert sizes and all(set(s) == {"height"} for s in sizes)
     page.close()
+
+
+GO = {"url": "http://127.0.0.1:5555/api/navigate/card", "pass": "P" * 32}
+
+
+def _click_with_pass(browser, init, tools, answer):
+    """The card carries a pass. `answer` is what the dashboard says to its
+    direct post: {"delivered": ...}, or None when the app's sandbox blocks it."""
+    page = browser.new_page()
+    posts = []
+
+    def handle(route):
+        posts.append(json.loads(route.request.post_data or "{}"))
+        if answer is None:
+            return route.abort()
+        route.fulfill(status=200, content_type="application/json",
+                      headers={"access-control-allow-origin": "*"},
+                      body=json.dumps({"ok": True, "open_tabs": 1, "page": "outbox", **answer}))
+    page.route(GO["url"], handle)
+    page.set_content(HOST % (json.dumps(mcp_cards.card_html()).replace("</", "<\\/"), json.dumps({**CARD, "go": GO}),
+                             json.dumps(LINK), json.dumps(init), json.dumps(0), json.dumps("open"), json.dumps(tools)))
+    frame = page.frame_locator("#f")
+    frame.locator("button.pri").first.click()
+    page.wait_for_timeout(600)
+    return page, frame, posts
+
+
+def test_an_app_that_passes_tool_calls_on_never_uses_the_pass(browser):
+    page, frame, posts = _click_with_pass(browser, CODEX, "pass", {"delivered": True})
+    assert _calls(page) == ["dashboard_navigate"] and posts == []
+    assert frame.locator(".fb").inner_text().strip() == "Opened in your Sellbird tab."
+    page.close()
+
+
+def test_when_the_app_drops_the_tool_call_the_card_posts_its_pass_straight_to_the_dashboard(browser):
+    page, frame, posts = _click_with_pass(browser, CLAUDE, "refuse", {"delivered": True})
+    assert _calls(page) == ["dashboard_navigate"]                        # no link, no chat message
+    assert posts == [{"pass": GO["pass"], "page": "outbox"}]             # only the pass and a page
+    assert frame.locator(".fb").inner_text().strip() == "Opened in your Sellbird tab."
+    page.close()
+
+
+def test_a_direct_post_with_no_tab_open_says_to_open_sellbird_first(browser):
+    page, frame, posts = _click_with_pass(browser, CLAUDE, "refuse", {"delivered": False})
+    assert len(posts) == 1 and "ui/open-link" not in _calls(page)
+    assert "Open Sellbird in your side panel first, then click again." in frame.locator(".fb").inner_text()
+    page.close()
+
+
+def test_a_blocked_direct_post_falls_back_to_the_prompt(browser):
+    page, frame, posts = _click_with_pass(browser, CLAUDE, "refuse", None)
+    assert len(posts) == 1
+    assert "Claude doesn’t pass card clicks to Sellbird yet. Ask your agent instead." in frame.locator(".fb").inner_text()
+    assert frame.locator(".fb button").inner_text() == "Copy prompt"
+    page.close()
+
+
+def test_a_pass_for_somewhere_other_than_this_machines_dashboard_is_ignored(browser):
+    page = browser.new_page()
+    hits = []
+    page.route("**/*", lambda r: (hits.append(r.request.url), r.continue_()) if "example" in r.request.url else r.continue_())
+    bad = {**CARD, "go": {"url": "https://evil.example/api/navigate/card", "pass": "P" * 32}}
+    page.set_content(HOST % (json.dumps(mcp_cards.card_html()).replace("</", "<\\/"), json.dumps(bad),
+                             json.dumps(LINK), json.dumps(CLAUDE), json.dumps(0), json.dumps("open"), json.dumps("refuse")))
+    page.frame_locator("#f").locator("button.pri").first.click()
+    page.wait_for_timeout(500)
+    assert hits == []
+    page.close()

@@ -304,6 +304,30 @@ def is_loopback(host: str) -> bool:
 # person can click there. The person sees the pane, and chooses to use it.
 
 PANE_PATH = "/api/pane/redeem"
+
+# ── A card's click, posted straight from the card ──
+# The one route reachable cross-origin, for apps that don't pass a card's tool
+# calls on (Claude Code). It needs a card pass, which can only switch the page
+# of dashboard tabs already open and signed in (dashboard._CardPasses). Only
+# a card's own origins are let in: an opaque sandbox ("null") or an https
+# page. No cookies are used here, so no credentials are allowed.
+CARD_NAV_PATH = "/api/navigate/card"
+
+
+def card_origin_ok(origin: str) -> bool:
+    if origin == "null":
+        return True
+    return bool(re.fullmatch(r"https://[a-z0-9.-]+(:\d{1,5})?", origin.lower()))
+
+
+def card_cors_headers(origin: str) -> list[tuple[bytes, bytes]]:
+    return [(b"access-control-allow-origin", origin.encode("latin-1")),
+            (b"access-control-allow-methods", b"POST"),
+            (b"access-control-allow-headers", b"content-type"),
+            # A card on a public https page reaching 127.0.0.1 (Private Network Access).
+            (b"access-control-allow-private-network", b"true"),
+            (b"access-control-max-age", b"600"),
+            (b"vary", b"Origin")]
 CODE_SECONDS = 120
 PANE_SESSION_SECONDS = 12 * 3600
 MAX_OPEN_CODES = 10
@@ -477,6 +501,28 @@ class DashboardGuard:
             return await deny(400, "bad_host",
                               "This dashboard only answers to localhost / 127.0.0.1.")
         host_header = hosts[0].lower()
+
+        # A card's click (CARD_NAV_PATH): its own rules, a pass in the body
+        # instead of a token. Nothing else is reachable this way.
+        if path == CARD_NAV_PATH and method in ("POST", "OPTIONS"):
+            origins = headers.get("origin", [])
+            origin = origins[0] if len(origins) == 1 else ""
+            if not card_origin_ok(origin):
+                return await deny(403, "cross_origin", "Only a Sellbird card can post here.")
+            cors = card_cors_headers(origin)
+            if method == "OPTIONS":
+                await send_secured({"type": "http.response.start", "status": 204,
+                                    "headers": [(b"content-length", b"0"), *cors]})
+                return await send_secured({"type": "http.response.body", "body": b""})
+            if not _is_json(headers.get("content-type", [""])[0]):
+                return await deny(415, "unsupported_media_type", "Request bodies must be application/json.", extra=cors)
+
+            async def send_card(message):
+                if message["type"] == "http.response.start":
+                    message = {**message, "headers": [*message.get("headers", []), *cors]}
+                await send_secured(message)
+            scope.setdefault("state", {})["principal"] = "card"
+            return await self.app(scope, receive, send_card)
 
         # 2. Browser provenance.
         public = is_public_path(method, path)

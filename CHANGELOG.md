@@ -38,8 +38,13 @@ minor versions can still change behaviour.
   signed-in tabs listen. With no tab open the app may open a one-use sign-in
   link (Codex won't: it opens only https links from a card); otherwise the card
   says to open Sellbird first. A card never posts into the chat. Claude Code
-  doesn't yet pass a card's clicks on to Sellbird; there the card says so and
-  offers a prompt to copy instead. Cards fill the width the app gives them.
+  doesn't yet pass a card's clicks on to Sellbird, so each card also carries a
+  pass and posts the click straight to the dashboard (`POST
+  /api/navigate/card`, the one route open cross-origin). A pass can only
+  switch the page of a tab that is already open and signed in, lasts 30
+  minutes, and stops working when you switch your agent off. Where the app's
+  browser won't let a card reach this machine, the card says so and offers a
+  prompt to copy instead. Cards fill the width the app gives them.
 - **Set up in groups** (Get started, Sending, Finding people, Inbound, Your
   agent, Account, Everything Sellbird does) with an index when there is room.
   Whole rows open what they are about on People, Companies, Leads and Replies.

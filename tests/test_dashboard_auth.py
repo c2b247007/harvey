@@ -81,6 +81,11 @@ def _protected_requests():
         # its own refusals are in test_agent_pane_and_cards.
         if route.path == "/api/pane/redeem":
             continue
+        # A card's click carries a pass, not the token, and comes from the
+        # card's own origin, by design; it can only switch an open tab's page.
+        # Its refusals (bad origin, pass, page, rate) are in test_navigate.
+        if route.path == auth.CARD_NAV_PATH:
+            continue
         path = re.sub(r"\{[^}]+\}", "x", route.path)
         for method in sorted(route.methods - {"HEAD"}):
             out.append((method, path))

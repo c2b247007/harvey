@@ -1,11 +1,14 @@
 """Sellbird Dashboard — local web UI to set up, control, and monitor Sellbird."""
 
 import asyncio
+import hashlib
+import hmac
 import ipaddress
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import signal
 import stat
@@ -2337,14 +2340,7 @@ class _NavBus:
 _nav = _NavBus()
 
 
-@app.post("/api/navigate")
-async def navigate(request: Request):
-    """Show `page` in every open dashboard tab. Answers whether one switched."""
-    from sellbird.mcp_cards import page_for
-    body = await _json_body(request)
-    screen = page_for(str(body.get("page") or ""))
-    if screen is None:
-        return JSONResponse({"ok": False, "message": "That isn't a page."}, status_code=400)
+async def _go(screen: str) -> dict:
     if not _nav.open_tabs():
         return {"ok": True, "delivered": False, "open_tabs": 0, "page": screen}
     seq = _nav.push(screen)
@@ -2354,6 +2350,93 @@ async def navigate(request: Request):
             return {"ok": True, "delivered": True, "open_tabs": _nav.open_tabs(), "page": screen}
         await asyncio.sleep(0.05)
     return {"ok": True, "delivered": False, "open_tabs": _nav.open_tabs(), "page": screen}
+
+
+@app.post("/api/navigate")
+async def navigate(request: Request):
+    """Show `page` in every open dashboard tab. Answers whether one switched."""
+    from sellbird.mcp_cards import page_for
+    body = await _json_body(request)
+    screen = page_for(str(body.get("page") or ""))
+    if screen is None:
+        return JSONResponse({"ok": False, "message": "That isn't a page."}, status_code=400)
+    return await _go(screen)
+
+
+# ── A card's own way in, for apps that don't pass a card's clicks on ──
+# Claude Code answers a card's tool calls itself, so dashboard_navigate never
+# runs from there. Each card carries a pass instead and posts it here
+# directly (the one route the guard lets in cross-origin, CARD_NAV_PATH).
+# A pass can do one thing: queue a page switch for tabs that are already open
+# and signed in. It reads nothing and changes nothing else. It lives 30
+# minutes, only in this process's memory (a restarted dashboard forgets every
+# pass), only its digest is kept, and it is never a token, key or code.
+
+class _CardPasses:
+    SECONDS = 1800
+    MAX = 200                   # passes held at once; the oldest go first
+    RATE = (20, 10.0)           # at most 20 card clicks every 10 seconds
+
+    def __init__(self):
+        self.passes: dict[str, float] = {}      # sha256 -> expiry (monotonic)
+        self.hits: list[float] = []
+
+    def _prune(self, now: float) -> None:
+        self.passes = {d: at for d, at in self.passes.items() if at > now}
+
+    def issue(self) -> str:
+        now = time.monotonic()
+        self._prune(now)
+        while len(self.passes) >= self.MAX:
+            self.passes.pop(min(self.passes, key=self.passes.get))
+        value = secrets.token_urlsafe(24)
+        self.passes[hashlib.sha256(value.encode()).hexdigest()] = now + self.SECONDS
+        return value
+
+    def check(self, value) -> bool:
+        if not isinstance(value, str) or not 16 <= len(value) <= 64:
+            return False
+        now = time.monotonic()
+        self._prune(now)
+        digest = hashlib.sha256(value.encode()).hexdigest()
+        return any(hmac.compare_digest(digest, d) for d in self.passes)
+
+    def allow(self) -> bool:
+        now = time.monotonic()
+        self.hits = [t for t in self.hits if now - t < self.RATE[1]]
+        if len(self.hits) >= self.RATE[0]:
+            return False
+        self.hits.append(now)
+        return True
+
+
+_card_passes = _CardPasses()
+
+
+@app.post("/api/navigate/pass")
+async def navigate_pass(request: Request):
+    """A pass for a card: it can only switch the page of open dashboard tabs."""
+    if getattr(request.state, "principal", "user") not in ("agent", "user"):
+        return _refuse("Only your agent or you can make a card pass.", 403)
+    return {"ok": True, "pass": _card_passes.issue(), "expires_in": _CardPasses.SECONDS,
+            "path": auth.CARD_NAV_PATH}
+
+
+@app.post(auth.CARD_NAV_PATH)
+async def navigate_card(request: Request):
+    """A card's click, with its pass: show `page` in the open dashboard tabs."""
+    from sellbird.mcp_cards import page_for
+    if not _card_passes.allow():
+        return JSONResponse({"ok": False, "message": "Too many clicks. Try again in a moment."}, status_code=429)
+    body = await _json_body(request)
+    # Passes come from your agent: with its access switched off, none work.
+    if not _card_passes.check(body.get("pass")) or await _agent_is_off():
+        return JSONResponse({"ok": False, "message": "This card has expired. Ask your agent to show it again."},
+                            status_code=403)
+    screen = page_for(str(body.get("page") or ""))
+    if screen is None:
+        return JSONResponse({"ok": False, "message": "That isn't a page."}, status_code=400)
+    return await _go(screen)
 
 
 def _tab_id(value) -> str:

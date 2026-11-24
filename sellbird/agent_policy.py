@@ -76,6 +76,7 @@ AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", r"/api/campaigns/[^/]+/report"),
     ("POST", r"/api/pane/code"),                # a one-use sign-in link for its browser pane; never the token
     ("POST", r"/api/navigate"),                 # shows a page in a dashboard tab you have open; changes nothing
+    ("POST", r"/api/navigate/pass"),            # a card's pass: it can only switch the page of an open tab
     ("GET", r"/api/leads"),
     ("POST", r"/api/leads"),                    # a person and a record; sends nothing
     ("POST", r"/api/leads/[^/]+/answer"),       # a draft; only you approve it
@@ -143,6 +144,7 @@ ROUTE_WORDS: tuple[tuple[str, str], ...] = (
     (r"/api/campaigns/[^/]+/report", "Read one campaign's numbers"),
     (r"/api/pane/code", "Make a one-use link to open the dashboard in its browser pane"),
     (r"/api/navigate", "Show a page in the dashboard tab you have open"),
+    (r"/api/navigate/pass", "Let a card switch the page of the dashboard tab you have open"),
     (r"/api/leads", "Read leads, or add one"),
     (r"/api/leads/[^/]+/answer", "Draft a first answer to a lead for you to approve"),
     (r"/api/mentions", "Read brand mentions"),

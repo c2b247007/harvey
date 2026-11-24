@@ -302,14 +302,34 @@ def as_text(card: dict) -> str:
     return "\n".join(lines)
 
 
+# A card may post its click straight to the dashboard on this machine (see
+# dashboard.navigate_card), for apps that don't pass its tool calls on.
+CARD_CSP = {"connectDomains": ["http://127.0.0.1:*", "http://localhost:*"]}
+
+
 def register(server, guarded, read) -> None:
     """Add the pane tool, the card tools and the card resources to ``server``."""
+
+    async def with_go(card: dict) -> dict:
+        """A card's pass and where to post it: it can only switch the page of
+        a dashboard tab already open. Without one the card still works."""
+        async def call(c):
+            base, _ = await c._connection()
+            made = await c.post("/api/navigate/pass")
+            return {"url": base + made["path"], "pass": made["pass"]} if made.get("pass") else {}
+        try:
+            go = await guarded(call)
+        except Exception:
+            go = {}
+        if go.get("pass") and go.get("url"):
+            card["go"] = {"url": go["url"], "pass": go["pass"]}
+        return card
 
     for key, uri in CARD_URIS.items():
         def make(uri=uri, key=key):
             @server.resource(uri, name=f"sellbird-{key}-card", mime_type=APP_MIME,
                              description=f"The Sellbird {key.replace('_', ' ')} card",
-                             meta={"ui": {"prefersBorder": False}})
+                             meta={"ui": {"prefersBorder": False, "csp": CARD_CSP}})
             def card_resource() -> str:
                 return card_html()
         make()
@@ -372,7 +392,7 @@ def register(server, guarded, read) -> None:
         report = await read("/api/agent/report?limit=1")
         card = today_card(today, suite, numbers if not numbers.get("error") else None,
                           report if report.get("day") else None)
-        return _result(as_text(card), card)
+        return _result(as_text(card), await with_go(card))
 
     @server.tool(meta={"ui": {"resourceUri": CARD_URIS["needs_you"]}})
     async def show_needs_you() -> CallToolResult:
@@ -386,7 +406,7 @@ def register(server, guarded, read) -> None:
         conversations = conversations.get("result", conversations) if isinstance(conversations, dict) else conversations
         card = needs_you_card(outbox, conversations, await read("/api/leads"),
                               await read("/api/social"), await read("/api/texting"))
-        return _result(as_text(card), card)
+        return _result(as_text(card), await with_go(card))
 
     @server.tool(meta={"ui": {"resourceUri": CARD_URIS["campaign"]}})
     async def show_campaign_report(campaign_id: str = "latest") -> CallToolResult:
@@ -397,4 +417,4 @@ def register(server, guarded, read) -> None:
             return _result(report.get("message") or "There is no such campaign.", {"ok": False})
         numbers = await read(f"/api/numbers?days=30&campaign={quote(str(report['id']), safe='')}")
         card = campaign_card(report, numbers if not numbers.get("error") else None)
-        return _result(as_text(card), card)
+        return _result(as_text(card), await with_go(card))

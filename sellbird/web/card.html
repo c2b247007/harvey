@@ -241,6 +241,22 @@ button:disabled { opacity: .55; cursor: default; }
   //  3. Neither: one quiet line saying to open Sellbird first, with a prompt
   //     to copy. The card never posts into the chat.
   var host = {name: '', codex: false};
+  // The card's pass, from the tool result: it can only switch the page of a
+  // Sellbird tab already open. Posted straight to the dashboard when the app
+  // doesn't pass the card's tool calls on.
+  var go = null;
+  function direct(page) {
+    if (!go || !window.fetch) return Promise.resolve(null);
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 5000);
+    return fetch(go.url, {method: 'POST', mode: 'cors', credentials: 'omit', cache: 'no-store',
+                          headers: {'content-type': 'application/json'},
+                          body: JSON.stringify({pass: go.pass, page: page || ''}),
+                          signal: ctl ? ctl.signal : undefined})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) { clearTimeout(timer); return s && typeof s.delivered === 'boolean' ? s : null; },
+            function () { clearTimeout(timer); return null; });
+  }
   function learnHost(res) {
     var info = (res && res.hostInfo) || {};
     host.codex = info.client_type === 'codex_desktop' || /codex/i.test(String(info.name || ''));
@@ -260,12 +276,12 @@ button:disabled { opacity: .55; cursor: default; }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function open(page, button, where) {
     if (button) button.disabled = true;
-    var reached = true;
+    var reached = true, tools = true;    // the click reached Sellbird; the app passes tool calls on
     var navigate = function () {
-      return call('dashboard_navigate', page).then(function (s) { if (!s.reached) reached = false; return !!s.delivered; });
+      return call('dashboard_navigate', page).then(function (s) { if (!s.reached) reached = tools = false; return !!s.delivered; });
     };
     var viaLink = function () {
-      if (host.codex || !reached) return Promise.resolve(false);
+      if (host.codex || !tools) return Promise.resolve(false);
       return call('dashboard_open', page).then(function (s) {
         var u = s.url;
         if (!(u && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(u))) return false;
@@ -277,7 +293,14 @@ button:disabled { opacity: .55; cursor: default; }
         });
       });
     };
-    navigate().then(function (yes) { return yes ? 'tab' : viaLink().then(function (ok) { return ok ? 'opened' : 'none'; }); })
+    // 1. The app's own tool call (Codex). 2. If the app never passed it on,
+    //    the card posts it straight to the dashboard with its pass.
+    //    3. Then a link, or the quiet line.
+    var first = navigate().then(function (yes) {
+      if (yes || reached) return yes;
+      return direct(page).then(function (s) { if (s) reached = true; return !!(s && s.delivered); });
+    });
+    first.then(function (yes) { return yes ? 'tab' : viaLink().then(function (ok) { return ok ? 'opened' : 'none'; }); })
       .then(function (how) { finish(how); }, function () { finish('none'); });
     function finish(how) {
       if (button) button.disabled = false;
@@ -384,6 +407,7 @@ button:disabled { opacity: .55; cursor: default; }
   }
 
   function render(data) {
+    go = (data && data.go && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/api\/navigate\/card$/.test(data.go.url || '')) ? data.go : null;
     if (!data || typeof data !== 'object') return;
     card.textContent = '';
     if (firstRender) { card.classList.add('in'); firstRender = false; }

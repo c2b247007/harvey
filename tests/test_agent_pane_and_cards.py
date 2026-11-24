@@ -160,6 +160,38 @@ async def test_the_card_tools_carry_a_ui_resource_and_plain_text():
         # The one tool a card calls opens the dashboard; it never calls one that acts.
         import re
         assert set(re.findall(r"call\('([a-z_]+)'", html)) == {"dashboard_open", "dashboard_navigate"}
+        # The card may reach the dashboard on this machine, and nothing else.
+        assert resources[uri].meta["ui"]["csp"] == {"connectDomains": ["http://127.0.0.1:*", "http://localhost:*"]}
+        assert (await server.read_resource(uri))[0].meta["ui"]["csp"] == resources[uri].meta["ui"]["csp"]
+        # Its one direct post goes only to that route, and only with a page and its pass.
+        assert re.findall(r"fetch\(([^,]+),", html) == ["go.url"]
+        assert "/api\\/navigate\\/card$/" in html
+
+
+@pytest.mark.asyncio
+async def test_a_card_carries_a_pass_that_only_navigates(client, agent, monkeypatch):  # noqa: F811
+    from sellbird import mcp_server
+    monkeypatch.setattr(dash, "_card_passes", dash._CardPasses())
+
+    class Client:
+        async def _connection(self):
+            return "http://127.0.0.1:5555", None
+
+        async def post(self, path, body=None, timeout=None):
+            return agent.post(path, json=body or {}).json()
+
+    async def guarded(call):
+        return await call(Client())
+
+    async def read(path):
+        return agent.get(path).json()
+    server = mcp_server.MCPServer("t")
+    mcp_cards.register(server, guarded, read)
+    out = await server.call_tool("show_today", {})
+    go = out.structured_content["go"] if hasattr(out, "structured_content") else out[1]["go"]
+    assert go["url"] == "http://127.0.0.1:5555/api/navigate/card"
+    assert dash._card_passes.check(go["pass"])
+    assert go["pass"] not in str(out.content)            # the plain text never carries it
 
 
 def test_the_cards_shape_real_answers_and_never_offer_to_approve():

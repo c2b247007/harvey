@@ -157,7 +157,9 @@ def test_the_allowlist_is_reads_estimates_pause_and_offer_proposals_only():
                      # A one-use sign-in link for the agent's browser pane: never the token.
                      "/api/pane/code",
                      # Which page a dashboard tab you have open shows. Nothing else changes.
-                     "/api/navigate")
+                     "/api/navigate",
+                     # A card's pass: it too can only switch the page of an open tab.
+                     "/api/navigate/pass")
     for method, pattern in agent_policy.AGENT_ROUTES:
         assert method == "GET" or pattern in allowed_posts
     assert not agent_policy.agent_may("POST", "/api/offer")
