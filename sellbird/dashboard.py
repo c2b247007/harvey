@@ -408,6 +408,98 @@ async def get_setup_status():
 
 FINDING_CHOICE_KEY = "finding_sources_choice"
 
+# Every part of the suite: where it lives, and what "on" means for it here.
+# A part that only the hosted product can do (it needs a public address) is
+# listed as such and has no button.
+SUITE_STATES = {"on": "On", "set": "Needs setting up", "off": "Off", "hosted": "In hosted Sellbird"}
+
+
+@app.get("/api/suite")
+async def get_suite():
+    """Everything Sellbird does, each part with its state (on, needs setting
+    up, off) and the screen that sets it up. Read only."""
+    from sellbird import texting
+    from sellbird.integrations import trulyinbox as ti
+    try:
+        state = _state()
+        await state.init_db()
+        config = _events_config()
+
+        async def count(sql: str) -> int:
+            rows = await query_db(sql)
+            return int(rows[0]["n"]) if rows else 0
+
+        setup = await get_setup_status()
+        sending_ready = isinstance(setup, dict) and setup.get("percent", 0) == 100
+        warmup = bool(await ti.get_choice(state)) or bool(os.getenv("TRULYINBOX_API_KEY", "").strip()) \
+            or bool((_read_env_file().get("TRULYINBOX_API_KEY") or "").strip())
+        companies = await count("SELECT COUNT(*) AS n FROM companies")
+        campaigns = await count("SELECT COUNT(*) AS n FROM campaigns")
+        codes = await state.get_signal_codes()
+        confirmed = sum(1 for c in codes if c.get("status") == "confirmed")
+        proposed = sum(1 for c in codes if c.get("status") == "proposed")
+        social_on = len(await state.active_social_playbooks())
+        leads = await count("SELECT COUNT(*) AS n FROM leads")
+        watches = len(await state.get_mention_watches(active_only=True))
+        inbound = getattr(config, "inbound", None)
+        form_senders = list(getattr(inbound, "form_senders", []) or [])
+        text = texting.status(config) if config is not None else {"enabled": False, "connected": False}
+        booking_url = str(getattr(getattr(getattr(config, "product", None), "offer", None), "booking_url", "") or "")
+        hooks = len(getattr(config, "webhooks", []) or [])
+        agent_off = (await state.get_setting(AGENT_ACCESS_KEY) or "") == "off"
+        meetings = await count("SELECT COUNT(*) AS n FROM meetings")
+
+        def part(name, what, st, screen, detail=""):
+            return {"name": name, "what": what, "state": st, "label": SUITE_STATES[st],
+                    "screen": screen, "detail": detail}
+
+        groups = [
+            {"name": "Sending", "parts": [
+                part("Sending from your inboxes", "Your own Gmail, Microsoft 365 or SMTP mailbox. Every email waits for your yes.",
+                     "on" if sending_ready else "set", "settings",
+                     "" if sending_ready else "Finish the steps on Today"),
+                part("Warmup", "Keeps your mailbox out of spam, and tells you when it is ready.",
+                     "on" if warmup else "set", "today"),
+            ]},
+            {"name": "Outbound", "parts": [
+                part("Find customers", "Searches for businesses that fit, free from OpenStreetMap or from a paid source.",
+                     "on" if companies else "set", "discover", f"{companies} found" if companies else ""),
+                part("Signals", "What makes a business worth writing to now. Nothing is collected until you confirm it.",
+                     "on" if confirmed and not proposed else "set", "signals",
+                     f"{proposed} to confirm" if proposed else f"{confirmed} on"),
+                part("Campaigns and follow-ups", "Writes every email and follow-up. Nothing sends without your yes.",
+                     "on" if campaigns else "set", "campaigns", f"{campaigns} so far" if campaigns else ""),
+                part("Social posts", "Your agent drafts posts from your playbooks, for you to approve and post.",
+                     "on" if social_on else "off", "social", f"{social_on} playbooks on" if social_on else ""),
+            ]},
+            {"name": "Inbound", "parts": [
+                part("Leads from your forms", "Your form's emails become leads, each with a first answer drafted.",
+                     "on" if form_senders or leads else "set", "leads",
+                     f"{leads} so far" if leads else "List your form's sender address"),
+                part("Texts", "Texts through your own Twilio number, only to people who said yes.",
+                     "on" if text.get("enabled") and text.get("connected") else "set" if text.get("enabled") else "off",
+                     "texting"),
+                part("Brand mentions", "Finds where people ask about you, a competitor or what you sell.",
+                     "on" if watches else "off", "mentionsetup", f"{watches} watched" if watches else ""),
+                part("Phone line", "Answers calls and books visits. Needs an address the internet can reach.",
+                     "hosted", ""),
+                part("Hosted forms", "A form Sellbird hosts on your own address.", "hosted", ""),
+            ]},
+            {"name": "Meetings and pipeline", "parts": [
+                part("Your booking link", "Replies offer your own booking link, and a booking stops follow-ups.",
+                     "on" if booking_url else "set", "company", f"{meetings} booked" if meetings else ""),
+                part("Stages and deals", "Everyone by stage, with deal value, next step and history.", "on", "prospects"),
+                part("Events and webhooks", "Send every reply, lead, booking and stage change to your other tools.",
+                     "on" if hooks else "off", "events"),
+                part("Your agent", "Your coding agent reads Sellbird and drafts for you. Never sends on its own.",
+                     "off" if agent_off else "on", "agent"),
+            ]},
+        ]
+        local = [p for g in groups for p in g["parts"] if p["state"] != "hosted"]
+        return {"groups": groups, "on": sum(1 for p in local if p["state"] == "on"), "total": len(local)}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 @app.post("/api/finding-choice")
 async def set_finding_choice():

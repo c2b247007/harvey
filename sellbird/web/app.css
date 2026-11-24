@@ -1333,3 +1333,91 @@ dialog.modal::backdrop { background: rgb(0 0 0 / 0.45); }
 .rec-a { margin-left: 4px; }
 .rec-note { font-size: 12px; color: var(--text-3, var(--text-2)); margin-top: 6px; }
 .rec-card { padding: var(--sp-4); margin-bottom: var(--sp-3); }
+
+/* ── UI pass (2026-11-23): the approved prototype ─────────────────
+   Seven places in the dock, quiet text tabs, rows that open something are
+   links, labels are words unless they need you, and lists sit on the page
+   with square hairlines between rows. */
+
+/* Filters and views are quiet text tabs on one line: the active one is
+   underlined, and the line scrolls sideways when narrow instead of wrapping. */
+.pills, .chips {
+  display: flex; flex-wrap: nowrap; gap: 0 22px; padding: 0; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--line); margin-bottom: 8px;
+  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent);
+  padding-right: 24px;
+}
+.pills::-webkit-scrollbar, .chips::-webkit-scrollbar { display: none; }
+.pill, .pill.on, .chip-btn, .chip-btn.on {
+  flex: none; min-height: 40px; padding: 0; border: 0; border-radius: 0; background: transparent;
+  color: var(--fg2); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
+  font: 520 var(--fs-body)/1 var(--sans); cursor: pointer;
+}
+.pill.on, .chip-btn.on { color: var(--fg); border-bottom-color: var(--fg); font-weight: 600; cursor: default; }
+.chip-btn b { opacity: .7; }
+@media (hover: hover) { .pill:not(.on):hover, .chip-btn:not(.on):hover { color: var(--fg); background: transparent; } }
+.toolbar .chips { margin-bottom: 0; }
+
+/* Lists without boxes: full width, rows separated by square 1px hairlines,
+   the first row with no line, a hover that runs edge to edge. A box with
+   padding (a form, a chart) keeps its card. */
+.w:not(.pad) { background: transparent; border: 0; border-radius: 0; padding: 0; }
+.w:not(.pad) > .row, .w:not(.pad) > button.row, .w:not(.pad) > div > .row {
+  border-radius: 0; border-top: 1px solid var(--line); padding: 14px 8px;
+}
+.w:not(.pad) > .row:first-child, .w:not(.pad) > button.row:first-child, .w:not(.pad) > div:first-child > .row:first-child {
+  border-top-color: transparent;
+}
+.w:not(.pad) > .w-f { padding: 10px 8px 0; border-top: 1px solid var(--line); }
+.sec > h2 { padding: 0 8px; }
+button.row { border-radius: 0; }
+
+/* A row that goes somewhere is the link itself, with a quiet chevron. */
+.row.link { cursor: pointer; }
+@media (hover: hover) { .row.link:hover, button.row:hover { background: var(--hover); } }
+.row.link:focus-visible, button.row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.row .chev { flex: none; width: 16px; height: 16px; color: var(--fg2); opacity: .55; }
+
+/* Labels are words unless they need you: only waiting, good, bad and
+   accent states stay as tinted pills. */
+.tag:not(.good):not(.wait):not(.bad):not(.acc):not(.accent):not(.t-bad) {
+  background: transparent; padding: 0; height: auto; color: var(--fg2); font-weight: 500;
+}
+
+/* The dock: words while there is room, icons alone in a narrow panel.
+   Seven places still fit 320 pixels. */
+.navitem .lbl { white-space: nowrap; }
+@container app (max-width: 560px) {
+  .navlist { margin-left: 8px; margin-right: 8px; gap: 0; padding: 4px; width: calc(100% - 16px); }
+  .navitem { min-width: 0; flex: 1 1 0; min-height: 48px; padding: 0; font-size: 11px; }
+}
+@container app (max-width: 460px) {
+  .navitem .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .navitem { min-height: 46px; min-width: 40px; }
+  .navitem .nav-count { top: 3px; right: 50%; transform: translateX(16px); }
+}
+@container app (max-width: 400px) {
+  .navlist { margin-left: 4px; margin-right: 4px; width: calc(100% - 8px); }
+  .navitem { padding: 0 1px; }
+  .navitem svg { width: 20px; height: 20px; }
+}
+@container app (max-width: 480px) {
+  .row .chev { display: none; }
+  .w:not(.pad) > .row, .w:not(.pad) > button.row { padding: 12px 4px; }
+}
+
+/* Everything Sellbird does: one card per part of the suite, with its state. */
+.tally { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 22px; }
+.tally b { font: 600 var(--fs-body)/1 var(--sans); }
+.tally .bar { flex: 1 1 200px; height: 8px; min-width: 120px; }
+.suite { display: grid; gap: 28px; }
+.suite-g h2 { margin: 0 0 10px; padding: 0 8px; font-size: var(--fs-label); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--fg3); }
+.suite-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); gap: 10px; }
+.sc { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 14px; background: var(--surface);
+      box-shadow: 0 0 0 1px var(--line2); min-width: 0; }
+.sc-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.sc-top b { font-weight: 600; overflow-wrap: anywhere; }
+.sc p { color: var(--fg2); font-size: var(--fs-ui); line-height: 1.45; overflow-wrap: anywhere; }
+.sc .sc-detail { color: var(--fg3); font-size: var(--fs-caption); }
+.sc-acts { display: flex; gap: 8px; align-items: center; margin-top: auto; padding-top: 4px; flex-wrap: wrap; }
+.sc-hint { font-size: var(--fs-caption); color: var(--fg3); }

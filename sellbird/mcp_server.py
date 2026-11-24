@@ -331,7 +331,7 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
     @server.tool()
     async def text_draft(body: str, prospect_id: str = "", phone: str = "") -> dict:
         """Draft one text to a person who has said yes to texts. It waits for the user's
-        approval in the dashboard (Inbox, Texts); you cannot send it. Refused when there is
+        approval in the dashboard (Inbound, Texts); you cannot send it. Refused when there is
         no stored yes for that number: never try to text someone who has not opted in."""
         return await guarded(lambda c: c.post("/api/texts",
                                               {"body": body, "prospect_id": prospect_id, "phone": phone}))
@@ -386,7 +386,7 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
     async def mention_watch_propose(term: str, kind: str = "brand") -> dict:
         """Propose a term to watch: the user's name ("brand"), a "competitor", or a
         "topic" (a question buyers ask, such as "roofer recommendation Denver"). It
-        stays off until the user turns it on in the dashboard (Set up, Brand mentions)."""
+        stays off until the user turns it on in the dashboard (Inbound, Mentions, What is watched)."""
         return await guarded(lambda c: c.post("/api/mentions/watches", {"term": term, "kind": kind}))
 
     @server.tool()

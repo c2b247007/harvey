@@ -4,7 +4,7 @@ Sellbird keeps the playbooks your own agent writes social posts from, and holds 
 
 ## How it works
 
-1. **You switch on the playbooks you want.** Set up → Social, or `sellbird social on finished_work`. All of them start off.
+1. **You switch on the playbooks you want.** Outbound → Social, or `sellbird social on finished_work`. All of them start off.
 2. **Your agent drafts a post** from a playbook that is on, for one platform. Ask it: "Draft a LinkedIn post about the job we finished this week."
 3. **The draft waits for you.** Approve it, edit it, or skip it, on the same screen. Today shows when one is waiting.
 4. **An approved post goes out one of two ways, both yours.** Copy it and post it yourself. Or, if you connected that social account to your agent, ask the agent to post it; it posts the exact text you approved and marks it as posted with the link.

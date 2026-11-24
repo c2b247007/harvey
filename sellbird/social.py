@@ -158,7 +158,7 @@ async def draft(state, *, playbook_key: str, platform: str, body: str, media_not
         return {"success": False, "message": "There is no such playbook."}
     if book["key"] not in await state.active_social_playbooks():
         return {"success": False, "message": f"The playbook \"{book['name']}\" is off. Only the user can turn it on, "
-                                             "in the dashboard (Set up, Social)."}
+                                             "in the dashboard (Outbound, Social)."}
     problem = _check(platform, body)
     if not problem and platform not in book["platforms"]:
         problem = (f"The playbook \"{book['name']}\" is for "
@@ -172,7 +172,7 @@ async def draft(state, *, playbook_key: str, platform: str, body: str, media_not
     await state.log_action("social_post_drafted", "agent" if by == "agent" else "user",
                            {"playbook": book["key"], "platform": platform})
     return {"success": True, "id": post_id, "status": "pending_review",
-            "message": "Drafted. It waits for the user's approval in the dashboard (Set up, Social)."}
+            "message": "Drafted. It waits for the user's approval in the dashboard (Outbound, Social)."}
 
 
 async def approve(state, post_id: str, *, body: str | None = None) -> dict:

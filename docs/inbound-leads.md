@@ -28,7 +28,7 @@ inbound:
 
 The submitter's address is read from the email's Reply-To when the tool sets it, else from a field called Email, else from the first address in the text that is not yours. Their name, phone, company and message are read from the "Question: answer" lines. No model is involved in reading the email.
 
-If a known tool's email has nobody's address in it (a receipt, a newsletter), it is not a lead and is ignored. If an email from a sender *you* listed cannot be read, it is kept under Inbox → Leads marked "Read it yourself", so nothing you pointed at Sellbird is dropped silently.
+If a known tool's email has nobody's address in it (a receipt, a newsletter), it is not a lead and is ignored. If an email from a sender *you* listed cannot be read, it is kept under Inbound → Leads marked "Read it yourself", so nothing you pointed at Sellbird is dropped silently.
 
 **2. Your agent.** With the local MCP server installed (`sellbird mcp install`), your agent has three tools:
 
@@ -40,7 +40,7 @@ If a known tool's email has nobody's address in it (a receipt, a newsletter), it
 
 The agent cannot approve or send an answer, and cannot set a lead aside.
 
-**3. By hand.** Inbox → Leads has a short form, and so does the command line:
+**3. By hand.** Inbound → Leads has a short form, and so does the command line:
 
 ```bash
 sellbird leads                      # the list

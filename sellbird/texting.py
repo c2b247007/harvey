@@ -81,7 +81,7 @@ async def draft(state, config, *, prospect_id: str = "", phone: str = "", body: 
     await state.log_action("text_drafted", "user" if by == "you" else "agent",
                            {"prospect_id": prospect_id, "text_id": text_id, "by": by})
     return {"success": True, "id": text_id, "status": "pending_review",
-            "message": "Drafted. It waits for approval in Inbox, Texts."}
+            "message": "Drafted. It waits for approval in Inbound, Texts."}
 
 
 async def send_approved(state, config, *, client: TwilioClient | None = None,

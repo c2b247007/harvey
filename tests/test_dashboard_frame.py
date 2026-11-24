@@ -15,7 +15,7 @@ from tests.test_dashboard_signals import client  # noqa: F401  (fixture)
 from sellbird.state import StateManager
 
 WEB = Path(__file__).resolve().parent.parent / "sellbird" / "web"
-PLACES = ["today", "inbox", "people", "calendar", "numbers", "setup"]
+PLACES = ["today", "outbound", "inbound", "people", "calendar", "numbers", "setup"]
 # The fifteen tabs of the sidebar this frame replaced: none may go missing.
 OLD_TABS = ["today", "company", "outbox", "inboxes", "conversations", "signals", "discover",
             "companies", "prospects", "campaigns", "activity", "usage", "controls", "settings", "help"]
@@ -27,13 +27,13 @@ def _screens() -> dict:
     return {m.group(1): m.group(2) for m in re.finditer(r"^\s*(\w+):\s*\{place: '(\w+)'", block, re.M)}
 
 
-def test_the_dock_has_six_places_and_no_sidebar():
+def test_the_dock_has_seven_places_and_no_sidebar():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     assert re.findall(r'class="navitem[^"]*" data-place="(\w+)"', html) == PLACES
     assert "<aside" not in html and 'class="sidebar"' not in html
 
 
-def test_every_old_tab_is_still_a_screen_inside_one_of_the_six_places():
+def test_every_old_tab_is_still_a_screen_inside_one_of_the_seven_places():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     screens = _screens()
     for tab in OLD_TABS:
@@ -136,3 +136,16 @@ def test_calendar_bounds_and_bad_dates(client):
     assert len(client.get("/api/calendar?days=0").json()["days"]) == 1
     assert client.get("/api/calendar?start=tomorrow").status_code == 400
     assert client.get("/api/calendar?days=x").status_code == 422
+
+
+def test_the_dock_names_each_place_even_when_its_words_are_hidden():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    buttons = re.findall(r'<button type="button"[^>]*class="navitem[^>]*>', html)
+    assert len(buttons) == len(PLACES) and all("aria-label=" in b for b in buttons)
+    css = (WEB / "app.css").read_text(encoding="utf-8")
+    assert "@container app (max-width: 460px)" in css and ".navitem .lbl { position: absolute" in css
+
+
+def test_the_old_inbox_address_still_opens_replies():
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "inbox: 'conversations'" in js and "outbound: 'outbox'" in js and "inbound: 'leads'" in js

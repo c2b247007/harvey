@@ -4,7 +4,7 @@ Sellbird can look for where people write about you, a competitor, or the thing y
 
 ## What you get
 
-Under **Inbox → Mentions**, each mention shows the post, where it was found, and a guess at whether it is a question or a complaint. For each one you can:
+Under **Inbound → Mentions**, each mention shows the post, where it was found, and a guess at whether it is a question or a complaint. For each one you can:
 
 - **Make a lead.** The person behind it is added to People with the source "Mention" and a link to what they posted. There is no email address, so nothing is drafted or sent.
 - **Write or copy a reply.** A reply is a draft. Copy it, open the post, and post it from your own account. Sellbird has no way to post it.
@@ -14,7 +14,7 @@ Your agent can go through them for you: sort each one (buyer, complaint, praise,
 
 ## What to watch
 
-**Set up → Brand mentions**, or `sellbird mentions watch "Example Roofing"`. Three kinds of term:
+**Inbound → Mentions → What is watched**, or `sellbird mentions watch "Example Roofing"`. Three kinds of term:
 
 | Kind | Example |
 |---|---|

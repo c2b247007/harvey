@@ -30,11 +30,11 @@ There is no sidebar and no top bar. A dock floats at the bottom with six places,
 
 Under **Set up** there are also: **Email records** (MX, SPF, DKIM and DMARC on each sending domain, with what to change; read only), **Limits and rules** (the stop button, every sending limit, and anything that sends without you), **Opt-outs and bounces** (the never-email list, with the reason for each entry and a CSV export), **Texting and consent**, **Events and webhooks**, and **Your agent** (what your coding agent may do, a log of every call it made, and a switch that cuts it off at once; only you can switch it back on). A name on **People** opens that person's page: the deal (worth, next step, notes), every email, reply and text, their consent records, stage history and meetings.
 
-**Leads**, under Inbox, lists the people who came to you (a form email Sellbird read, or a lead you or your agent added), what each one sent, and where its first answer stands. It has a short form for adding one by hand and shows how leads arrive. See [inbound leads](inbound-leads.md).
+**Leads**, under Inbound, lists the people who came to you (a form email Sellbird read, or a lead you or your agent added), what each one sent, and where its first answer stands. It has a short form for adding one by hand and shows how leads arrive. See [inbound leads](inbound-leads.md).
 
-**Mentions**, under Inbox, lists where people wrote about you, a competitor or the thing you sell. Each one can become a lead, a reply you copy and post yourself, or a note. **Brand mentions**, under Set up, is what is watched and where Sellbird looks. See [brand mentions](mentions.md).
+**Mentions**, under Inbound, lists where people wrote about you, a competitor or the thing you sell. Each one can become a lead, a reply you copy and post yourself, or a note. **What is watched**, opened from Mentions, is what is watched and where Sellbird looks. See [brand mentions](mentions.md).
 
-**Social**, under Set up, lists the playbooks your agent writes posts from, with a switch for each, and the posts it drafted: waiting for you, approved and not yet posted, and recent. Sellbird posts nothing itself. See [social playbooks](social.md).
+**Social**, under Outbound, lists the playbooks your agent writes posts from, with a switch for each, and the posts it drafted: waiting for you, approved and not yet posted, and recent. Sellbird posts nothing itself. See [social playbooks](social.md).
 
 Addresses work as links: `#outbox`, `#signals`, `#calendar` and so on open that screen.
 

@@ -34,6 +34,15 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **The dock has seven places, as in the approved prototype.** Outbound
+  (waiting for you, replies, campaigns, finding businesses, signals, social)
+  and Inbound (leads, texts, mentions) replace Inbox. Set up opens with
+  *Everything Sellbird does*: every part of the suite with its state and one
+  button each. Views and filters are quiet text tabs on one line, a row that
+  only opens something is the link itself, labels are plain words unless they
+  need you, and lists sit on the page with hairlines between rows. The dock
+  hides its words below 460 pixels and still fits 320.
+
 - **One recommended service per job.** `sellbird recommended` (and Set up,
   and Today) names the one service Sellbird recommends for warmup, checking
   addresses, finding businesses and finding people, and why. Finding
@@ -45,7 +54,7 @@ minor versions can still change behaviour.
 - **Social playbooks.** Five playbooks ship as plain files
   (`skills/social_*.md`: finished work, customer questions, what we learned,
   local and seasonal, in their words) and you can add your own. You switch on
-  the ones you want under Set up → Social; your agent drafts posts from them
+  the ones you want under Outbound → Social; your agent drafts posts from them
   for LinkedIn, Instagram, Facebook or X; every draft waits for your
   approval. Sellbird posts nothing and stores no social login: you post the
   approved text, or the agent you connected the account to does. Agent tools
@@ -54,7 +63,7 @@ minor versions can still change behaviour.
   `docs/social.md`.
 
 - **Brand mentions.** Sellbird searches for the names and questions you
-  watch and lists what it finds under Inbox → Mentions: make one a lead (a
+  watch and lists what it finds under Inbound → Mentions: make one a lead (a
   person with the source "Mention"), copy a drafted reply to post from your
   own account, note it or skip it. Hacker News and news articles need no
   key; Reddit and YouTube use your own free keys; a web search uses your
@@ -68,7 +77,7 @@ minor versions can still change behaviour.
   by checking in: form notification emails in an inbox Sellbird already reads
   become leads (`inbound.form_senders`, plus the form tools it knows), your
   agent can add one from anywhere (`lead_add`, `lead_answer_draft`,
-  `leads_list`), and so can you (Inbox → Leads, or `sellbird leads add`). A
+  `leads_list`), and so can you (Inbound → Leads, or `sellbird leads add`). A
   new lead is a person with the source "Form", a `lead.created` event, and a
   first answer drafted for the Outbox. That answer waits for your approval
   even on autopilot. What a submitter typed is kept as data and never acted
@@ -94,7 +103,7 @@ minor versions can still change behaviour.
   One gate in code (`sellbird/consent.py`): a stored yes for that channel, not
   opted out, not on the do-not-contact list, not in quiet hours. There is no
   first text to someone who has not opted in, and no setting turns the check
-  off. Texts are drafted by you or your agent, approved by you under Inbox →
+  off. Texts are drafted by you or your agent, approved by you under Inbound →
   Texts, then sent through the Twilio account you connect. STOP opts a number
   out at once. Off by default. See `docs/texting.md`.
 

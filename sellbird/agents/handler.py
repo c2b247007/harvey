@@ -1207,7 +1207,7 @@ class Handler:
                 return False
             await leads.record_unreadable(self.state, subject=msg.subject, body=form_mail.plain_text(msg.body),
                                           dedup_key=key, mailbox_id=mailbox_id or "")
-            logger.warning("Handler: a form notification had nobody's address in it. It is in Inbox, Leads.")
+            logger.warning("Handler: a form notification had nobody's address in it. It is in Inbound, Leads.")
             return True
         result = await leads.add_lead(
             self.state, self.config, email=found["email"], name=found["name"], phone=found["phone"],
@@ -1238,7 +1238,7 @@ class Handler:
         for lead in waiting:
             if room - drafted <= 0:
                 logger.warning("Handler: today's limit on first answers to leads is reached "
-                               f"({inbound.max_drafts_per_day}). The rest wait in Inbox, Leads.")
+                               f"({inbound.max_drafts_per_day}). The rest wait in Inbound, Leads.")
                 break
             prospect = await self.state.get_prospect(lead["prospect_id"])
             if prospect is None or prospect.status == "opted_out":

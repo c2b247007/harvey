@@ -426,16 +426,21 @@ function toggleVisibility(inputId) {
 
 // ── Tabs ──
 
-// Six places in the dock. Each screen belongs to one place: a place with
-// several views shows them as pills (Inbox, People, Numbers), and Set up is
-// a list that opens each of its screens with a way back.
+// Seven places in the dock. Each screen belongs to one place: a place with
+// several views shows them as quiet tabs (Outbound, Inbound, People,
+// Numbers), and Set up is a list that opens each of its screens with a way back.
 const SCREENS = {
   today:         {place: 'today'},
-  conversations: {place: 'inbox', pill: 'Replies', count: 'nav-conversations'},
-  outbox:        {place: 'inbox', pill: 'Outbox', count: 'nav-outbox'},
-  leads:         {place: 'inbox', pill: 'Leads', count: 'nav-leads'},
-  texts:         {place: 'inbox', pill: 'Texts', count: 'nav-texts'},
-  mentions:      {place: 'inbox', pill: 'Mentions', count: 'nav-mentions'},
+  outbox:        {place: 'outbound', pill: 'Waiting for you', count: 'nav-outbox'},
+  conversations: {place: 'outbound', pill: 'Replies', count: 'nav-conversations'},
+  campaigns:     {place: 'outbound', pill: 'Campaigns'},
+  discover:      {place: 'outbound', pill: 'Find businesses'},
+  signals:       {place: 'outbound', pill: 'Signals', count: 'nav-signals'},
+  social:        {place: 'outbound', pill: 'Social', count: 'nav-social'},
+  leads:         {place: 'inbound', pill: 'Leads', count: 'nav-leads'},
+  texts:         {place: 'inbound', pill: 'Texts', count: 'nav-texts'},
+  mentions:      {place: 'inbound', pill: 'Mentions', count: 'nav-mentions'},
+  mentionsetup:  {place: 'inbound', parent: 'mentions'},
   prospects:     {place: 'people', pill: 'People'},
   companies:     {place: 'people', pill: 'Companies'},
   person:        {place: 'people', parent: 'prospects'},
@@ -443,18 +448,14 @@ const SCREENS = {
   numbers:       {place: 'numbers', pill: 'Overview'},
   usage:         {place: 'numbers', pill: 'Model usage'},
   setup:         {place: 'setup'},
+  suite:         {place: 'setup', parent: 'setup'},
   company:       {place: 'setup', parent: 'setup'},
-  campaigns:     {place: 'setup', parent: 'setup'},
-  signals:       {place: 'setup', parent: 'setup'},
-  discover:      {place: 'setup', parent: 'setup'},
   inboxes:       {place: 'setup', parent: 'setup'},
   settings:      {place: 'setup', parent: 'setup'},
   controls:      {place: 'setup', parent: 'setup'},
   activity:      {place: 'setup', parent: 'setup'},
   events:        {place: 'setup', parent: 'setup'},
   texting:       {place: 'setup', parent: 'setup'},
-  mentionsetup:  {place: 'setup', parent: 'setup'},
-  social:        {place: 'setup', parent: 'setup'},
   records:       {place: 'setup', parent: 'setup'},
   neveremail:    {place: 'setup', parent: 'setup'},
   limits:        {place: 'setup', parent: 'setup'},
@@ -462,10 +463,11 @@ const SCREENS = {
   help:          {place: 'setup', parent: 'setup'},
 };
 // The dock's own names, and the old tab names links may still carry.
-const SCREEN_ALIASES = {inbox: 'conversations', people: 'prospects', contacts: 'prospects', replies: 'conversations'};
+const SCREEN_ALIASES = {outbound: 'outbox', inbound: 'leads', inbox: 'conversations', people: 'prospects',
+                        contacts: 'prospects', replies: 'conversations'};
 // Screens that are one decision or one form stay chat width.
 const CARD_SCREENS = ['company', 'settings', 'controls', 'help'];
-const PARENT_NAMES = {setup: 'Set up', prospects: 'People'};
+const PARENT_NAMES = {setup: 'Set up', prospects: 'People', mentions: 'Mentions'};
 let _personId = '';     // whose page the person screen shows
 
 // A fragment is a screen, or "person/<id>" for one person's page.
@@ -499,8 +501,8 @@ function renderScreenNav(id) {
   }
   const views = Object.keys(SCREENS).filter(k => SCREENS[k].place === s.place && SCREENS[k].pill);
   if (views.length > 1 && s.pill) {
-    html += '<div class="pills" role="group" aria-label="Views">' + views.map(k =>
-      '<button type="button" class="pill' + (k === id ? ' on' : '') + '" aria-pressed="' + (k === id) +
+    html += '<div class="pills" role="tablist" aria-label="Views">' + views.map(k =>
+      '<button type="button" role="tab" class="pill' + (k === id ? ' on' : '') + '" aria-selected="' + (k === id) +
       '" onclick="goTab(' + jsq(k) + ')">' + escHtml(SCREENS[k].pill) +
       (SCREENS[k].count ? '<span class="nav-count' + (_counts[SCREENS[k].count] > 0 ? ' on' : '') + '" id="' +
         SCREENS[k].count + '">' + (_counts[SCREENS[k].count] > 0 ? _counts[SCREENS[k].count] : '') + '</span>' : '') +
@@ -539,11 +541,11 @@ function showTab(id, opts) {
   loadCurrentTab();
 }
 
-// Go to a screen by name. The dock passes a place ("inbox"), which opens the
+// Go to a screen by name. The dock passes a place ("outbound"), which opens the
 // view that place was last on.
 function goTab(id) {
   const key = String(id || '').toLowerCase();
-  const place = ['inbox', 'people', 'numbers'].includes(key) ? key : null;
+  const place = ['outbound', 'inbound', 'people', 'numbers'].includes(key) ? key : null;
   showTab(place && _lastScreen[place] ? _lastScreen[place] : id);
 }
 
@@ -557,6 +559,7 @@ function loadCurrentTab() {
     case 'events': loadEvents(); break;
     case 'leads': loadLeads(); break;
     case 'texts': loadTexts(); break;
+    case 'suite': loadSuite(); break;
     case 'mentions': loadMentions(); break;
     case 'mentionsetup': loadMentionSetup(); break;
     case 'social': loadSocial(); break;
@@ -566,7 +569,7 @@ function loadCurrentTab() {
     case 'limits': loadLimits(); break;
     case 'agent': loadAgent(); break;
     case 'person': loadPerson(); break;
-    case 'today': loadLiveStatus(); loadRenameNotice(); loadToday(); loadTrend(); loadFunnel(); loadSetupStatus(); loadRuns(); loadTodayActivity(); break;
+    case 'today': loadLiveStatus(); loadRenameNotice(); loadToday(); loadTrend(); loadFunnel(); loadSetupStatus(); loadTodaySuite(); loadRuns(); loadTodayActivity(); break;
     case 'signals': loadSignals(); break;
     case 'discover': loadDiscoverProviders(); break;
     case 'companies': if (!companyDrill) loadCompanies(); break;
@@ -619,16 +622,29 @@ async function loadToday() {
   const glyph = {bad: 'alert', warn: 'flag', good: 'check'};
   el.innerHTML = '<div class="w">' + items.map(it => {
     const tone = own(glyph, it.tone) ? it.tone : 'warn';
-    return '<div class="row">' +
-      '<span class="who tone-' + tone + '" aria-hidden="true">' + icon(glyph[tone]) + '</span>' +
+    const head = '<span class="who tone-' + tone + '" aria-hidden="true">' + icon(glyph[tone]) + '</span>' +
       '<div class="grow">' +
         '<p class="t">' + escHtml(it.title) + '</p>' +
         '<p class="s">' + escHtml(it.detail) + '</p>' +
-      '</div>' +
+      '</div>';
+    // A decision (review, approve, confirm, resume) keeps its button; a row
+    // that only opens a screen is the link itself.
+    if (!isDecision(it.action)) return linkRow(it.tab, head, it.action);
+    return '<div class="row">' + head +
       '<button class="btn btn-sm rowbtn ' + (tone === 'good' ? 'btn-secondary' : 'btn-primary') +
         '" onclick="goTab(' + jsq(it.tab) + ')">' + escHtml(it.action) + '</button>' +
     '</div>';
   }).join('') + '<p class="w-f">Nothing sends until you approve it, unless you turned on autopilot.</p></div>';
+}
+
+// Words on a button that ask for a decision. Anything else only opens a screen.
+const DECISION_WORDS = /^(review|approve|confirm|connect|change|resume|fix|turn|set up|finish|reply)/i;
+function isDecision(action) { return DECISION_WORDS.test(String(action || '').trim()); }
+
+// A row that only opens something: the whole row is the link, with a quiet chevron.
+function linkRow(tab, inner, label) {
+  return '<button type="button" class="row link" onclick="goTab(' + jsq(tab) + ')"' +
+    (label ? ' aria-label="' + escHtml(label) + '"' : '') + '>' + inner + icon('chevron', 'chev') + '</button>';
 }
 
 // Badge numbers from /api/today: the dock and the pills read the same ones.
@@ -639,8 +655,10 @@ function applyCounts(data) {
   navCount('nav-conversations', st.needs_human || 0);
   navCount('nav-leads', st.leads_needing_you || 0);
   navCount('nav-mentions', st.mentions_new || 0);
-  navCount('nav-inbox', (st.outbox_pending || 0) + (st.needs_human || 0) + (st.leads_needing_you || 0));
   navCount('nav-signals', st.signals_proposed || 0);
+  navCount('nav-social', st.social_waiting || 0);
+  navCount('nav-outbound', (st.outbox_pending || 0) + (st.needs_human || 0) + (st.social_waiting || 0));
+  navCount('nav-inbound', (st.leads_needing_you || 0) + (st.mentions_new || 0));
 }
 
 // ── Live status: the "what's happening?" answer, kept on screen ──
@@ -800,6 +818,13 @@ function navCount(id, n) {
   if (!el) return;
   el.textContent = n > 0 ? n : '';
   el.className = 'nav-count' + (n > 0 ? ' on' : '');
+  // In the dock the words can be hidden, so the button's name carries the count.
+  const item = el.closest('.navitem');
+  if (item) {
+    el.setAttribute('aria-hidden', 'true');
+    const name = (item.querySelector('.lbl') || {}).textContent || '';
+    item.setAttribute('aria-label', name + (n > 0 ? ', ' + n + ' waiting' : ''));
+  }
 }
 
 async function loadRuns() {
@@ -3583,12 +3608,57 @@ function numbersHtml(weeks, trend, stats, campaigns, inboxes) {
 
 // ── Set up: everything built and connected, one row each ──
 
+// ── Everything Sellbird does: every part of the suite with its state ──
+
+let _suite = null;
+const SUITE_BUTTON = {on: 'Open', set: 'Set up', off: 'Turn on'};
+
+async function loadSuite() {
+  const el = document.getElementById('suite-body');
+  if (!el) return;
+  const d = await api('/api/suite');
+  if (!d) { el.innerHTML = offlineState(); return; }
+  if (d.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the suite', escHtml(d.error)); return; }
+  _suite = d;
+  const pct = d.total ? Math.round(100 * d.on / d.total) : 0;
+  const tone = {on: 'good', set: 'wait', off: '', hosted: ''};
+  el.innerHTML = '<div class="tally"><b>' + d.on + ' of ' + d.total + ' on</b>' +
+      '<div class="bar" aria-hidden="true"><span style="width:' + pct + '%;background:var(--accent)"></span></div></div>' +
+    '<div class="suite">' + d.groups.map(g =>
+      '<section class="suite-g"><h2>' + escHtml(g.name) + '</h2><div class="suite-cards">' + g.parts.map(f =>
+        '<div class="sc"><div class="sc-top"><b>' + escHtml(f.name) + '</b><span class="tag ' + tone[f.state] + '">' +
+          escHtml(f.label) + '</span></div><p>' + escHtml(f.what) + '</p>' +
+          (f.detail ? '<p class="sc-detail">' + escHtml(f.detail) + '</p>' : '') +
+          (f.screen ? '<div class="sc-acts"><button type="button" class="btn btn-sm ' + (f.state === 'set' ? 'btn-primary' : 'btn-secondary') +
+            '" onclick="goTab(' + jsq(f.screen) + ')">' + SUITE_BUTTON[f.state] + '</button>' +
+            (f.state !== 'on' ? '<span class="sc-hint">or ask your agent</span>' : '') + '</div>' : '') +
+        '</div>').join('') + '</div></section>').join('') + '</div>' +
+    '<p class="ask">Phone line and hosted forms need an address the internet can reach, so they are in hosted Sellbird only. ' +
+    'Ask your agent: <b>"What is left to switch on in Sellbird?"</b></p>';
+}
+
+async function loadTodaySuite() {
+  const sec = document.getElementById('today-suite-sec');
+  const el = document.getElementById('today-suite');
+  if (!sec || !el) return;
+  const d = await api('/api/suite');
+  if (!d || d.error || !d.total) { sec.hidden = true; return; }
+  _suite = d;
+  const waiting = d.groups.flatMap(g => g.parts).filter(f => f.state === 'set').map(f => f.name);
+  sec.hidden = false;
+  el.innerHTML = linkRow('suite', '<span class="who" aria-hidden="true">' + icon('sparkle') + '</span><div class="grow">' +
+    '<p class="t">' + d.on + ' of ' + d.total + ' parts on</p><p class="s">' +
+    (waiting.length ? escHtml(waiting.slice(0, 3).join(', ')) + (waiting.length > 3 ? ' and more' : '') + ' waiting to be set up'
+      : 'Everything you can run here is set up') + '</p></div>', 'See everything Sellbird does');
+}
+
 async function loadSetup() {
   const el = document.getElementById('setup-body');
   if (!el) return;
-  const [today, engine, mode, setup] = await Promise.all([
-    api('/api/today'), api('/api/sellbird/status'), api('/api/sending-mode'), api('/api/setup-status'),
+  const [today, engine, mode, setup, suite] = await Promise.all([
+    api('/api/today'), api('/api/sellbird/status'), api('/api/sending-mode'), api('/api/setup-status'), api('/api/suite'),
   ]);
+  _suite = suite;
   if (!today && !engine) { el.innerHTML = offlineState(); return; }
   if (today && !today.error) { applyCounts(today); _todayStats = today.stats || {}; }
   el.innerHTML = setupHtml(_todayStats, engine, mode, setup);
@@ -3597,22 +3667,22 @@ async function loadSetup() {
 
 function setupHtml(st, engine, mode, setup) {
   st = st || {};
-  const row = (to, title, sub, tag, tone) => '<button type="button" class="row" onclick="goTab(' + jsq(to) + ')">' +
+  const row = (to, title, sub, tag, tone) => '<button type="button" class="row link" onclick="goTab(' + jsq(to) + ')">' +
     '<span class="who" aria-hidden="true">' + icon(SETUP_ICONS[to] || 'settings') + '</span>' +
     '<div class="grow"><p class="t">' + title + '</p><p class="s">' + sub + '</p>' +
     (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>' + icon('chevron', 'chev') + '</button>';
   const left = setup && setup.checks ? setup.checks.filter(c => c.required && !c.done).length : 0;
   const auto = mode && mode.mode === 'autopilot';
   const running = !!(engine && engine.running);
+  const suite = _suite && !_suite.error ? _suite : null;
   return '<div class="secs">' +
-    '<section class="sec"><h2>Outbound</h2><div class="w">' +
+    '<section class="sec span"><h2>Everything Sellbird does</h2><div class="w">' +
+      row('suite', suite ? suite.on + ' of ' + suite.total + ' parts of the suite on' : 'Every part of the suite',
+          'See every feature, what it does and what is left to switch on',
+          suite && suite.total > suite.on ? (suite.total - suite.on) + ' to go' : '', 'wait') +
+    '</div></section>' +
+    '<section class="sec"><h2>Your business</h2><div class="w">' +
       row('company', 'Your company', 'What you sell, who you sell to, and the offer every first email ends with', '', '') +
-      row('campaigns', 'Campaigns', 'The sequences Sellbird wrote, and how far each one has got', '', '') +
-      row('signals', 'Signals', 'What Sellbird looks for in a business. Nothing is collected until you confirm it.',
-          st.signals_proposed ? st.signals_proposed + ' to confirm' : (st.signals_confirmed || 0) + ' on',
-          st.signals_proposed ? 'wait' : st.signals_confirmed ? 'good' : '') +
-      row('discover', 'Find businesses', 'Search for companies that match your ICP. It prices every run first.',
-          (st.companies || 0) + (st.companies === 1 ? ' company' : ' companies'), '') +
       row('inboxes', 'Inboxes', 'The addresses Sellbird sends from, and how much each has sent today', '', '') +
       row('records', 'Email records', 'SPF, DKIM, DMARC and MX on each domain you send from, and what to fix', '', '') +
     '</div></section>' +
@@ -3621,9 +3691,6 @@ function setupHtml(st, engine, mode, setup) {
           left ? left + ' to finish' : mode ? (auto ? 'Autopilot' : 'Approval') : '', left || auto ? 'wait' : 'good') +
       row('limits', 'Limits and rules', 'The stop button, daily limits, quiet hours, and anything that sends without you', '', '') +
       row('neveremail', 'Opt-outs and bounces', 'Everyone Sellbird will never email again, and why', '', '') +
-      row('social', 'Social', 'Playbooks your agent follows, and posts that wait for your approval',
-          st.social_waiting ? st.social_waiting + ' to review' : '', st.social_waiting ? 'wait' : '') +
-      row('mentionsetup', 'Brand mentions', 'The names and questions Sellbird searches for, and where it looks', '', '') +
       row('texting', 'Texting and consent', 'Your own Twilio number, who said yes to texts and calls, and who must never be contacted', '', '') +
       row('controls', 'Engine', 'Start and stop the loop that finds, writes and sends, and read its log',
           engine ? (running ? 'Running' : 'Stopped') : '', running ? 'good' : '') +
@@ -3648,7 +3715,7 @@ function setupHtml(st, engine, mode, setup) {
 
 const SETUP_ICONS = {company: 'company', campaigns: 'campaigns', signals: 'signals', discover: 'discover',
                      inboxes: 'inboxes', settings: 'settings', controls: 'controls', activity: 'activity', help: 'help',
-                     events: 'arrow', social: 'pen', mentionsetup: 'signals', texting: 'message', records: 'check', neveremail: 'flag',
+                     events: 'arrow', suite: 'sparkle', texting: 'message', records: 'check', neveremail: 'flag',
                      limits: 'alert', agent: 'sparkle'};
 
 // ── Leads: people who came to you ──
@@ -4325,7 +4392,7 @@ function limitsHtml(d) {
               : 'Off. Every email, first, follow-up or reply, waits in the Outbox for you.') + '</p></div>' +
         (auto ? '<button class="btn btn-secondary btn-sm" onclick="limitsAutopilotOff()">Turn off</button>'
               : '<span class="tag good">Off</span>') + '</div>' +
-      r('Texts', 'Never. Every text waits for you under Inbox, Texts.', 'Never', 'good') +
+      r('Texts', 'Never. Every text waits for you under Inbound, Texts.', 'Never', 'good') +
       r('Anything your agent writes', 'Never on its own say-so. It can draft and propose. It cannot approve, send or resume.', 'Never', 'good') +
       '<p class="w-f">' + (auto ? 'Turning autopilot off works at once.' : 'Autopilot is turned on under <b>Sending and keys</b>, by typing its name.') +
       ' There is no other rule that sends without you.</p></div></section>' +

@@ -61,7 +61,7 @@ texting:
 
 1. You or your agent **draft** it (`text_draft`, or `POST /api/texts`). A
    draft is refused when there is no stored yes for that number.
-2. It waits under **Inbox → Texts** until **you approve it**. An agent can
+2. It waits under **Inbound → Texts** until **you approve it**. An agent can
    draft and read; it cannot approve.
 3. Each cycle, approved texts that pass the check are sent. The first text to
    a number ends with "Reply STOP to opt out." unless it already says so.

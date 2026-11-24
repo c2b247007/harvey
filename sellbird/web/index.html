@@ -105,6 +105,10 @@
       <h2>Needs you</h2>
       <div id="today-queue"></div>
     </section>
+    <section class="sec" id="today-suite-sec" hidden>
+      <h2>Your suite</h2>
+      <div class="w" id="today-suite"></div>
+    </section>
     <section class="sec" id="today-setup-sec" hidden>
       <h2>Finish setting up</h2>
       <div id="today-setup"></div>
@@ -160,6 +164,17 @@
     </div>
   </div>
   <div id="texts-body"></div>
+</div>
+
+<!-- Everything Sellbird does: every part of the suite and its state -->
+<div id="suite" class="section">
+  <div class="section-head">
+    <div>
+      <h1 tabindex="-1">Everything Sellbird does</h1>
+      <p>Every part of the suite, what it does and whether it is set up. Set any of it up here, or ask your agent.</p>
+    </div>
+  </div>
+  <div id="suite-body"></div>
 </div>
 
 <!-- Leads: people who came to you, what they sent, and the answer waiting -->
@@ -425,7 +440,7 @@
 
 <!-- Conversations -->
 <div id="conversations" class="section">
-  <div class="section-head"><div><h1 tabindex="-1">Inbox</h1><p>Every reply, and how Sellbird handled it. Drafted answers wait for you in the Outbox.</p></div></div>
+  <div class="section-head"><div><h1 tabindex="-1">Replies</h1><p>Every reply to your outreach, and how Sellbird handled it. Drafted answers wait for you in the Outbox.</p></div></div>
   <div id="conversations-list"></div>
 </div>
 
@@ -740,12 +755,13 @@
 </main>
 
 <nav class="navlist" aria-label="Sellbird">
-  <button type="button" class="navitem on" data-place="today" onclick="goTab('today')" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg><span>Today</span><span class="nav-count" id="nav-today"></span></button>
-  <button type="button" class="navitem" data-place="inbox" onclick="goTab('inbox')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 13h4.5l1 2h5l1-2H20"/></svg><span>Inbox</span><span class="nav-count" id="nav-inbox"></span></button>
-  <button type="button" class="navitem" data-place="people" onclick="goTab('people')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.8c1.7.8 2.7 2.6 3 5.2"/></svg><span>People</span></button>
-  <button type="button" class="navitem" data-place="calendar" onclick="goTab('calendar')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM4 10h16M8 3.5v4M16 3.5v4"/></svg><span>Calendar</span></button>
-  <button type="button" class="navitem" data-place="numbers" onclick="goTab('numbers')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></svg><span>Numbers</span></button>
-  <button type="button" class="navitem" data-place="setup" onclick="goTab('setup')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM14 4h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM5 13h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1zM14 13h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"/></svg><span>Set up</span><span class="nav-count" id="nav-setup"></span></button>
+  <button type="button" aria-label="Today" class="navitem on" data-place="today" onclick="goTab('today')" aria-current="page"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/></svg><span class="lbl" aria-hidden="true">Today</span><span class="nav-count" id="nav-today"></span></button>
+  <button type="button" class="navitem" data-place="outbound" onclick="goTab('outbound')" aria-label="Outbound"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M21 3L10.5 13.5M21 3l-6.5 18-4-7.5L3 9.5z"/></svg><span class="lbl" aria-hidden="true">Outbound</span><span class="nav-count" id="nav-outbound"></span></button>
+  <button type="button" class="navitem" data-place="inbound" onclick="goTab('inbound')" aria-label="Inbound"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 13h4.5l1 2h5l1-2H20"/></svg><span class="lbl" aria-hidden="true">Inbound</span><span class="nav-count" id="nav-inbound"></span></button>
+  <button type="button" aria-label="People" class="navitem" data-place="people" onclick="goTab('people')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M9 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.8c1.7.8 2.7 2.6 3 5.2"/></svg><span class="lbl" aria-hidden="true">People</span></button>
+  <button type="button" aria-label="Calendar" class="navitem" data-place="calendar" onclick="goTab('calendar')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM4 10h16M8 3.5v4M16 3.5v4"/></svg><span class="lbl" aria-hidden="true">Calendar</span></button>
+  <button type="button" aria-label="Numbers" class="navitem" data-place="numbers" onclick="goTab('numbers')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></svg><span class="lbl" aria-hidden="true">Numbers</span></button>
+  <button type="button" aria-label="Set up" class="navitem" data-place="setup" onclick="goTab('setup')"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM14 4h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM5 13h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1zM14 13h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"/></svg><span class="lbl" aria-hidden="true">Set up</span><span class="nav-count" id="nav-setup"></span></button>
 </nav>
 
 </div>
