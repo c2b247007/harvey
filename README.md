@@ -7,7 +7,7 @@
   </a>
 </p>
 
-<p align="center"><strong>The open-source outreach platform that runs on your Claude or ChatGPT plan.</strong></p>
+<p align="center"><strong>The open-source outreach platform that lives inside your agent, on your Claude or ChatGPT plan.</strong></p>
 
 <p align="center">
 Sellbird finds companies that need what you sell, finds the person who decides, checks their email address, writes each one a personal cold email, sends it and handles the replies.
@@ -20,7 +20,6 @@ It runs on your own machine, and by default nothing goes out until you approve i
   <a href="https://github.com/ethanplusai/sellbird/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/ethanplusai/sellbird/actions/workflows/tests.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-244b62"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-244b62?logo=python&logoColor=white">
-  <a href="https://sellbird.ai"><img alt="Hosted at sellbird.ai" src="https://img.shields.io/badge/hosted-sellbird.ai-244b62"></a>
   <a href="https://sellbird.ai/harvey/"><img alt="Formerly Harvey" src="https://img.shields.io/badge/formerly-Harvey-8aa0ad"></a>
 </p>
 
@@ -32,11 +31,34 @@ It runs on your own machine, and by default nothing goes out until you approve i
 
 **New releases, features and the roadmap go out first on X: [follow @sellbirdagent](https://x.com/sellbirdagent).**
 
-**Prefer not to run it yourself? [sellbird.ai](https://sellbird.ai) is the hosted version, with sending domains, inboxes and warmup set up for you. It's in early access.**
+Coming soon: a hosted version of Sellbird, at sellbird.ai.
 
-![Sellbird's dashboard: the Today screen, a conversation that needs you, approving a drafted reply in the Outbox, the signals to confirm, searching contacts, then dark mode](docs/dashboard.gif)
+## Inside your agent
 
-<sub>The demo data is invented: "Bookwell" selling online booking to roofers, dental practices and HVAC shops, on `.test` domains.</sub>
+New in 0.5: Sellbird lives where you already work, in Claude Code, Claude desktop and Codex. Run `sellbird connect` once (or press **Connect** in the dashboard), then ask your agent **"What needs me?"** or **"What did you do overnight?"**. It answers with a card in the chat: what Sellbird did, what waits for your OK, how each campaign is doing. One click opens the full app beside the chat, already signed in.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/agent-card-needs-you-dark.png">
+  <img alt="A card in the chat answering &quot;What needs me?&quot;: six things waiting for a decision (a conversation handed to you, three new leads, a social post and a text), each with a Review button" src="docs/screenshots/agent-card-needs-you-light.png" width="640">
+</picture>
+
+Your agent can read everything, draft, plan and explain. Approving, sending, buying and resuming are always your clicks, in the app. Your agent gets its own key with limited reach, never your dashboard token, and Set up, Your agent logs every call it makes and has a switch that cuts it off. More: [Sellbird inside your agent app](docs/agent-app.md).
+
+## The app
+
+Today, Outbound, Calendar and Numbers each open with one sentence on where things stand. A dock at the bottom holds six places: **Today** (what your agent did and what only you can decide), **Outbound** (drafts waiting for you, replies, campaigns, finding businesses, signals, social), **Inbound** (leads from your site's forms, texts, mentions), **People** (and companies), **Calendar** (week and month, with meetings and scheduled sends) and **Numbers** (charts over time and a found-to-meeting funnel), plus **Set up**. It fits a phone and the narrow side panel of an agent app the same way.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
+  <img alt="The Today page: one sentence on what Claude did in the last day, four headline figures with trends, the setup steps left, and what needs you" src="docs/screenshots/today-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/numbers-dark.png">
+  <img alt="The Numbers page: 9 replies from 57 emails in the last 30 days, with people found, emails sent, replies and meetings over time" src="docs/screenshots/numbers-light.png">
+</picture>
+
+<sub>The demo data is invented: "Bookwell" selling online booking to roofers, dental practices and HVAC shops, on `.example` and `.test` domains.</sub>
 
 ## What it does
 
@@ -144,13 +166,24 @@ Or click **Connect** in the dashboard, under Set up, Your agent: one row per age
 
 `sellbird connect claude-desktop` (or `claude`, `codex`) does just one. `sellbird connect --remove` takes Sellbird out again. Nothing goes into those configs but the command and Sellbird's folder: no key, no token.
 
-ChatGPT and claude.ai in a browser connect from their own servers, so they can't reach Sellbird on your machine. On a ChatGPT plan, use Codex, or hosted Sellbird.
+ChatGPT and claude.ai in a browser connect from their own servers, so they can't reach Sellbird on your machine. On a ChatGPT plan, use Codex.
 
 ## Nothing sends without you
 
 Every outgoing email waits in the Outbox for your approval until you turn on autopilot yourself. Before anything leaves, a pre-send check with no model involved rejects unfilled merge tags, banned phrases, overlong emails, extra links and undeliverable addresses. Autopilot still holds back any email that links to a domain that isn't yours or quotes Sellbird's own instructions. `sellbird sending pause` stops everything at once.
 
 Details: [Approval and sending](docs/approval-and-sending.md) and [Legal and deliverability](docs/deliverability.md).
+
+## Upgrading to 0.5
+
+```bash
+git pull
+pip install -e .
+sellbird connect        # once: adds Sellbird to Claude Code, Claude desktop and Codex
+sellbird dashboard
+```
+
+Your config, data and dashboard sign-in carry over, and nothing needs editing. If you added Sellbird to an agent by hand before, `sellbird connect` shows the change and replaces that entry on your yes, keeping a copy of each settings file. The [changelog](CHANGELOG.md) has the full list, under "Upgrading from 0.3 and 0.4".
 
 ## Upgrading from Harvey
 
@@ -201,6 +234,8 @@ database, the logs and the dashboard token.
 | [Configuration and commands](docs/configuration.md) | `.env`, `sellbird.yaml` and every command |
 | [Extensions](docs/extensions.md) | Adding routes, heartbeat steps and commands from a separate package |
 | [Using a ChatGPT plan (Codex)](docs/codex.md) | Running on Codex instead of Claude |
+| [Sellbird inside your agent app](docs/agent-app.md) | Connecting your agent, cards in the chat, and the dashboard in its side panel |
+| [Inbound leads](docs/inbound-leads.md) · [Texting](docs/texting.md) · [Mentions](docs/mentions.md) · [Social](docs/social.md) · [Events](docs/events.md) | Leads from your forms, consent-first texts, brand mentions, social playbooks and webhooks |
 | [Legal and deliverability](docs/deliverability.md) | The rules you're sending under, and warmup |
 | [Microsoft 365](docs/microsoft365.md) · [Precleared](docs/precleared.md) | Provider setup guides |
 | [Docker](docs/docker.md) · [Troubleshooting](docs/troubleshooting.md) · [Roadmap](docs/roadmap.md) | Running, fixing and what's next |
