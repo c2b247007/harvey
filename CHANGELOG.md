@@ -34,6 +34,20 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **The dashboard, agent first.** Every page opens with a sentence that says
+  where things stand; on Today and Outbound it is your agent's report ("Claude
+  found 4 people and wrote 3 emails in the last day"), built from real
+  records by `/api/agent/report`. Today has a "What Claude did" log that mixes
+  what the agent did with what you decided. Every draft opens in place with
+  the reason that person was picked, then Approve, Ask your agent to change
+  it (copies a prompt), Edit or Skip, and the decisions only you can make
+  carry an "Only you" mark. A chip in the top bar shows whether the agent is
+  working, connected or not there. Sections are bordered panels, with five
+  tones and line sparklines. The dock floats in the same place on every page
+  and never covers the last row. Page changes are a 150ms fade with no layout
+  shift, a draft opens and closes smoothly and can reverse mid-way, and reduced
+  motion keeps fades only.
+
 - **`sellbird connect`: Sellbird in your agent in one step.** It finds Claude
   Code, Claude desktop and Codex on this machine, shows what it will add to
   each, and adds them all on one yes; `--remove` takes it out. Claude desktop

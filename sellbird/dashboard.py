@@ -13,7 +13,7 @@ import sys
 import tempfile
 import uuid
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -2070,6 +2070,97 @@ async def get_agent():
     }
 
 
+# Sellbird's own workers. Their work is the agent's (the brain thinks for
+# each); "user" and "dashboard" are the person; "agent" is the MCP agent.
+_ENGINE_WORKERS = {"scout", "writer", "sender", "handler", "analyst", "discover", "profile",
+                   "sellbird", "trainer"}
+_YOU = {"user", "dashboard"}
+
+
+def _agent_name() -> str:
+    """The thinking agent's name, from the brain Sellbird is set to use."""
+    from sellbird.config import load_config
+    try:
+        cfg = load_config(str(_resolve_config_file()))
+        return {"claude": "Claude", "codex": "Codex"}.get(cfg.brain.provider, "Your agent")
+    except Exception:
+        return "Your agent"
+
+
+def _parse_ts(value) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return None
+
+
+@app.get("/api/agent/report")
+async def agent_report(limit: int = 12):
+    """What the agent did and where things stand, for the answer line, the
+    agent chip and the "What it did" log. Every line comes from a record:
+    the actions log (who wrote it decides "agent" or "you") and the calls
+    the agent made through its own key."""
+    state = _state()
+    await state.init_db()
+    limit = max(1, min(int(limit), 50))
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+
+    async def one(sql, params=()):
+        rows = await query_db(sql, params)
+        return int(next(iter(rows[0].values()))) if rows else 0
+
+    day = {
+        "found": await one("SELECT COUNT(*) AS n FROM prospects WHERE created_at >= ?", (since,)),
+        "written": await one("SELECT COUNT(*) AS n FROM outbox WHERE created_at >= ?", (since,)),
+        "sent": await one("SELECT COUNT(*) AS n FROM outbox WHERE status = 'sent' AND sent_at >= ?", (since,)),
+        "pending": await one("SELECT COUNT(*) AS n FROM outbox WHERE status = 'pending_review'"),
+    }
+    actions = await query_db(
+        "SELECT action_type, agent, details_json, created_at FROM actions "
+        "WHERE agent != 'main' ORDER BY created_at DESC LIMIT ?", (limit * 3,))
+    log = []
+    for a in actions:
+        who = "you" if a["agent"] in _YOU else "agent"
+        try:
+            details = json.loads(a.get("details_json") or "{}")
+        except (ValueError, TypeError):
+            details = {}
+        log.append({"at": a["created_at"], "who": who, "by": a["agent"],
+                    "action_type": a["action_type"], "details": details, "via": "sellbird"
+                    if a["agent"] in _ENGINE_WORKERS else ("key" if a["agent"] == "agent" else "")})
+    # A call the agent made that its route also logged is one thing, not two.
+    logged = [_parse_ts(x["at"]) for x in log if x["by"] == "agent"]
+    for r in await state.get_agent_requests(limit=limit * 3):
+        at = _parse_ts(r["created_at"])
+        if at and any(t and abs((t - at).total_seconds()) <= 5 for t in logged):
+            continue
+        if r["method"] != "GET" and 200 <= int(r["status"] or 0) < 300:
+            log.append({"at": r["created_at"], "who": "agent", "by": "agent", "via": "key",
+                        "action_type": "agent_call", "details": {"what": agent_policy.describe(r["path"])}})
+    log.sort(key=lambda x: str(x["at"]), reverse=True)
+    # The same thing done several times in a row reads as one line.
+    merged = []
+    for item in log:
+        prev = merged[-1] if merged else None
+        if prev and prev["who"] == item["who"] and prev["action_type"] == item["action_type"] and \
+                prev["details"] == item["details"]:
+            prev["times"] = prev.get("times", 1) + 1
+            continue
+        merged.append(item)
+    requests_ = await state.get_agent_requests(limit=1)
+    last_seen = requests_[0]["created_at"] if requests_ else ""
+    running = _check_sellbird_pid() is not None
+    recent = bool(last_seen) and str(last_seen) >= (
+        datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    off = await _agent_is_off()
+    return {
+        "name": _agent_name(),
+        "chip": "off" if off else ("working" if running else ("connected" if recent else "not_connected")),
+        "engine_running": running, "last_seen": last_seen,
+        "day": day, "log": merged[:limit],
+    }
+
+
 @app.post("/api/agent/access")
 async def set_agent_access(request: Request):
     """Cut the agent off, or let it back in: {"access": "off"} or {"access": "on"}.
@@ -2457,6 +2548,9 @@ async def get_outbox_api():
             "paused": await state.get_setting("sending_paused"),
             "pending": await _with_context(
                 await state.get_outbox(status="pending_review", limit=100)),
+            # The list stops at 100; the count is every one waiting.
+            "pending_total": int((await query_db(
+                "SELECT COUNT(*) AS n FROM outbox WHERE status = 'pending_review'"))[0]["n"]),
             # Mail going out right now leads the list.
             "approved": (await state.get_outbox(status="sending", limit=10)
                          + await state.get_outbox(status="approved", limit=50)),

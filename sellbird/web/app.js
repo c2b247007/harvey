@@ -14,10 +14,14 @@ const THEMES = ['auto', 'light', 'dark'];
 
 function applyTheme(mode) {
   const root = document.documentElement;
+  // Every colour would transition at once and smear: switch with none, for one frame.
+  root.classList.add('theme-swap');
   if (mode === 'auto') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', mode);
   document.querySelectorAll('[data-theme-opt]').forEach((b) =>
     b.setAttribute('aria-pressed', String(b.dataset.themeOpt === mode)));
+  void root.offsetHeight;
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-swap')));
 }
 
 function currentTheme() {
@@ -216,13 +220,117 @@ function timeOfDay(d) {
 }
 
 // Columns of a tiny bar chart; the last day is "today".
-function sparkBars(values, title) {
+// A small line with its last point marked: the shape of a 14-day trend.
+function sparkBars(values, title, tone) {
   const vals = (values || []).map(v => Number(v) || 0);
-  if (!vals.length) return '';
-  const max = Math.max(...vals, 1);
-  return '<span class="spark" role="img" aria-label="' + escHtml(title || 'trend') + '">' +
-    vals.map((v, i) => '<i class="' + (v ? 'on' : '') + '" style="height:' +
-      Math.max(2, Math.round(v / max * 28)) + 'px" title="' + v + '"></i>').join('') + '</span>';
+  if (vals.length < 2) return '';
+  const max = Math.max(...vals), min = Math.min(...vals), span = max - min || 1;
+  const pts = vals.map((v, i) => [Math.round((i / (vals.length - 1)) * 60 + 2), Math.round(20 - ((v - min) / span) * 17)]);
+  const c = tone === 'good' ? 'var(--good-solid)' : 'var(--accent)';
+  const last = pts[pts.length - 1];
+  return '<svg class="sparkline" viewBox="0 0 64 22" role="img" aria-label="' + escHtml(title || 'trend') + '">' +
+    '<polyline points="' + pts.map(p => p.join(',')).join(' ') + '" fill="none" stroke="' + c +
+    '" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.2" fill="' + c + '"/></svg>';
+}
+
+// ── Agent first: the answer line, the agent's name, its log ──
+
+const LOCK_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="7.5" width="8" height="6" rx="1.2"/>' +
+  '<path d="M5.8 7.5V5.6a2.2 2.2 0 0 1 4.4 0v1.9"/></svg>';
+const SPARK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/></svg>';
+const CHECK_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>';
+// A decision only the person can make: approve, send, buy, resume.
+function onlyYou() {
+  return '<span class="only-you" title="Your agent can\'t do this; only you can">' + LOCK_SVG + 'Only you</span>';
+}
+
+let _report = null;     // /api/agent/report: name, chip, the day, the log
+function agentName() { return (_report && _report.name) || 'Your agent'; }
+function agentWho() { return '<span class="agent-name">' + escHtml(agentName()) + '</span>'; }
+
+// The page opens with an eyebrow, one badge and a sentence that says where things stand.
+function setAnswer(screen, badgeHtml, sentenceHtml, eyebrow) {
+  const head = document.querySelector('#' + screen + ' .section-head');
+  if (!head) return;
+  const box = head.firstElementChild;
+  const h1 = box.querySelector('h1');
+  let row = box.querySelector('.headrow');
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'headrow';
+    h1.replaceWith(row);
+    row.appendChild(h1);
+    row.insertAdjacentHTML('beforeend', '<span class="head-badge"></span>');
+  }
+  if (eyebrow) h1.textContent = eyebrow;
+  row.querySelector('.head-badge').innerHTML = badgeHtml || '';
+  let p = box.querySelector('p.answer') || box.querySelector('p');
+  if (!p) { p = document.createElement('p'); box.appendChild(p); }
+  p.className = 'answer';
+  p.innerHTML = sentenceHtml;
+  head.classList.add('has-answer');
+}
+function toneBadge(tone, text) {
+  return '<span class="badge ' + tone + '">' + escHtml(text) + '</span>';
+}
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+// The chip in the top bar: is the agent at work, connected, or not there.
+function renderAgentChip() {
+  const el = document.getElementById('agent-chip');
+  if (!el || !_report) return;
+  const name = agentName();
+  const words = {
+    working: '<b>' + escHtml(name) + '</b> is working',
+    connected: '<b>' + escHtml(name) + '</b> connected',
+    not_connected: 'Agent not connected',
+    off: 'Agent cut off',
+  };
+  const state = own(words, _report.chip) ? _report.chip : 'not_connected';
+  el.className = 'agentchip ' + state.replace('_', '-');
+  if (state === 'working') el.classList.add('working');
+  if (state === 'connected') el.classList.add('connected');
+  el.querySelector('.lbl').innerHTML = words[state];
+  el.setAttribute('aria-label', el.querySelector('.lbl').textContent + '. Open Your agent');
+}
+
+async function loadAgentReport() {
+  const d = await api('/api/agent/report');
+  if (d && !d.error && d.day) { _report = d; renderAgentChip(); }
+  return _report;
+}
+
+// One line of the agent's log: what it did through Sellbird, or what you did.
+function logLine(e) {
+  const a = {action_type: e.action_type, agent: e.by, details: e.details || {}, created_at: e.at};
+  let text = e.action_type === 'agent_call'
+    ? 'Through its own key: ' + escHtml((e.details || {}).what || 'a change')
+    : actionText(a);
+  if (e.times > 1) text += ' <span class="muted">(' + e.times + ' times)</span>';
+  const you = e.who === 'you';
+  return '<div class="logrow"><span class="lt">' + relTime(e.at) + '</span>' +
+    '<span class="mk' + (you ? ' you' : '') + '" title="' + (you ? 'You' : escHtml(agentName())) + '">' +
+      (you ? CHECK_SVG : SPARK_SVG) + '</span>' +
+    '<span class="lb">' + text +
+      (e.via === 'sellbird' ? '<span class="ls">Through Sellbird</span>' : '') + '</span></div>';
+}
+function logHtml(entries, empty) {
+  if (!entries || !entries.length) return '<p class="log-empty">' + escHtml(empty) + '</p>';
+  return '<div class="log">' + entries.map(logLine).join('') + '</div>';
+}
+
+// "Ask your agent to change it": put a ready prompt on the clipboard.
+async function copyPrompt(text) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch {
+    try {
+      const t = document.createElement('textarea');
+      t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+      document.body.appendChild(t); t.select(); ok = document.execCommand('copy'); t.remove();
+    } catch { ok = false; }
+  }
+  showToast(ok ? 'Copied a prompt. Paste it to ' + agentName() + '.' : 'Couldn\'t copy. The prompt: ' + text, ok ? 'success' : 'info');
 }
 
 // A segmented meter, 0-100.
@@ -298,6 +406,14 @@ function actionText(a) {
     case 'text_opt_out': return 'A number replied STOP' + (d.cancelled ? ' · ' + n(d.cancelled, 'queued text', 'queued texts') + ' cancelled' : '');
     case 'consent_recorded': return 'You recorded consent · ' + escHtml(d.channel === 'call' ? 'calls' : 'texts') + ' · ' + escHtml(d.status === 'granted' ? 'yes' : 'taken back');
     case 'meeting_booked': return 'Meeting booked' + (d.cancelled ? ' · ' + n(d.cancelled, 'queued email', 'queued emails') + ' cancelled' : '');
+    case 'agent_connect': {
+      const name = own({'claude': 'Claude Code', 'claude-desktop': 'Claude desktop', 'codex': 'Codex'}, d.agent) || 'an agent';
+      return d.action === 'remove' ? 'You took Sellbird out of ' + name : 'You connected Sellbird to ' + name;
+    }
+    case 'pane_link_made': return 'Opened the dashboard in its browser pane';
+    case 'agent_access_off': return 'You cut your agent off';
+    case 'agent_access_on': return 'You let your agent back in';
+    case 'panes_signed_out': return 'You signed your agent\'s browser panes out';
     case 'conversation_status':
       return d.to === 'closed' ? 'You closed a conversation'
         : d.from === 'needs_human' ? 'You handed a conversation back to Sellbird' : 'You reopened a conversation';
@@ -511,12 +627,18 @@ function renderScreenNav(id) {
       '</button>').join('') + '</div>';
   }
   el.innerHTML = html;
+  // A way back goes above the page head; a place's views go under its answer.
+  const head = document.querySelector('#' + id + ' .section-head, #' + id + ' .person-head');
+  if (head && !s.parent && s.pill) head.after(el);
+  else if (head) head.before(el);
 }
 
+const _scrollAt = {};   // where each screen was scrolled to, for Back
 function showTab(id, opts) {
   opts = opts || {};
   id = screenId(id);
   const changed = id !== currentTab;
+  if (changed) _scrollAt[currentTab] = window.scrollY;
   currentTab = id;
   const s = SCREENS[id];
   _lastScreen[s.place] = id;
@@ -535,7 +657,16 @@ function showTab(id, opts) {
     const frag = '#' + (id === 'person' && _personId ? 'person/' + encodeURIComponent(_personId) : id);
     try { if (window.location.hash !== frag) history.pushState(null, '', frag); } catch { /* ignore */ }
   }
-  if (changed && !opts.keepScroll) {
+  // After the first screen, a page change is a 150ms fade, never a slide.
+  if (changed && !opts.initial) {
+    document.body.classList.remove('first-load');
+    document.body.classList.remove('routed');
+    void document.body.offsetWidth;
+    document.body.classList.add('routed');
+  }
+  if (changed && opts.fromHash && _scrollAt[id] !== undefined) {
+    window.scrollTo(0, _scrollAt[id]);
+  } else if (changed && !opts.keepScroll) {
     window.scrollTo(0, 0);
     const title = document.querySelector('#' + id + ' .section-head h1');
     if (title && opts.focus !== false) title.focus({preventScroll: true});
@@ -607,10 +738,12 @@ async function loadToday() {
 
   const items = data.items || [];
   const needs = items.filter(i => i.tone !== 'good').length;
-  const lede = document.getElementById('today-lede');
-  if (lede) lede.textContent = needs
-    ? (needs === 1 ? 'One thing needs you.' : needs + ' things need you.') + ' Everything else is running.'
-    : 'Nothing needs you right now.';
+  await todayAnswer(data, needs);
+  const panel = document.getElementById('today-needs');
+  if (panel) {
+    panel.classList.toggle('attn', needs > 0);
+    panel.querySelector('h2').innerHTML = 'Needs you' + (needs ? '<span class="h-right">' + onlyYou() + '</span>' : '');
+  }
   if (!items.length) {
     el.innerHTML = '<div class="w"><div class="row">' +
       '<span class="who tone-good" aria-hidden="true">' + icon('check') + '</span><div class="grow">' +
@@ -793,25 +926,37 @@ async function loadFunnel() {
     ).join('') + '</div>';
 }
 
+// Today's sentence: what the agent did since yesterday, then what needs you.
+async function todayAnswer(data, needs) {
+  const r = _report || await loadAgentReport();
+  const st = data.stats || {};
+  const day = (r && r.day) || {};
+  const did = [];
+  if (day.found) did.push('found ' + plural(day.found, 'person', 'people'));
+  if (day.written) did.push('wrote ' + plural(day.written, 'email', 'emails'));
+  if (day.sent) did.push('sent ' + plural(day.sent, 'email', 'emails') + ' you approved');
+  const first = did.length
+    ? agentWho() + ' ' + did.join(', ').replace(/, ([^,]*)$/, ' and $1') + ' in the last day.'
+    : (r && r.engine_running ? agentWho() + ' is working; nothing new since yesterday.'
+                             : 'Nothing new since yesterday.');
+  const waiting = st.outbox_pending || 0;
+  const then = waiting
+    ? ' ' + plural(waiting, 'email is', 'emails are') + ' waiting for your OK.'
+    : needs ? ' ' + plural(needs, 'thing needs', 'things need') + ' you.' : ' Nothing needs you.';
+  const date = new Date().toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'});
+  setAnswer('today', needs ? toneBadge('warn', needs + ' need you') : toneBadge('good', 'All clear'), first + then, date);
+}
+
+// What the agent did, mixed with what you did: every line from a record.
 async function loadTodayActivity() {
   const el = document.getElementById('today-activity');
   if (!el) return;
-  const data = await api('/api/activity');
-  if (!Array.isArray(data)) return;  // offline: Today's queue says so
-  // Heartbeats are noise here; the Activity tab keeps them.
-  const shown = data.filter(a => a.agent !== 'main').slice(0, 8);
-  if (!shown.length) {
-    el.innerHTML = '<p class="muted" style="font-size:13px">' +
-      'Nothing yet. Every action Sellbird takes shows up here.</p>';
-    return;
-  }
-  el.innerHTML = '<div class="timeline">' + shown.map(a =>
-    '<div class="tl-item">' +
-      '<span class="tl-time">' + relTime(a.created_at) + '</span>' +
-      '<span class="tl-icon">' + icon(own(AGENT_ICONS, a.agent) || 'activity') + '</span>' +
-      '<span class="tl-text">' + actionText(a) + '</span>' +
-      '<span class="tl-agent">' + escHtml(a.agent) + '</span>' +
-    '</div>').join('') + '</div>';
+  const r = await loadAgentReport();
+  const title = document.getElementById('today-log-title');
+  if (title) title.textContent = 'What ' + agentName() + ' did';
+  if (!r) return;  // offline: Today's queue says so
+  el.innerHTML = logHtml(r.log.slice(0, 8), 'Nothing yet. Everything ' + agentName() +
+    ' does through Sellbird, and everything you decide, shows up here.');
 }
 
 function navCount(id, n) {
@@ -1900,19 +2045,15 @@ async function loadOutbox() {
     _desk.unsaved = null;
   }
   if (_desk.i >= pending.length) _desk.i = Math.max(0, pending.length - 1);
-  navCount('nav-outbox', pending.length);
+  _desk.paused = !!data.paused;
+  _desk.total = Math.max(pending.length, Number(data.pending_total) || 0);
+  navCount('nav-outbox', _desk.total);
+  if (!_report) await loadAgentReport();
+  outboxAnswer(_desk.total);
 
-  actions.innerHTML =
-    (pending.length && !data.paused
-      ? (pending.length > pending.filter(p => heldReason(p)).length
-        ? '<button class="btn btn-primary btn-sm" onclick="outboxApproveAll()" ' +
-          'title="Emails Sellbird held are left for you to approve one by one">Approve all ' +
-          (pending.length - pending.filter(p => heldReason(p)).length) + '</button>' : '') : '') +
-    (data.paused
-      ? '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'resume\')">' +
-        'Resume sending</button>'
-      : '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'pause\')">' +
-        'Pause all sending</button>');
+  actions.innerHTML = data.paused
+    ? onlyYou() + '<button class="btn btn-primary btn-sm" onclick="sendingToggle(\'resume\')">Resume sending</button>'
+    : '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'pause\')">Pause all sending</button>';
 
   // The kill switch gets a banner only when it's actually on — a permanent
   // bar for a thing that isn't happening is just noise.
@@ -1928,7 +2069,8 @@ async function loadOutbox() {
         '<p>' + escHtml(data.compliance_notice) + '</p></div></div>';
   }
 
-  desk.innerHTML = pending.length ? renderDesk(pending, _desk.i) :
+  outboxLog();
+  desk.innerHTML = pending.length ? renderDesk(pending) :
     '<div class="card">' + emptyState(icon('check'), 'Nothing to review',
       _sendingMode && _sendingMode.mode === 'autopilot'
         ? 'Autopilot is on, so Sellbird sends on its own. Anything it holds for you shows up here.'
@@ -1960,6 +2102,16 @@ async function loadOutbox() {
       ['To', r => r.to_email], ['Status', r => badge(r.status), false, true],
       ['Reason', r => r.error, true], ['Updated', r => formatDate(r.updated_at), true],
     ]);
+}
+
+// A short "What [agent] did here": the writing and sending lines of the log.
+const OUTBOUND_ACTIONS = /^(write_|stage_campaign|email_sent|outbox|campaign|approve|reply_queued|send)/;
+function outboxLog() {
+  const el = document.getElementById('outbox-log');
+  if (!el || !_report) return;
+  const rows = (_report.log || []).filter(e => OUTBOUND_ACTIONS.test(e.action_type || '')).slice(0, 4);
+  el.innerHTML = '<section class="sec" style="margin-top:24px"><h2>What ' + escHtml(agentName()) + ' did here</h2>' +
+    logHtml(rows, 'Nothing yet. When ' + agentName() + ' writes or sends, it shows up here.') + '</section>';
 }
 
 const CONTACT_SOURCES = {
@@ -2113,73 +2265,116 @@ function heldReason(item) {
   return why.charAt(0).toUpperCase() + why.slice(1);
 }
 
-function renderDesk(items, i) {
-  const cur = items[i];
-  const rail = items.map((it, n) => {
-    const who = it.context && it.context.contact ? it.context.contact : it.to_email;
-    const parts = String(who || '').split(/[\s@.]+/);
-    return '<div class="desk-item ' + (n === i ? 'active' : '') + '" onclick="deskGo(' + n + ')">' +
-      '<span class="avatar">' + initials(parts[0], parts[1]) + '</span>' +
-      '<div class="di-text"><div class="to">' + escHtml(who) +
-        (heldReason(it) ? ' <span class="tag t-bad" title="Sellbird held this instead of sending it">Held</span>' : '') +
-        '</div>' +
-      '<div class="sub">' + escHtml(it.subject || '(no subject)') + '</div></div>' +
-    '</div>';
-  }).join('');
+// The Outbox as the mockup draws it: a list of drafts, each opening in place
+// with the reason the person was picked, then Approve, Ask your agent, Skip.
+function draftWhy(it) {
+  const c = it.context || {};
+  const signals = Object.entries(c.signals || {}).slice(0, 3).map(([k, v]) => k + ': ' + v);
+  const text = c.notes || signals.join('; ');
+  const role = [c.contact_title, c.company].filter(Boolean).join(' at ');
+  return {text, role};
+}
 
-  const editing = _desk.editing === cur.id;
-  const unsaved = (editing && _desk.unsaved) || {subject: cur.subject || '', body: cur.body || ''};
-  // A reply keeps its subject: Gmail threads by it.
-  const fixedSubject = cur.kind === 'reply'
-    ? ' readonly title="A reply keeps its subject so it stays in the thread"' : '';
+function renderDraft(it) {
+  const c = it.context || {};
+  const name = c.contact || it.to_email || '';
+  const parts = String(name).split(/[\s@.]+/);
+  const open = _desk.open === it.id;
+  const held = heldReason(it);
+  const editing = _desk.editing === it.id;
+  const why = draftWhy(it);
+  const first = String(c.contact || '').split(' ')[0] || 'this person';
+  const unsaved = (editing && _desk.unsaved) || {subject: it.subject || '', body: it.body || ''};
+  const fixedSubject = it.kind === 'reply' ? ' readonly title="A reply keeps its subject so it stays in the thread"' : '';
+  const added = it.kind === 'sequence' && !(it.body || '').trimEnd().endsWith(_desk.footer) ? _desk.footer : '';
+  const kind = held ? '<span class="tag t-bad" title="Sellbird held this instead of sending it">Held</span>'
+    : '<span class="tag">' + (it.kind === 'reply' ? 'Reply' : 'Email ' + escHtml(String(it.step || 1))) + '</span>';
   const draft = editing
-    ? '<input id="desk-subject" class="desk-edit-subject" value="' + escHtml(unsaved.subject) + '"' +
+    ? '<input id="desk-subject" class="desk-edit-subject" aria-label="Subject" value="' + escHtml(unsaved.subject) + '"' +
         fixedSubject + ' oninput="deskKeep()">' +
-      '<textarea id="desk-body" class="desk-edit-body" rows="14" oninput="deskKeep()">' +
-        escHtml(unsaved.body) + '</textarea>'
-    : '<div class="subject">' + escHtml(cur.subject || '(no subject)') + '</div>' +
-      '<div class="body">' + escHtml(cur.body) + '</div>';
-  // Cold email leaves with the footer underneath; show it as it will go out.
-  // Not added again when the body already ends with it, as in the Sender.
-  const added = cur.kind === 'sequence' && !(cur.body || '').trimEnd().endsWith(_desk.footer)
-    ? _desk.footer : '';
-  const footer = added
-    ? '<div class="desk-footer" title="Added when it sends (compliance in sellbird.yaml)">' +
-        escHtml(added) + '</div>' : '';
-  const actions = editing
-    ? '<button class="btn btn-primary" onclick="deskSave(' + jsq(cur.id) + ')">Save</button>' +
-      '<button class="btn btn-secondary" onclick="deskEdit(null)">Cancel</button>'
-    : '<button class="btn btn-primary" onclick="outboxAct(' + jsq(cur.id) + ',\'approve\')">' +
-        'Approve <kbd>A</kbd></button>' +
-      '<button class="btn btn-secondary" onclick="deskEdit(' + jsq(cur.id) + ')">' +
-        'Edit <kbd>E</kbd></button>' +
-      '<button class="btn btn-secondary" onclick="outboxAct(' + jsq(cur.id) + ',\'reject\')">' +
-        'Reject <kbd>R</kbd></button>';
+      '<textarea id="desk-body" class="desk-edit-body" aria-label="Email" rows="10" oninput="deskKeep()">' + escHtml(unsaved.body) + '</textarea>'
+    : '<div><div class="subject">' + escHtml(it.subject || '(no subject)') + '</div>' +
+      '<div class="body">' + escHtml(it.body) + '</div></div>';
+  const acts = editing
+    ? '<button class="btn btn-primary btn-sm" onclick="deskSave(' + jsq(it.id) + ')">Save</button>' +
+      '<button class="btn btn-sm" onclick="deskEdit(null)">Cancel</button>'
+    : '<button class="btn btn-primary btn-sm" onclick="outboxAct(' + jsq(it.id) + ',\'approve\')">Approve <kbd>A</kbd></button>' +
+      '<button class="btn btn-sm" onclick="askAboutDraft(' + jsq(it.id) + ')">Ask ' + escHtml(agentName()) + ' to change it</button>' +
+      '<button class="btn btn-sm" onclick="deskEdit(' + jsq(it.id) + ')">Edit <kbd>E</kbd></button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="outboxAct(' + jsq(it.id) + ',\'reject\')">Skip <kbd>R</kbd></button>' +
+      onlyYou();
+  return '<div class="draft' + (open ? ' open' : '') + '" data-id="' + escHtml(it.id) + '"><div class="draft-in">' +
+    '<button type="button" class="draft-head" aria-expanded="' + open + '" aria-controls="dm-' + escHtml(it.id) + '" ' +
+      'onclick="toggleDraft(' + jsq(it.id) + ')">' +
+      '<span class="who" aria-hidden="true">' + initials(parts[0], parts[1]) + '</span>' +
+      '<span class="grow"><span class="t" style="display:block">' + escHtml(name) +
+        (c.company ? ' <span class="muted" style="font-weight:400">· ' + escHtml(c.company) + '</span>' : '') + '</span>' +
+        '<span class="s" style="display:block">' + escHtml(it.subject || '(no subject)') + '</span></span>' +
+      kind + icon('chevron', 'chev') + '</button>' +
+    '<div class="draft-body" id="dm-' + escHtml(it.id) + '"><div><div class="draft-mail">' +
+      '<div class="agentnote">' + SPARK_SVG + '<div><b>Why ' + escHtml(first) + ':</b> ' +
+        (why.text ? escHtml(why.text) : 'no reason was recorded for this one, so check their site before you approve.') +
+        (why.role ? ' ' + escHtml(why.role) + '.' : '') + '</div></div>' +
+      (held ? '<div class="banner wait">' + icon('alert') + '<div><b>Sellbird held this instead of sending it</b>' +
+        '<p>' + escHtml(held) + '. Read it first: text from a website or an email can try to steer what Sellbird writes.</p></div></div>' : '') +
+      '<p class="draft-to">To ' + escHtml(it.to_email) + ' · sends ' + escHtml(formatDate(it.send_at)) + '</p>' +
+      draft + (added ? '<div class="desk-footer" title="Added when it sends">' + escHtml(added) + '</div>' : '') +
+      '<div class="draft-acts">' + acts + '</div>' +
+    '</div></div></div></div></div>';
+}
 
-  return '<div class="desk">' +
-    '<div class="desk-list">' + rail + '</div>' +
-    '<div class="desk-pane">' +
-      '<div class="to-line">To <b>' + escHtml(cur.to_email) + '</b>' +
-        '<span class="tag">' + (cur.kind === 'reply' ? 'Reply' : 'Email ' + escHtml(String(cur.step))) + '</span>' +
-        '<span class="muted">sends ' + formatDate(cur.send_at) + '</span></div>' +
-      renderDeskContext(cur.context) +
-      (heldReason(cur)
-        ? '<div class="banner wait desk-held">' + icon('alert') + '<div><b>Sellbird held this instead of sending it</b>' +
-          '<div>' + escHtml(heldReason(cur)) + '. Read it before approving: text from a website or an ' +
-          'email can try to steer what Sellbird writes.</div></div></div>'
-        : '') +
-      draft + footer +
-      '<div class="desk-actions">' + actions +
-        '<span class="muted" style="font-size:12px;margin-left:auto">' +
-          (i + 1) + ' of ' + items.length + '</span>' +
-      '</div>' +
-    '</div></div>';
+function renderDesk(items) {
+  if (!_desk.open || !items.some(x => x.id === _desk.open)) _desk.open = items.length ? items[0].id : null;
+  const free = approvable();
+  return '<section class="sec"><h2>Drafts' + (_desk.total > items.length
+      ? ' <span class="hint" style="margin-left:0">the first ' + items.length + ' of ' + _desk.total + '</span>' : '') +
+    ' <span class="h-right">' + onlyYou() +
+      (free && !_desk.paused ? '<button class="btn btn-primary btn-sm" onclick="outboxApproveAll()" ' +
+        'title="Emails Sellbird held are left for you to approve one by one">Approve all ' + free + '</button>' : '') +
+    '</span></h2><div class="drafts">' + items.map(renderDraft).join('') + '</div>' +
+    '<p class="w-f" style="margin:0;padding:10px 20px 12px;border-top:1px solid var(--line)">Keys: <kbd>J</kbd> <kbd>K</kbd> move, ' +
+      '<kbd>A</kbd> approve, <kbd>E</kbd> edit, <kbd>R</kbd> skip.</p></section>';
+}
+
+function paintDesk() {
+  const el = document.getElementById('outbox-desk');
+  if (el && _desk.items.length) el.innerHTML = renderDesk(_desk.items);
+}
+
+// How many Approve all would approve: every one waiting, less those Sellbird held.
+function approvable() {
+  const shown = _desk.items.length - _desk.items.filter(p => heldReason(p)).length;
+  return Math.max(shown, (_desk.total || 0) - _desk.items.filter(p => heldReason(p)).length);
+}
+
+// Open or close one draft in place. A second click mid-way reverses it:
+// the height is a transition, so it turns around from wherever it is.
+function toggleDraft(id) {
+  if (_desk.editing && _desk.editing !== id) { deskBusy(); return; }
+  openDraft(_desk.open === id ? null : id);
+}
+function openDraft(id) {
+  _desk.open = id;
+  document.querySelectorAll('#outbox-desk .draft').forEach(d => {
+    const on = d.dataset.id === _desk.open;
+    d.classList.toggle('open', on);
+    d.querySelector('.draft-head').setAttribute('aria-expanded', String(on));
+  });
+}
+
+function askAboutDraft(id) {
+  const it = _desk.items.find(x => x.id === id);
+  if (!it) return;
+  const c = it.context || {};
+  copyPrompt('In Sellbird, rewrite the draft to ' + (c.contact || it.to_email) + (c.company ? ' at ' + c.company : '') +
+    ' (outbox id ' + id + '). Keep the reason it found, keep it short, and leave it waiting for my approval.');
 }
 
 function deskEdit(id) {
   _desk.editing = id;
   _desk.unsaved = null;
-  document.getElementById('outbox-desk').innerHTML = renderDesk(_desk.items, _desk.i);
+  if (id) _desk.open = id;
+  paintDesk();
   if (id) document.getElementById('desk-body').focus();
 }
 
@@ -2191,8 +2386,8 @@ function deskKeep() {
   };
 }
 
-// While a draft is being edited, nothing else on the desk may act on the
-// stored version of it: Save or Cancel first.
+// While a draft is being edited, nothing else may act on the stored version
+// of it: Save or Cancel first.
 function deskBusy() {
   if (!_desk.editing) return false;
   showToast('Save or cancel your edit first.', 'error');
@@ -2225,14 +2420,14 @@ async function deskSave(id) {
 function deskGo(n) {
   if (n < 0 || n >= _desk.items.length || deskBusy()) return;
   _desk.i = n;
-  document.getElementById('outbox-desk').innerHTML = renderDesk(_desk.items, n);
+  openDraft(_desk.items[n].id);
+  const row = document.querySelector('#outbox-desk .draft[data-id="' + CSS.escape(_desk.items[n].id) + '"] .draft-head');
+  if (row) row.focus({preventScroll: false});
 }
 
 // Keyboard review. Ignored while typing into a field, so Settings still works.
 document.addEventListener('keydown', e => {
   if (currentTab !== 'outbox' || e.metaKey || e.ctrlKey || e.altKey) return;
-  // Mid-edit, A would approve the stored draft, not what's typed. Only
-  // Escape (cancel) works until the edit is saved or cancelled.
   if (_desk.editing) {
     const typing = /^(input|textarea)$/i.test(e.target.tagName || '');
     if (e.key === 'Escape') { e.preventDefault(); deskEdit(null); }
@@ -2241,21 +2436,57 @@ document.addEventListener('keydown', e => {
   }
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
-  const cur = _desk.items[_desk.i];
+  const at = Math.max(0, _desk.items.findIndex(x => x.id === _desk.open));
+  const cur = _desk.items[at];
   const k = e.key.toLowerCase();
-  if (k === 'j') { e.preventDefault(); deskGo(_desk.i + 1); }
-  else if (k === 'k') { e.preventDefault(); deskGo(_desk.i - 1); }
+  if (k === 'j') { e.preventDefault(); deskGo(at + 1); }
+  else if (k === 'k') { e.preventDefault(); deskGo(at - 1); }
   else if (k === 'a' && cur) { e.preventDefault(); outboxAct(cur.id, 'approve'); }
   else if (k === 'r' && cur) { e.preventDefault(); outboxAct(cur.id, 'reject'); }
   else if (k === 'e' && cur) { e.preventDefault(); deskEdit(cur.id); }
 });
 
+// Approve or skip: the row folds away, the next draft opens, and the dock,
+// the tab count and the answer line change at the same moment.
 async function outboxAct(id, action) {
   if (deskBusy()) return;
   const data = await api('/api/outbox/' + encodeURIComponent(id) + '/' + action, {method: 'POST'});
-  if (data && data.success) showToast(action === 'approve' ? 'Approved. It will send on schedule.' : 'Rejected.', 'success');
-  else showToast(failMsg(data, 'Action failed.'), 'error');
-  loadOutbox();
+  if (!(data && data.success)) { showToast(failMsg(data, 'Action failed.'), 'error'); loadOutbox(); return; }
+  const at = _desk.items.findIndex(x => x.id === id);
+  const next = _desk.items[at + 1] || _desk.items[at - 1];
+  _desk.items = _desk.items.filter(x => x.id !== id);
+  const row = document.querySelector('#outbox-desk .draft[data-id="' + CSS.escape(id) + '"]');
+  showToast(action === 'approve' ? 'Approved. It sends on schedule.' : 'Skipped. This email won\'t go out.', 'success');
+  _desk.total = Math.max(_desk.items.length, (_desk.total || 0) - 1);
+  outboxCounts(_desk.total);
+  if (next) openDraft(next.id);
+  if (row) {
+    row.classList.add('leaving');
+    let gone = false;
+    const done = () => { if (gone) return; gone = true; row.remove(); loadOutbox(); };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) setTimeout(done, 150);
+    else setTimeout(done, 220);
+  } else loadOutbox();
+}
+
+// The Outbox's numbers everywhere they show, from one place.
+function outboxCounts(pending) {
+  const before = _counts['nav-outbox'] || 0;
+  navCount('nav-outbox', pending);
+  navCount('nav-outbound', Math.max(0, (_counts['nav-outbound'] || 0) - (before - pending)));
+  outboxAnswer(pending);
+  const approveAll = document.querySelector('#outbox-desk .sec > h2 .btn-primary');
+  const free = approvable();
+  if (approveAll) { if (free) approveAll.textContent = 'Approve all ' + free; else approveAll.remove(); }
+}
+
+function outboxAnswer(pending) {
+  setAnswer('outbox', pending ? toneBadge('warn', pending + ' waiting') : toneBadge('good', 'All approved'),
+    pending
+      ? agentWho() + ' wrote ' + plural(pending, 'email', 'emails') + ' that ' + (pending === 1 ? 'is' : 'are') +
+        ' waiting for you. Each one says why that person, so you can decide in a minute.'
+      : 'Nothing is waiting for you. ' + agentName() + ' adds drafts here as it writes them.',
+    'Outbound');
 }
 
 async function outboxApproveAll() {
@@ -2456,6 +2687,16 @@ async function loadProspects() {
   if (!data) { el.innerHTML = offlineState(); return; }
   _prospects = data;
   if (pipe && !pipe.error) _pipeline = pipe;
+  if (Array.isArray(data)) {
+    const companies = new Set(data.map(x => x.company_id || x.company).filter(Boolean)).size;
+    const talking = data.filter(x => ['talking', 'meeting_booked', 'proposal'].includes(x.stage)).length;
+    setAnswer('prospects', toneBadge('info', plural(data.length, 'person', 'people')),
+      data.length
+        ? plural(data.length, 'person', 'people') + (companies ? ' at ' + plural(companies, 'company', 'companies') : '') + '. ' +
+          (talking ? talking + (talking === 1 ? ' is' : ' are') + ' talking to you.' : 'Nobody is talking to you yet.')
+        : agentName() + ' hasn\'t found anyone yet.',
+      'People');
+  }
   if (!data.length) {
     el.innerHTML = emptyState(icon('contacts'), 'No one here yet',
       'Sellbird hasn\'t found any prospects. Once it\'s running, the Scout agent searches the web for people matching your ideal customer profile in <b>sellbird.yaml</b>.');
@@ -3431,6 +3672,13 @@ async function loadCalendar() {
   if (!data) { el.innerHTML = offlineState(); return; }
   if (data.error) { el.innerHTML = emptyState(icon('alert'), 'Couldn\'t read the calendar', escHtml(data.error)); return; }
   el.innerHTML = calendarHtml(data, isoDay(new Date()));
+  const meetings = (data.meetings || []).length;
+  const scheduled = (data.days || []).reduce((n, d) => n + (d.scheduled || 0), 0);
+  const waiting = (data.days || []).reduce((n, d) => n + (d.waiting || 0), 0);
+  setAnswer('calendar', toneBadge('info', plural(meetings, 'meeting', 'meetings')),
+    (meetings ? plural(meetings, 'meeting', 'meetings') + ' this week' : 'No meetings this week') +
+    (scheduled ? ', and ' + plural(scheduled, 'email goes', 'emails go') + ' out on schedule.' : '.') +
+    (waiting ? ' ' + plural(waiting, 'email waits', 'emails wait') + ' for your OK first.' : ''), 'Calendar');
 }
 
 function calendarHtml(data, today) {
@@ -3539,6 +3787,11 @@ async function loadNumbers() {
   if (!trend || !Array.isArray(trend.days)) { el.innerHTML = offlineState(); return; }
   if (pipe && !pipe.error) _pipeline = pipe;
   el.innerHTML = numbersHtml(weeks, trend, stats, campaigns, inboxes);
+  const sum = a => (a || []).reduce((x, y) => x + (Number(y) || 0), 0);
+  const sent = sum(trend.sent), replies = sum(trend.replies);
+  setAnswer('numbers', sent ? toneBadge('info', (100 * replies / sent).toFixed(1) + '% reply rate') : toneBadge('', 'Nothing sent yet'),
+    sent ? plural(replies, 'reply', 'replies') + ' from ' + plural(sent, 'email', 'emails') + ' in the last ' + weeks + ' weeks.'
+         : 'Nothing has gone out in the last ' + weeks + ' weeks, so there is nothing to measure yet.', 'Numbers');
 }
 
 function numbersHtml(weeks, trend, stats, campaigns, inboxes) {
@@ -3665,6 +3918,13 @@ async function loadSetup() {
   if (today && !today.error) { applyCounts(today); _todayStats = today.stats || {}; }
   el.innerHTML = setupHtml(_todayStats, engine, mode, setup);
   applyTheme(currentTheme());
+  if (!_report) await loadAgentReport();
+  const left = setup && setup.checks ? setup.checks.filter(c => c.required && !c.done).length : 0;
+  const chip = _report ? _report.chip : '';
+  setAnswer('setup', left ? toneBadge('warn', left + ' left to set up')
+      : toneBadge(chip === 'working' || chip === 'connected' ? 'good' : '', chip === 'working' || chip === 'connected' ? 'Connected to ' + agentName() : 'Ready'),
+    'Sellbird thinks with ' + agentWho() + '. ' + (left ? plural(left, 'step is', 'steps are') + ' left before it can send.'
+      : 'Everything below is what it can do for you, and what is on.'), 'Set up');
 }
 
 function setupHtml(st, engine, mode, setup) {
@@ -3711,7 +3971,12 @@ function setupHtml(st, engine, mode, setup) {
           '" aria-label="' + t[1] + '">' + icon(t[2]) + '</button>').join('') + '</div></div>' +
       '<div class="row"><div class="grow"><a class="follow-link" href="https://x.com/sellbirdagent" target="_blank" rel="noopener" ' +
         'title="News and updates on X">' + icon('x') + '<span>Follow @sellbirdagent for releases and the roadmap</span></a></div></div>' +
-    '</div></section></div>' +
+    '</div></section>' +
+    '<section class="sec"><h2>What your agent can\'t do</h2><div class="cant">' +
+      ['Approve or send an email, a reply or a text', 'Buy anything or start a paid search', 'Turn sending back on, or turn on autopilot',
+       'Let itself back in after you cut it off'].map(x => '<div>' + LOCK_SVG + '<span>' + x + '</span></div>').join('') +
+      '<p>Those stay your clicks, here. <a href="#agent" onclick="goTab(\'agent\');return false">Everything it may do</a></p></div></section>' +
+    '</div>' +
     '<p class="ask">Your coding agent can do most of this for you. Ask it: <b>"Check my Sellbird setup and tell me what is left."</b></p>';
 }
 
@@ -3776,6 +4041,13 @@ async function loadLeads() {
   const waiting = l => (l.status === 'new' || l.status === 'unreadable' || l.status === 'answered') &&
     l.answer_status !== 'sent' && l.answer_status !== 'rejected' && l.answer_status !== 'cancelled';
   const open = leads.filter(waiting), rest = leads.filter(l => !waiting(l));
+  const drafted = open.filter(l => l.answer_status === 'pending_review').length;
+  setAnswer('leads', open.length ? toneBadge('warn', open.length + ' waiting') : toneBadge('good', 'All answered'),
+    open.length
+      ? plural(open.length, 'person is', 'people are') + ' waiting for an answer.' +
+        (drafted ? ' ' + agentWho() + ' drafted ' + plural(drafted, 'answer', 'answers') + '; each waits for your OK.' : '')
+      : 'Nobody is waiting for an answer. A form fill or a lead your agent adds shows up here.',
+    'Inbound');
   const file = escHtml(d.config_file || 'sellbird.yaml');
   const r = (t, sub, tag, tone) => '<div class="row"><div class="grow"><p class="t">' + t + '</p><p class="s">' + sub + '</p></div>' +
     (tag ? '<span class="tag ' + (tone || '') + '">' + tag + '</span>' : '') + '</div>';
@@ -4023,7 +4295,7 @@ function socialPost(p, mode) {
           '<button class="btn btn-ghost btn-sm" onclick="_socialEdit=\'\';renderSocial()">Cancel</button>'
         : '<button class="btn btn-primary btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'approve\')">Approve</button>' +
           '<button class="btn btn-secondary btn-sm" onclick="_socialEdit=' + jsq(p.id) + ';renderSocial()">Edit</button>' +
-          '<button class="btn btn-ghost btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'skip\')">Skip this one</button>')
+          '<button class="btn btn-ghost btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'skip\')">Skip this one</button>' + onlyYou())
     : mode === 'approved'
       ? '<button class="btn btn-primary btn-sm" onclick="copySocial(' + jsq(p.id) + ')">Copy post</button>' +
         '<button class="btn btn-secondary btn-sm" onclick="socialAct(' + jsq(p.id) + ',\'posted\')">I posted it</button>' +
@@ -4141,7 +4413,7 @@ async function loadTexts() {
       (t.drafted_by === 'agent' ? ' · drafted by your agent' : '') + '</p>' +
       '<div class="tb draft">' + escHtml(t.body) + '</div></div>' +
     '<div class="row-acts"><button class="btn btn-primary btn-sm" onclick="textAct(' + jsq(t.id) + ',\'approve\')">Approve</button>' +
-      '<button class="btn btn-secondary btn-sm" onclick="textAct(' + jsq(t.id) + ',\'reject\')">Reject</button></div></div>').join('');
+      '<button class="btn btn-secondary btn-sm" onclick="textAct(' + jsq(t.id) + ',\'reject\')">Reject</button>' + onlyYou() + '</div></div>').join('');
   const tone = {sent: 'good', received: 'acc', approved: 'wait', blocked: 'bad', failed: 'bad'};
   const word = {sent: 'Sent', received: 'Received', approved: 'Approved, waiting', blocked: 'Held', failed: 'Failed',
                 rejected: 'Rejected', cancelled: 'Cancelled', sending: 'Sending'};
@@ -4797,8 +5069,13 @@ function labelTables(root) {
 
 // ── Init & live refresh ──
 
-showTab(fromHash(), {fromHash: true, focus: false});
+document.body.classList.add('first-load');
+showTab(fromHash(), {fromHash: true, focus: false, initial: true});
+setTimeout(() => document.body.classList.remove('first-load'), 700);
 loadSellbirdStatus();
+loadAgentReport();
+// The agent chip and the answer lines: what the agent did, kept fresh.
+setInterval(() => { if (!document.hidden && !_locked) loadAgentReport(); }, 30000);
 
 // Agent status: quick poll (not while locked: it would only be refused)
 setInterval(() => { if (!_locked) loadSellbirdStatus(); }, 8000);
