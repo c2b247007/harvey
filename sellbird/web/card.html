@@ -235,14 +235,16 @@ button:disabled { opacity: .55; cursor: default; }
   //  3. If the host didn't open it, ask the agent instead (ui/message, a turn in
   //     the chat): it calls dashboard_open and opens the page in its own pane.
   //  4. Only if both fail: say which app refused, and offer the prompt or link to copy.
-  var host = {name: '', codex: false, message: false};
+  // What the host said about itself at start-up. `message` is true, false, or
+  // null when it said nothing either way.
+  var host = {name: '', codex: false, message: null};
   var PAGE_WORDS = {'': 'Today', today: 'Today', outbox: 'Outbound (what waits for my approval)', conversations: 'replies',
     leads: 'leads', social: 'social posts', texts: 'texts', campaigns: 'campaigns', mentions: 'mentions', signals: 'signals'};
   function learnHost(res) {
     var info = (res && res.hostInfo) || {}, caps = (res && res.hostCapabilities) || {};
     host.codex = info.client_type === 'codex_desktop' || /codex/i.test(String(info.name || ''));
     host.name = host.codex ? 'Codex' : /claude/i.test(String(info.name || '')) ? 'Claude' : String(info.title || info.name || '');
-    host.message = !!caps.message;
+    host.message = res && res.hostCapabilities ? !!caps.message : null;
   }
   function promptFor(page) { return 'Open Sellbird\u2019s ' + (PAGE_WORDS[page] || page || 'dashboard') + ' in your browser pane.'; }
   function open(page, button, where) {
@@ -251,12 +253,12 @@ button:disabled { opacity: .55; cursor: default; }
     var done = function (how) {
       if (button) button.disabled = false;
       var old = where.querySelector('.fb'); if (old) old.remove();
-      if (how === 'asked') status(where, 'Asked ' + (host.name || 'your agent') + ' to open it in its browser pane.');
+      if (how === 'asked') status(where, 'Asked ' + (host.name || 'your agent') + ' to open it in its browser pane. Its reply shows in the chat.');
       else if (how !== 'opened') fallback(where, page, url);
       resized();
     };
     var askAgent = function () {
-      if (!host.message) return Promise.resolve('failed');
+      if (host.message === false) return Promise.resolve('failed');
       return rpc('ui/message', {role: 'user', content: [{type: 'text', text: promptFor(page)}]}, 8000).then(function (r) {
         var res = result(r);
         return res && !res.isError ? 'asked' : 'failed';
@@ -274,16 +276,20 @@ button:disabled { opacity: .55; cursor: default; }
         return url;
       });
     };
-    // Codex drops the link, so no code is made for it unless the copy needs one.
-    var flow = host.codex
-      ? askAgent().then(function (how) { return how === 'asked' ? how : getLink().then(function () { return 'failed'; }); })
-      : getLink().then(function (u) {
-          if (!u) return askAgent();
-          return rpc('ui/open-link', {url: u}, 5000).then(function (o) {
-            var ok = result(o);
-            return ok && !ok.isError ? 'opened' : askAgent();
-          });
+    // Ask the agent first wherever the host takes messages (or didn't say): a
+    // host's "OK" to opening a link can't be trusted (Codex answers and drops
+    // it), while the agent's reply shows in the chat. Codex never gets a link.
+    var openLink = function () {
+      return getLink().then(function (u) {
+        if (!u || host.codex) return 'failed';
+        return rpc('ui/open-link', {url: u}, 5000).then(function (o) {
+          var ok = result(o);
+          return ok && !ok.isError ? 'opened' : 'failed';
         });
+      });
+    };
+    var flow = host.message === false ? openLink()
+      : askAgent().then(function (how) { return how === 'asked' ? how : openLink(); });
     flow.then(done, function () { done('failed'); });
   }
   function status(where, text) {
@@ -308,8 +314,8 @@ button:disabled { opacity: .55; cursor: default; }
     if (old) old.remove();
     var box = el('div', 'fb');
     box.setAttribute('role', 'status');
-    box.appendChild(el('p', 'fbt', (host.name || 'This app') + ' didn\u2019t open the link from the card' +
-      (host.message ? ', and didn\u2019t take the request for your agent.' : '.')));
+    box.appendChild(el('p', 'fbt', (host.name || 'This app') + ' didn\u2019t take the request for your agent' +
+      (host.codex ? '' : ' or open the link') + ' from the card.'));
     var prompt = promptFor(page);
     box.appendChild(el('p', 's', 'Ask your agent to open it, or open the link in your browser.'));
     var line = el('div', 'fbrow');

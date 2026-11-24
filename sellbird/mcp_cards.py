@@ -18,6 +18,7 @@ buttons open the item in the dashboard, where the person decides.
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 from pathlib import Path
 from urllib.parse import quote
@@ -25,12 +26,21 @@ from urllib.parse import quote
 from mcp.types import CallToolResult, TextContent
 
 APP_MIME = "text/html;profile=mcp-app"
-CARD_URIS = {
-    "today": "ui://sellbird/today",
-    "needs_you": "ui://sellbird/needs-you",
-    "campaign": "ui://sellbird/campaign-report",
-}
 WEB = Path(__file__).resolve().parent / "web"
+
+
+def card_version() -> str:
+    """A short hash of the card page. It is part of each card's address, so a
+    host that keeps a card it read before (Codex caches resources/read) gets
+    the new page whenever it changes."""
+    try:
+        return hashlib.sha256((WEB / "card.html").read_bytes()).hexdigest()[:10]
+    except OSError:
+        return "0"
+
+
+CARD_URIS = {key: f"ui://sellbird/{name}?v={card_version()}"
+             for key, name in (("today", "today"), ("needs_you", "needs-you"), ("campaign", "campaign-report"))}
 
 # The names a person or agent may use for a page, and the screen each opens.
 PAGES = {

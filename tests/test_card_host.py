@@ -53,6 +53,7 @@ def browser():
 
 CODEX = {"hostInfo": {"name": "chatgpt", "client_type": "codex_desktop"}, "hostCapabilities": {"openLinks": {}, "message": {}}}
 MESSAGES = {"hostInfo": {"name": "Example host"}, "hostCapabilities": {"openLinks": {}, "message": {}}}
+LINKS_ONLY = {"hostInfo": {"name": "Example host"}, "hostCapabilities": {"openLinks": {}}}   # takes no messages
 
 
 def _click_review(browser, mode, init=None, msg="none"):
@@ -66,7 +67,7 @@ def _click_review(browser, mode, init=None, msg="none"):
 
 
 def test_a_host_that_opens_the_link_gets_the_one_use_link_and_nothing_else_shows(browser):
-    page, frame = _click_review(browser, "open")
+    page, frame = _click_review(browser, "open", LINKS_ONLY)
     page.wait_for_timeout(400)
     calls = [m for m in page.evaluate("window.seen") if m["method"] in ("tools/call", "ui/open-link")]
     assert calls[0]["params"] == {"name": "dashboard_open", "arguments": {"page": "outbox"}}
@@ -77,11 +78,11 @@ def test_a_host_that_opens_the_link_gets_the_one_use_link_and_nothing_else_shows
 
 @pytest.mark.parametrize("mode, wait", [("refuse", 400), ("silent", 5600)])
 def test_a_refused_or_unanswered_link_says_so_and_offers_a_way(browser, mode, wait):
-    page, frame = _click_review(browser, mode)
+    page, frame = _click_review(browser, mode, LINKS_ONLY)
     page.wait_for_timeout(wait)
     box = frame.locator(".fb")
     assert box.count() == 1
-    assert "didn’t open the link" in box.inner_text()
+    assert "or open the link from the card" in box.inner_text()
     values = [frame.locator(".fbin").nth(i).input_value() for i in range(frame.locator(".fbin").count())]
     assert values[0].startswith("Open Sellbird’s Outbound") and values[1] == LINK
     assert "dashboard-token" not in json.dumps(values) and "token=" not in json.dumps(values)
@@ -93,10 +94,10 @@ def _methods(page):
     return [m["method"] for m in page.evaluate("window.seen") if m["method"] in ("tools/call", "ui/open-link", "ui/message")]
 
 
-def test_when_the_host_wont_open_it_the_agent_is_asked_in_one_click(browser):
+def test_a_host_that_takes_messages_asks_the_agent_first_in_one_click(browser):
     page, frame = _click_review(browser, "refuse", MESSAGES, "take")
     page.wait_for_timeout(500)
-    assert _methods(page) == ["tools/call", "ui/open-link", "ui/message"]
+    assert _methods(page) == ["ui/message"]           # no code made, no link a host might drop while saying OK
     sent = [m for m in page.evaluate("window.seen") if m["method"] == "ui/message"][0]["params"]
     assert sent == {"role": "user", "content": [{"type": "text", "text": "Open Sellbird\u2019s Outbound (what waits for my approval) in your browser pane."}]}
     assert "Asked Example host to open it" in frame.locator(".fb").inner_text()
@@ -117,6 +118,15 @@ def test_when_codex_refuses_both_the_card_names_it_and_offers_the_copy(browser):
     page.wait_for_timeout(500)
     text = frame.locator(".fb").inner_text()
     assert _methods(page) == ["ui/message", "tools/call"]          # the link is made only for the copy
-    assert text.startswith("Codex didn\u2019t open the link from the card, and didn\u2019t take the request for your agent.")
+    assert text.startswith("Codex didn\u2019t take the request for your agent from the card.")
     assert frame.locator(".fbin").nth(1).input_value() == LINK
+    page.close()
+
+
+def test_a_host_that_says_nothing_is_still_asked_for_the_agent_first_then_the_link(browser):
+    # A host whose start-up reply leaves out hostInfo and hostCapabilities.
+    page, frame = _click_review(browser, "open", {}, "refuse")
+    page.wait_for_timeout(600)
+    assert _methods(page) == ["ui/message", "tools/call", "ui/open-link"]
+    assert frame.locator(".fb").count() == 0                          # the link opened
     page.close()
