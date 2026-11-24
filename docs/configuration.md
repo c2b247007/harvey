@@ -63,7 +63,8 @@ sellbird suppressions [add|remove <value>]  # addresses and domains never emaile
 sellbird inboxes list|connect|test|pause|resume|cap|name|remove|use  # several sending inboxes
 sellbird tray                  # menu-bar (macOS) / tray (Windows) icon; --status prints the state
 sellbird autostart install|uninstall|status  # start the tray at login
-sellbird mcp install [claude|codex]  # let your coding agent read Sellbird and pause sending
+sellbird connect [claude|claude-desktop|codex]  # add Sellbird to your agents (all found, by default)
+sellbird mcp install [claude|claude-desktop|codex]  # the same for one agent
 sellbird warmup [domain]       # is the sending domain ready? (SPF/DKIM/DMARC, age, blocklists, warmup)
 sellbird trulyinbox connect    # connect TrulyInbox so Sellbird reads the mailbox's warmup
 sellbird retry-writes          # retry prospects the Writer gave up on
@@ -141,8 +142,10 @@ as services instead.
 
 ## Your coding agent (MCP)
 
-`sellbird mcp install` adds Sellbird to Claude Code (`sellbird mcp install codex`
-for Codex). It shows the exact change to your agent's config first and applies it
+`sellbird connect` adds Sellbird to every agent it finds here: Claude Code,
+Claude desktop and Codex, on one yes (`sellbird connect --remove` takes it out).
+`sellbird mcp install` does one agent: Claude Code by default,
+`sellbird mcp install claude-desktop` or `codex` for the others. Both show the exact change to your agent's config first and applies it
 only on a yes, touches only its own entry, and refuses if a Sellbird entry it
 didn't write is already there. `--print` shows the entry to add by hand to any
 other MCP client; `sellbird mcp uninstall` takes it out again.

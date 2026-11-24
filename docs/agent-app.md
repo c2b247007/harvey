@@ -2,7 +2,7 @@
 
 Claude desktop, ChatGPT desktop and Codex each have a browser pane beside the chat. Your agent can open the whole Sellbird dashboard there, signed in, and show small cards in the chat as you talk.
 
-Both need the dashboard running (`sellbird dashboard`) and Sellbird connected to your agent (`sellbird mcp install`, see [configuration](configuration.md#your-coding-agent-mcp)).
+Both need the dashboard running (`sellbird dashboard`) and Sellbird connected to your agent (`sellbird connect`, see [configuration](configuration.md#your-coding-agent-mcp)).
 
 ## The dashboard in the browser pane
 

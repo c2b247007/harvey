@@ -129,6 +129,21 @@ sellbird run
 
 On Linux you can also [run it with Docker](docs/docker.md).
 
+### Connect your agent
+
+```bash
+sellbird connect
+```
+
+It finds Claude Code, Claude desktop and Codex on your machine, shows the line it will add to each, and adds them all on one yes. Then ask your agent "Open Sellbird" or "What needs me?":
+
+- **Claude Code** and **Codex** (the CLI and the app): start a new session.
+- **Claude desktop**: quit it completely and open it again. It can open the dashboard in its side panel and show cards in the chat.
+
+`sellbird connect claude-desktop` (or `claude`, `codex`) does just one. `sellbird connect --remove` takes Sellbird out again. Nothing goes into those configs but the command and Sellbird's folder: no key, no token.
+
+ChatGPT and claude.ai in a browser connect from their own servers, so they can't reach Sellbird on your machine. On a ChatGPT plan, use Codex, or hosted Sellbird.
+
 ## Nothing sends without you
 
 Every outgoing email waits in the Outbox for your approval until you turn on autopilot yourself. Before anything leaves, a pre-send check with no model involved rejects unfilled merge tags, banned phrases, overlong emails, extra links and undeliverable addresses. Autopilot still holds back any email that links to a domain that isn't yours or quotes Sellbird's own instructions. `sellbird sending pause` stops everything at once.

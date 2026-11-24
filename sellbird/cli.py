@@ -191,6 +191,12 @@ def cmd_mcp(args):
     run_stdio()
 
 
+def cmd_connect(args):
+    """Add Sellbird to every agent on this machine (Claude Code, Claude desktop, Codex)."""
+    from sellbird import connect
+    sys.exit(connect.run_command(args.agent, remove=args.remove, yes=args.yes))
+
+
 def cmd_dashboard(args):
     """Launch the local web dashboard."""
     from sellbird.dashboard import DashboardSetupError, dashboard_url, start_dashboard
@@ -1501,12 +1507,20 @@ def main():
         "mcp", help="MCP server for your coding agent (launched by it, over stdio)")
     sub.add_argument("mcp_action", nargs="?", choices=["install", "uninstall"],
                      help="Add or remove the server in your coding agent's config")
-    sub.add_argument("client", nargs="?", choices=["claude", "codex"],
-                     help="Which agent (default: Claude Code only)")
+    sub.add_argument("client", nargs="?", choices=["claude", "claude-desktop", "codex"],
+                     help="Which agent (default: Claude Code only; sellbird connect does all)")
     sub.add_argument("--print", dest="print_config", action="store_true",
                      help="Print the config to add by hand; change nothing")
     sub.add_argument("--yes", action="store_true", help="Apply without asking")
     sub.set_defaults(func=cmd_mcp)
+
+    sub = subparsers.add_parser(
+        "connect", help="Add Sellbird to Claude Code, Claude desktop and Codex in one step")
+    sub.add_argument("agent", nargs="?", choices=["claude", "claude-desktop", "codex"],
+                     help="Just this one (default: every agent found here)")
+    sub.add_argument("--remove", action="store_true", help="Take Sellbird out again")
+    sub.add_argument("--yes", action="store_true", help="Apply without asking")
+    sub.set_defaults(func=cmd_connect)
 
     from sellbird.inbox_cli import register as register_inboxes
     register_inboxes(subparsers)

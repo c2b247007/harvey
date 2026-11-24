@@ -41,8 +41,10 @@ SERVER_NAME = "sellbird"
 CODEX_MARKER = ("# Added by Sellbird (sellbird mcp install). "
                 "Remove with: sellbird mcp uninstall codex")
 
-CLIENT_NAMES = {"claude": "Claude Code", "codex": "Codex"}
+CLIENT_NAMES = {"claude": "Claude Code", "claude_desktop": "Claude desktop", "codex": "Codex"}
 RESTART_CLAUDE = "If Claude Code is open, restart it."
+RESTART_DESKTOP = ("Quit Claude desktop completely (Cmd+Q on a Mac, File > Exit on Windows) "
+                   "and open it again to load it.")
 
 REFUSE_NO_CLAUDE = ("Claude Code isn't installed here (no `claude` command "
                     "and no ~/.claude.json).")
@@ -56,6 +58,11 @@ VERIFY_FAILED = "The change didn't check out, so your original file was restored
 NOT_TTY = "Nothing was changed. Re-run with --yes to apply."
 CLAUDE_LABEL = "~/.claude.json"
 CODEX_LABEL = "~/.codex/config.toml"
+DESKTOP_LABEL = "claude_desktop_config.json"
+REFUSE_NO_DESKTOP = "Claude desktop isn't installed here (no Claude settings folder)."
+REFUSE_BAD_DESKTOP_JSON = "Claude desktop's claude_desktop_config.json isn't valid JSON, so it was left alone."
+REFUSE_FOREIGN_DESKTOP = ("Claude desktop's claude_desktop_config.json already has a Sellbird server "
+                          "that this command didn't add. Edit it yourself, or remove it and run this again.")
 
 
 def _symlink_refusal(label: str) -> str:
@@ -77,7 +84,7 @@ class InstallVerifyFailed(InstallError):
 
 @dataclass(frozen=True)
 class PlannedChange:
-    client: Literal["claude", "codex"]
+    client: Literal["claude", "claude_desktop", "codex"]
     # add / replace / remove edit the file at `path`; cli runs `argv` (after
     # `pre_argv`, when an older entry of ours has to go first).
     action: Literal["add", "replace", "remove", "none", "refuse", "cli"]
@@ -86,7 +93,8 @@ class PlannedChange:
     reason: str = ""
     argv: tuple[str, ...] = ()
     pre_argv: tuple[str, ...] = ()
-    # The entry `pre_argv` removes, as JSON, so a failed add can put it back.
+    # The entry being replaced, as JSON: a failed `claude mcp` add puts it
+    # back, and `sellbird connect` warns when it used another folder.
     old_json: str = ""
 
 
@@ -129,21 +137,25 @@ def _claude_path(home: Path) -> Path:
     return Path(home) / ".claude.json"
 
 
-def _read_claude(path: Path) -> tuple[dict | None, str]:
+def _read_json_config(path: Path, label: str, bad: str) -> tuple[dict | None, str]:
     """(document, refusal). A missing file is an empty document."""
     if path.is_symlink():
-        return None, _symlink_refusal(CLAUDE_LABEL)    # never replace a link with a file
+        return None, _symlink_refusal(label)           # never replace a link with a file
     if not path.exists():
         return {}, ""
     try:
         doc = json.loads(path.read_bytes().decode("utf-8"))
     except OSError as e:
-        return None, _unreadable(CLAUDE_LABEL, e)
+        return None, _unreadable(label, e)
     except (ValueError, UnicodeDecodeError):
-        return None, REFUSE_BAD_JSON
+        return None, bad
     if not isinstance(doc, dict) or not isinstance(doc.get("mcpServers", {}), dict):
-        return None, REFUSE_BAD_JSON
+        return None, bad
     return doc, ""
+
+
+def _read_claude(path: Path) -> tuple[dict | None, str]:
+    return _read_json_config(path, CLAUDE_LABEL, REFUSE_BAD_JSON)
 
 
 def _claude_entry_preview(old, new) -> str:
@@ -206,16 +218,18 @@ def plan_uninstall_claude(*, home: Path, which=shutil.which,
     if claude:
         argv = _claude_cli_argv(claude, "remove")
         preview = "\n".join([_claude_entry_preview(current, None), "Runs:", shlex.join(argv)])
-        return PlannedChange("claude", "cli", path, preview, argv=argv)
-    return PlannedChange("claude", "remove", path, _claude_entry_preview(current, None))
+        return PlannedChange("claude", "cli", path, preview, argv=argv,
+                             old_json=json.dumps(current))
+    return PlannedChange("claude", "remove", path, _claude_entry_preview(current, None),
+                         old_json=json.dumps(current))
 
 
-def _claude_new_text(action: str, text: str) -> str:
+def _claude_new_text(action: str, text: str, foreign: str = REFUSE_FOREIGN_CLAUDE) -> str:
     doc = json.loads(text) if text else {}
     servers = doc.setdefault("mcpServers", {})
     current = servers.get(SERVER_NAME)
     if current is not None and not is_ours(current):
-        raise InstallError(REFUSE_FOREIGN_CLAUDE)      # appeared since the preview
+        raise InstallError(foreign)                    # appeared since the preview
     if action == "remove":
         servers.pop(SERVER_NAME, None)
     else:
@@ -232,6 +246,66 @@ def _claude_parts(text: str) -> tuple[dict, object]:
     if servers:
         rest["mcpServers"] = servers
     return rest, ours
+
+
+# ── Claude desktop ──
+#
+# The desktop app reads its local MCP servers from one JSON file, with the same
+# "mcpServers" shape as ~/.claude.json. It has no CLI, so the file is edited
+# the same careful way: merge, back up, write atomically, re-read, verify.
+
+def desktop_config_path(*, env: Mapping[str, str], home: Path,
+                        platform: str = sys.platform) -> Path:
+    home = Path(home)
+    if platform == "darwin":
+        folder = home / "Library" / "Application Support" / "Claude"
+    elif platform == "win32":
+        appdata = env.get("APPDATA")
+        folder = Path(appdata) / "Claude" if appdata else home / "AppData" / "Roaming" / "Claude"
+    else:
+        folder = Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "Claude"
+    return folder / "claude_desktop_config.json"
+
+
+def desktop_detected(*, env: Mapping[str, str], home: Path, platform: str = sys.platform) -> bool:
+    """Claude desktop has run here: its settings folder exists."""
+    return desktop_config_path(env=env, home=home, platform=platform).parent.is_dir()
+
+
+def plan_claude_desktop(*, env: Mapping[str, str], home: Path,
+                        platform: str = sys.platform) -> PlannedChange:
+    path = desktop_config_path(env=env, home=home, platform=platform)
+    if not path.parent.is_dir():
+        return PlannedChange("claude_desktop", "refuse", None, "", REFUSE_NO_DESKTOP)
+    doc, refusal = _read_json_config(path, DESKTOP_LABEL, REFUSE_BAD_DESKTOP_JSON)
+    if refusal:
+        return PlannedChange("claude_desktop", "refuse", path, "", refusal)
+    current = doc.get("mcpServers", {}).get(SERVER_NAME)
+    if current is not None and _same(current):
+        return PlannedChange("claude_desktop", "none", path, "")
+    if current is not None and not is_ours(current):
+        return PlannedChange("claude_desktop", "refuse", path, "", REFUSE_FOREIGN_DESKTOP)
+    return PlannedChange("claude_desktop", "add" if current is None else "replace", path,
+                         _claude_entry_preview(current, server_entry()),
+                         old_json=json.dumps(current) if current is not None else "")
+
+
+def plan_uninstall_claude_desktop(*, env: Mapping[str, str], home: Path,
+                                  platform: str = sys.platform) -> PlannedChange:
+    path = desktop_config_path(env=env, home=home, platform=platform)
+    if not path.parent.is_dir():
+        return PlannedChange("claude_desktop", "refuse", None, "", REFUSE_NO_DESKTOP)
+    doc, refusal = _read_json_config(path, DESKTOP_LABEL, REFUSE_BAD_DESKTOP_JSON)
+    if refusal:
+        return PlannedChange("claude_desktop", "refuse", path, "", refusal)
+    current = doc.get("mcpServers", {}).get(SERVER_NAME)
+    if current is None:
+        return PlannedChange("claude_desktop", "none", path, "",
+                             "Sellbird isn't set up for Claude desktop; nothing to remove.")
+    if not is_ours(current):
+        return PlannedChange("claude_desktop", "refuse", path, "", REFUSE_FOREIGN_DESKTOP)
+    return PlannedChange("claude_desktop", "remove", path, _claude_entry_preview(current, None),
+                         old_json=json.dumps(current))
 
 
 # ── Codex ──
@@ -321,7 +395,8 @@ def plan_codex(*, env: Mapping[str, str], home: Path) -> PlannedChange:
     if block is None:
         return PlannedChange("codex", "refuse", path, "", REFUSE_FOREIGN_CODEX)
     old = "".join(text.splitlines(keepends=True)[block[0]:block[1]])
-    return PlannedChange("codex", "replace", path, "\n".join(_prefixed("-", old) + new))
+    return PlannedChange("codex", "replace", path, "\n".join(_prefixed("-", old) + new),
+                         old_json=json.dumps(current))
 
 
 def plan_uninstall_codex(*, env: Mapping[str, str], home: Path) -> PlannedChange:
@@ -336,7 +411,8 @@ def plan_uninstall_codex(*, env: Mapping[str, str], home: Path) -> PlannedChange
     if block is None:
         return PlannedChange("codex", "refuse", path, "", REFUSE_FOREIGN_CODEX)
     old = "".join(text.splitlines(keepends=True)[block[0]:block[1]])
-    return PlannedChange("codex", "remove", path, "\n".join(_prefixed("-", old)))
+    return PlannedChange("codex", "remove", path, "\n".join(_prefixed("-", old)),
+                         old_json=json.dumps((doc.get("mcp_servers") or {}).get(SERVER_NAME)))
 
 
 def _codex_new_text(action: str, text: str) -> str:
@@ -416,7 +492,7 @@ def _restore(data: bytes, backup: Path, target: Path) -> None:
 
 
 def _label(change: PlannedChange) -> str:
-    return CLAUDE_LABEL if change.client == "claude" else CODEX_LABEL
+    return {"claude": CLAUDE_LABEL, "claude_desktop": DESKTOP_LABEL}.get(change.client, CODEX_LABEL)
 
 
 def _cant_back_up(label: str, e: OSError) -> InstallError:
@@ -464,10 +540,14 @@ def _apply_file(change: PlannedChange, now: datetime) -> None:
         original = data.decode("utf-8") if existed else ""
         if change.client == "claude":
             new_text, parts = _claude_new_text(change.action, original), _claude_parts
+        elif change.client == "claude_desktop":
+            new_text = _claude_new_text(change.action, original, REFUSE_FOREIGN_DESKTOP)
+            parts = _claude_parts
         else:
             new_text, parts = _codex_new_text(change.action, original), _codex_parts
     except (ValueError, UnicodeDecodeError):           # changed since the preview
-        bad = REFUSE_BAD_JSON if change.client == "claude" else REFUSE_BAD_TOML
+        bad = {"claude": REFUSE_BAD_JSON, "claude_desktop": REFUSE_BAD_DESKTOP_JSON}.get(
+            change.client, REFUSE_BAD_TOML)
         raise InstallError(bad)
     backup = _back_up(change, data, now)               # only once it parsed: no stray backup
     try:
@@ -543,6 +623,8 @@ def apply_change(change: PlannedChange, *, runner=subprocess.run, now: datetime)
     _apply_file(change, now)
     if change.client == "claude":
         return f"{done} {RESTART_CLAUDE}"
+    if change.client == "claude_desktop":
+        return f"{done} {RESTART_DESKTOP}"
     return f"{done} Restart Codex to pick it up."
 
 
@@ -585,10 +667,13 @@ def run_command(action: str, client: str | None, *, print_only: bool = False,
     home = Path.home() if home is None else Path(home)
     env = os.environ if env is None else env
     isatty = isatty or sys.stdin.isatty
-    target = client or "claude"
+    target = (client or "claude").replace("-", "_")
     if target == "claude":
         plan = plan_claude if action == "install" else plan_uninstall_claude
         change = plan(home=home, which=which, runner=runner)
+    elif target == "claude_desktop":
+        plan = plan_claude_desktop if action == "install" else plan_uninstall_claude_desktop
+        change = plan(env=env, home=home)
     else:
         plan = plan_codex if action == "install" else plan_uninstall_codex
         change = plan(env=env, home=home)
@@ -596,7 +681,8 @@ def run_command(action: str, client: str | None, *, print_only: bool = False,
     if client is None and _codex_detected(which, env, home):
         verb = "add Sellbird to it too" if action == "install" else \
             "remove Sellbird from it too"
-        hint = f"Codex found. To {verb}, run: sellbird mcp {action} codex"
+        hint = (f"Codex found. To {verb}, run: sellbird mcp {action} codex "
+                "(or sellbird connect for every agent here)")
     else:
         hint = ""
 

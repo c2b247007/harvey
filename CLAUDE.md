@@ -316,7 +316,11 @@ If they want it, ask one thing at a time:
 
 Leave `address_source` as `"unknown"`, since Sellbird builds most addresses from a learned pattern. Save the settings under `compliance.precleared` in `sellbird.local.yaml` if it exists (that file wins), otherwise in `sellbird.yaml`. `sellbird setup` asks the same questions.
 
-### Step 8: Start Sellbird
+### Step 8: Connect their agent
+
+Offer this once: `sellbird connect` adds Sellbird to every agent on the machine (Claude Code, Claude desktop, Codex) so they can ask "Open Sellbird" or "What needs me?" there. It shows the change and asks for a yes, so have them run it in their own terminal (or run it with them watching, never with `--yes` unless they said so). Claude desktop needs a full quit and reopen afterwards. ChatGPT and claude.ai in a browser can't reach a local Sellbird: point ChatGPT users to Codex or hosted Sellbird. `sellbird connect --remove` undoes it.
+
+### Step 9: Start Sellbird
 
 ```bash
 source .venv/bin/activate && sellbird run
