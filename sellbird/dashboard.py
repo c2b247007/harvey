@@ -294,6 +294,7 @@ async def get_setup_status():
     })
 
     # 4. Email verification (needed for addresses to be sendable, not 'guess')
+    from sellbird import recommended
     verifier_set = _has("REOON_API_KEY") or _has("ZEROBOUNCE_API_KEY") or _has("HUNTER_API_KEY")
     checks.append({
         "id": "verifier", "label": "Email verification key",
@@ -301,6 +302,8 @@ async def get_setup_status():
         "required": True,
         "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Sending and keys. "
                 "Without one, found emails stay 'guess' and are never sent.",
+        "recommend": [recommended.job("verify")],
+        "disclosure": recommended.DISCLOSURE,
     })
 
     # 5. Config valid
@@ -373,6 +376,25 @@ async def get_setup_status():
         "link": ti.AFFILIATE_URL,
     })
 
+    # 10. Finding businesses and people: free by default, with the one paid
+    # service recommended for each job. Never blocks: it is a suggestion.
+    try:
+        finding = await state.get_setting(FINDING_CHOICE_KEY)
+    except Exception:
+        finding = ""
+    paid_finding = _has("DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD") or _has("HUNTER_API_KEY")
+    checks.append({
+        "id": "find_sources",
+        "label": "Choose how to find businesses and people",
+        "done": bool(finding) or paid_finding,
+        "required": False,
+        "shown": True,
+        "help": ("Sellbird finds both for free: businesses from OpenStreetMap, people from each "
+                 "company's own site. When the free list runs thin, these are the ones we recommend."),
+        "recommend": [recommended.job("businesses"), recommended.job("people")],
+        "disclosure": recommended.DISCLOSURE,
+    })
+
     required_checks = [c for c in checks if c["required"]]
     completed_required = sum(1 for c in required_checks if c["done"])
 
@@ -382,6 +404,25 @@ async def get_setup_status():
         "total_required": len(required_checks),
         "percent": int(completed_required / len(required_checks) * 100) if required_checks else 0,
     }
+
+
+FINDING_CHOICE_KEY = "finding_sources_choice"
+
+
+@app.post("/api/finding-choice")
+async def set_finding_choice():
+    """You chose the free way to find businesses and people: Today stops suggesting it."""
+    state = _state()
+    await state.init_db()
+    await state.set_setting(FINDING_CHOICE_KEY, "free")
+    return {"success": True}
+
+
+@app.get("/api/recommended")
+async def get_recommended():
+    """The one service recommended for each job, its link, and the disclosure."""
+    from sellbird import recommended
+    return recommended.all_jobs()
 
 
 # ── Settings ──

@@ -224,7 +224,8 @@ def test_another_warmup_service_is_respected():
 def test_the_link_lives_in_one_constant():
     from sellbird.paths import PROJECT_ROOT
     src = [p for p in (PROJECT_ROOT / "sellbird").rglob("*") if p.suffix in (".py", ".js", ".html")]
-    assert [p.name for p in src if "trulyinbox.com/?via" in p.read_text(encoding="utf-8")] == ["trulyinbox.py"]
+    # With every other recommended link, in sellbird.recommended (see test_recommended).
+    assert [p.name for p in src if "trulyinbox.com/?via" in p.read_text(encoding="utf-8")] == ["recommended.py"]
     for name in ("README.md", "CLAUDE.md", "sellbird.yaml"):
         text = (PROJECT_ROOT / name).read_text(encoding="utf-8")
         assert ti.AFFILIATE_URL in text, name

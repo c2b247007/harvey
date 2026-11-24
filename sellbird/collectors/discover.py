@@ -34,6 +34,7 @@ from urllib.parse import urlparse
 import httpx
 
 from sellbird.models import Company
+from sellbird.recommended import link as recommended_link, tag_for_url
 
 logger = logging.getLogger("sellbird.collectors.discover")
 
@@ -541,7 +542,7 @@ class DataForSEOListings(DiscoveryProvider):
              "for local trades, clinics and contractors.")
     cost_note = "$0.372 per 1,000 businesses ($0.012/query + $0.00036 each)"
     free_tier = "$1 signup credit; $50 minimum deposit to go live"
-    signup_url = "https://app.dataforseo.com/api-access"
+    signup_url = recommended_link("dataforseo")
     env_keys = ("dataforseo_login", "dataforseo_password")
     caveat = "No email addresses. Sellbird resolves those in a later stage."
 
@@ -631,7 +632,7 @@ class DataForSEOSerp(DiscoveryProvider):
              "businesses you didn't have AND scores the ones you did.")
     cost_note = "$0.002 per 10 results (Live). Depth 30 costs $0.006 a search"
     free_tier = "$1 signup credit; free sandbox; $50 minimum deposit to go live"
-    signup_url = "https://app.dataforseo.com/api-access"
+    signup_url = recommended_link("dataforseo")
     env_keys = ("dataforseo_login", "dataforseo_password")
     caveat = ("Google removed 100-results-per-page in September 2025, so depth "
               "100 now costs 10x depth 10. Depth 20-30 is the sweet spot; "
@@ -2003,7 +2004,7 @@ def provider_menu(env: dict | None = None) -> list[dict]:
         {
             "key": p.key, "label": p.label, "kind": p.kind, "blurb": p.blurb,
             "cost_note": p.cost_note, "free_tier": p.free_tier,
-            "signup_url": p.signup_url, "caveat": p.caveat,
+            "signup_url": p.signup_url, "signup_tag": tag_for_url(p.signup_url), "caveat": p.caveat,
             "env_keys": [k.upper() for k in p.env_keys],
             "configured": p.configured(env),
             "needs_key": bool(p.env_keys),

@@ -853,8 +853,18 @@ async function loadSetupStatus() {
   const sec = document.getElementById('today-setup-sec');
   const pct = (data && data.percent) || 0;
   // Finished setup disappears completely rather than greeting you forever.
-  if (sec) sec.hidden = !data || !data.checks || pct === 100;
-  if (!data || !data.checks || pct === 100) { el.innerHTML = ''; return; }
+  // A suggestion still open (how to find businesses and people) stays, alone.
+  const extra = data && data.checks ? data.checks.filter(c => c.shown && !c.required && !c.done) : [];
+  const gone = !data || !data.checks || (pct === 100 && !extra.length);
+  if (sec) sec.hidden = gone;
+  if (gone) { el.innerHTML = ''; return; }
+  if (pct === 100) {
+    el.innerHTML = '<div class="w pad setup-card">' + extra.map(c =>
+      '<div class="check-item current"><span class="check-icon pending"></span><div class="check-info">' +
+        '<div class="check-label">' + escHtml(c.label) + '<span class="optional-tag">optional</span></div>' +
+        '<div class="check-help">' + escHtml(c.help) + '</div>' + recommendHtml(c) + '</div></div>').join('') + '</div>';
+    return;
+  }
 
   // The first unfinished required step is the one to do now.
   const next = data.checks.find(c => c.required && !c.done);
@@ -867,10 +877,12 @@ async function loadSetupStatus() {
           (optional ? '<span class="optional-tag">optional</span>' : '') + '</div>' +
         (!c.done ? '<div class="check-help">' + escHtml(c.help) + '</div>' : '') +
         (!c.done && c.id === 'warmup_service' ? warmupServiceActions(c) : '') +
+        (!c.done && c.recommend ? recommendHtml(c) : '') +
       '</div></div>';
 
   const required = data.checks.filter(c => c.required);
-  const optional = data.checks.filter(c => !c.required);
+  const shown = data.checks.filter(c => !c.required && c.shown && !c.done);
+  const optional = data.checks.filter(c => !c.required && !shown.includes(c));
   const done = required.filter(c => c.done).length;
 
   el.innerHTML =
@@ -880,6 +892,7 @@ async function loadSetupStatus() {
         '<span class="setup-pct">' + done + ' of ' + required.length + ' done</span></div>' +
       '<div class="bar thick" style="margin-bottom:8px"><span style="width:' + pct + '%;background:var(--accent)"></span></div>' +
       required.map(c => renderCheck(c, false)).join('') +
+      shown.map(c => renderCheck(c, true)).join('') +
       (optional.length
         ? '<details style="margin-top:10px"><summary class="muted" ' +
           'style="font-size:12px">' + optional.length + ' optional</summary>' +
@@ -887,6 +900,48 @@ async function loadSetupStatus() {
           optional.map(c => renderCheck(c, true)).join('') + '</div></details>'
         : '') +
     '</div>';
+}
+
+// A recommended service for a job: what is free, the one we recommend and why,
+// and the disclosure when a link is an affiliate one.
+function recLink(j, cls) {
+  return '<a class="' + (cls || 'btn btn-secondary btn-sm') + '" href="' + safeHref(j.url) + '" target="_blank" rel="noopener ' +
+    (j.affiliate ? 'sponsored' : 'noreferrer') + '">' + escHtml(j.name) + '</a>';
+}
+
+function recommendHtml(c) {
+  const jobs = c.recommend || [];
+  // The step's own help already says what is free; each job adds one line.
+  const rows = jobs.map(j => '<p class="rec-line"><b>' + escHtml(j.label) + ':</b> ' + escHtml(j.name) + '. ' +
+    escHtml(j.why) + '</p>').join('');
+  const any = jobs.some(j => j.affiliate);
+  return '<div class="rec">' + rows + '<div class="btn-group">' +
+    (c.id === 'find_sources' ? '<button class="btn btn-primary btn-sm" onclick="useFreeFinding()">Use the free ones</button>' : '') +
+    jobs.map(j => recLink(j)).join('') + '</div>' +
+    (any && c.disclosure ? '<p class="rec-note">' + escHtml(c.disclosure) + '</p>' : '') + '</div>';
+}
+
+async function useFreeFinding() {
+  const res = await api('/api/finding-choice', {method: 'POST'});
+  if (res && res.success) showToast('Using the free sources. You can add a paid one any time.', 'success');
+  loadSetupStatus();
+}
+
+let _recommended = null;
+async function recommendedJobs() {
+  if (!_recommended) _recommended = await api('/api/recommended');
+  return _recommended;
+}
+
+// The line under a Set up screen: the one service we recommend for each job here.
+async function fillRecommended(elId, names) {
+  const el = document.getElementById(elId);
+  const d = await recommendedJobs();
+  if (!el || !d || !d.jobs) return;
+  const jobs = names.map(n => d.jobs[n]).filter(Boolean);
+  el.innerHTML = jobs.map(j => '<p class="rec-line"><b>' + escHtml(j.label) + '.</b> ' + escHtml(j.why) + ' ' +
+      recLink(j, 'rec-a') + '</p>').join('') +
+    (jobs.some(j => j.affiliate) && d.disclosure ? '<p class="rec-note">' + escHtml(d.disclosure) + '</p>' : '');
 }
 
 // The warmup step: get TrulyInbox, paste its key, or say you use another service.
@@ -1032,6 +1087,7 @@ let _provider = null;
 let _discoverPoll = null;
 
 async function loadDiscoverProviders() {
+  fillRecommended('discover-recommended', ['businesses', 'people']);
   const el = document.getElementById('discover-providers');
   const data = await api('/api/discover/providers');
   if (!data || !data.providers) { el.innerHTML = offlineState(); return; }
@@ -1409,6 +1465,7 @@ function pageCohort(dir) {
 // ── Settings ──
 
 async function loadSettings() {
+  fillRecommended('verify-recommended', ['verify', 'verify_catchall']);
   const data = await api('/api/settings');
   if (!data) return;
 

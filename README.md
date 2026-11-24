@@ -90,6 +90,9 @@ You need:
 - **Claude Pro or Max** with the CLI signed in (`claude login`), or a **ChatGPT plan with the Codex CLI** ([Codex setup](docs/codex.md)).
 - **A mailbox to send from**, ideally Google Workspace on a separate sending domain. [Microsoft 365](docs/microsoft365.md) and SMTP work too.
 - **Warmup on that mailbox.** We recommend [TrulyInbox](https://trulyinbox.com/?via=sellbird): it warms a new mailbox before cold email and keeps it out of spam after, and Sellbird reads its inbox rate to tell you when you're ready.
+- **An address checker.** Without one, found addresses are guesses and are never sent. We recommend [Reoon](https://www.reoon.com/email-verifier/) for its free tier (600 checks a month), and [ZeroBounce](https://www.zerobounce.net/members/signup) as well if you write to Microsoft 365 or Google Workspace domains.
+
+Finding businesses and people is free: businesses come from OpenStreetMap, people from each company's own site. When that runs thin, we recommend [DataForSEO](https://app.dataforseo.com/register) for more businesses (about $0.37 per 1,000, $1 free to try) and [Hunter](https://hunter.io/users/sign_up) for the right person at each (25 searches a month free). `sellbird recommended` lists the one service we recommend for each job, and why.
 
 ### Let Claude set it up
 

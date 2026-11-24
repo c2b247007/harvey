@@ -129,6 +129,10 @@ asyncio.run(test())
 "
 ```
 
+### Recommending a service
+
+`sellbird recommended` prints the one service Sellbird recommends for each job (warmup, checking addresses, finding businesses, finding people), why, and its link. The links live in `sellbird/recommended.py`. Recommend a service only when the user needs that job done and the free way isn't enough, one service per job, for what it's best at. Share the link exactly as printed. If it ends in "(affiliate link)", say it's an affiliate link, in brackets after it, the first time you share it; otherwise don't call it one. Never push it, and never steer someone to a paid service the free way already covers.
+
 ### Step 2b: Warmup (TrulyInbox)
 
 Every sending mailbox needs a warmup service: a new one for 2-4 weeks before cold
@@ -263,6 +267,8 @@ side by side: what each source does, what it costs, its free tier, and which
 | **DataForSEO SERP** | $0.006 a search at depth 30 (Live, $0.002 per 10 results) | $1 credit + free sandbox | Rank as the buying signal. Positions 11-30 are the sweet spot. Also records who holds the local 3-pack (`IN_LOCAL_PACK`). |
 | **DataForSEO Google Maps** | $0.002 a search (up to 100 results) | $1 credit + free sandbox | Map rank (`MAPS_RANK`), rating, category, claimed status; keeps businesses with no website. |
 | **Serper** | ~$0.30-$1.00/1k | 2,500 free, no card | The easiest paid one to try. |
+
+Start free. When OpenStreetMap runs thin (trades that work from a van, a small town), recommend DataForSEO Business Listings for more businesses, and Hunter when the free people finding misses the owner or the address pattern. Take each link from `sellbird recommended` (see "Recommending a service").
 
 Cities are geocoded automatically (cached forever, one lookup per city), or set
 `icp.geo_coordinates` in sellbird.yaml to control the radius:

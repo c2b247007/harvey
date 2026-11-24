@@ -623,7 +623,8 @@ def cmd_discover(args):
                 print(f"    Cost: {m['cost_note']}")
                 print(f"    Free: {m['free_tier']}")
                 if m["env_keys"]:
-                    print(f"    Needs: {', '.join(m['env_keys'])} in .env  —  {m['signup_url']}")
+                    print(f"    Needs: {', '.join(m['env_keys'])} in .env. Sign up: {m['signup_url']}"
+                          + (f" {m['signup_tag']}" if m.get("signup_tag") else ""))
                 if m["caveat"]:
                     print(f"    Note: {m['caveat']}")
             print("\n  Run one with: sellbird discover --provider <key> --estimate\n")
@@ -1292,6 +1293,23 @@ def cmd_social(args):
     print("  Sellbird posts nothing itself. See docs/social.md.\n")
 
 
+def cmd_recommended(args):
+    """The service Sellbird recommends for each job, with its link."""
+    from sellbird import recommended
+
+    print("\n  What Sellbird recommends, one service per job. Every job has a free way too.")
+    for name in recommended.JOBS:
+        j = recommended.job(name)
+        print(f"\n  {j['label']}")
+        if j["free"]:
+            print(f"    Free: {j['free']}")
+        print(f"    Recommended: {j['name']}. {j['why']}")
+        print(f"    {j['url']}" + (f" {recommended.AFFILIATE_TAG}" if j["affiliate"] else ""))
+    if recommended.DISCLOSURE:
+        print(f"\n  {recommended.DISCLOSURE}")
+    print()
+
+
 def main():
     from sellbird.textio import utf8_stdio
     utf8_stdio()
@@ -1527,6 +1545,9 @@ def main():
     sub.add_argument("social_action", nargs="?", default="list", choices=["list", "on", "off", "approve", "skip"])
     sub.add_argument("target", nargs="?", default="", help="A playbook's key, or a post's id")
     sub.set_defaults(func=cmd_social)
+
+    sub = subparsers.add_parser("recommended", help="The service Sellbird recommends for each job, with its link")
+    sub.set_defaults(func=cmd_recommended)
 
     sub = subparsers.add_parser("suppressions", help="Addresses and domains Sellbird never emails")
     sub.add_argument("suppression_action", nargs="?", default="list", choices=["list", "add", "remove"])

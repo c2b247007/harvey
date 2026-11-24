@@ -34,6 +34,14 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **One recommended service per job.** `sellbird recommended` (and Set up,
+  and Today) names the one service Sellbird recommends for warmup, checking
+  addresses, finding businesses and finding people, and why. Finding
+  businesses and people stays free by default; Today now suggests, without
+  blocking, a paid option for when the free list runs thin. Every link lives
+  in `sellbird/recommended.py`, and the disclosure line names every service
+  whose link is an affiliate link.
+
 - **Social playbooks.** Five playbooks ship as plain files
   (`skills/social_*.md`: finished work, customer questions, what we learned,
   local and seasonal, in their words) and you can add your own. You switch on
