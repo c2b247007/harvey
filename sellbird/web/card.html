@@ -112,6 +112,8 @@ button:disabled { opacity: .55; cursor: default; }
 .fb { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px 12px; border-radius: 10px;
   background: var(--wait-bg); border: 1px solid var(--wait-line); }
 .fbt { font-weight: 550; color: var(--wait); }
+.fb.ok { background: var(--soft); border-color: var(--accent-line); }
+.fb.ok .s { color: var(--fg); }
 .fb .note { flex: none; }
 .fbrow { display: flex; gap: 6px; min-width: 0; }
 .fbin { flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--line2); border-radius: 8px; background: var(--surface);
@@ -225,29 +227,70 @@ button:disabled { opacity: .55; cursor: default; }
     notify('ui/notifications/size-changed', {width: w, height: h});
   }
 
-  // Opening something in the dashboard: ask Sellbird for a one-use sign-in
-  // link to that page (never the dashboard token), then ask the host to open
-  // it. A host may refuse links from a card (Codex opens only its own), or
-  // not answer: then the card says so and offers a prompt or the link to copy.
+  // Opening something in the dashboard, in one click.
+  //  1. Ask Sellbird for a one-use sign-in link (dashboard_open). Never the token.
+  //  2. Ask the host to open it (ui/open-link), unless the host is known to drop
+  //     such links: Codex opens only https and codex: links from an app's card,
+  //     and drops ours without saying so.
+  //  3. If the host didn't open it, ask the agent instead (ui/message, a turn in
+  //     the chat): it calls dashboard_open and opens the page in its own pane.
+  //  4. Only if both fail: say which app refused, and offer the prompt or link to copy.
+  var host = {name: '', codex: false, message: false};
   var PAGE_WORDS = {'': 'Today', today: 'Today', outbox: 'Outbound (what waits for my approval)', conversations: 'replies',
     leads: 'leads', social: 'social posts', texts: 'texts', campaigns: 'campaigns', mentions: 'mentions', signals: 'signals'};
+  function learnHost(res) {
+    var info = (res && res.hostInfo) || {}, caps = (res && res.hostCapabilities) || {};
+    host.codex = info.client_type === 'codex_desktop' || /codex/i.test(String(info.name || ''));
+    host.name = host.codex ? 'Codex' : /claude/i.test(String(info.name || '')) ? 'Claude' : String(info.title || info.name || '');
+    host.message = !!caps.message;
+  }
+  function promptFor(page) { return 'Open Sellbird\u2019s ' + (PAGE_WORDS[page] || page || 'dashboard') + ' in your browser pane.'; }
   function open(page, button, where) {
     if (button) button.disabled = true;
     var url = '';
-    rpc('tools/call', {name: 'dashboard_open', arguments: {page: page || ''}}).then(function (r) {
-      var res = result(r);
-      url = res && res.structuredContent && res.structuredContent.url;
-      if (!url && res && res.content && res.content[0] && res.content[0].text) {
-        var m = /https?:\/\/127\.0\.0\.1:\d+\/#\S+|https?:\/\/localhost:\d+\/#\S+/.exec(res.content[0].text);
-        url = m && m[0];
-      }
-      if (!(url && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(url))) { url = ''; return {notOpened: true}; }
-      return rpc('ui/open-link', {url: url}, 5000);
-    }).then(function (r) {
+    var done = function (how) {
       if (button) button.disabled = false;
-      var opened = r && !r.notOpened && result(r) && !result(r).isError;
-      if (!opened) fallback(where, page, url);
-    });
+      var old = where.querySelector('.fb'); if (old) old.remove();
+      if (how === 'asked') status(where, 'Asked ' + (host.name || 'your agent') + ' to open it in its browser pane.');
+      else if (how !== 'opened') fallback(where, page, url);
+      resized();
+    };
+    var askAgent = function () {
+      if (!host.message) return Promise.resolve('failed');
+      return rpc('ui/message', {role: 'user', content: [{type: 'text', text: promptFor(page)}]}, 8000).then(function (r) {
+        var res = result(r);
+        return res && !res.isError ? 'asked' : 'failed';
+      });
+    };
+    // A one-use sign-in link for the page; '' when Sellbird couldn't make one.
+    var getLink = function () {
+      return rpc('tools/call', {name: 'dashboard_open', arguments: {page: page || ''}}).then(function (r) {
+        var res = result(r), u = res && res.structuredContent && res.structuredContent.url;
+        if (!u && res && res.content && res.content[0] && res.content[0].text) {
+          var m = /https?:\/\/127\.0\.0\.1:\d+\/#\S+|https?:\/\/localhost:\d+\/#\S+/.exec(res.content[0].text);
+          u = m && m[0];
+        }
+        url = u && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(u) ? u : '';
+        return url;
+      });
+    };
+    // Codex drops the link, so no code is made for it unless the copy needs one.
+    var flow = host.codex
+      ? askAgent().then(function (how) { return how === 'asked' ? how : getLink().then(function () { return 'failed'; }); })
+      : getLink().then(function (u) {
+          if (!u) return askAgent();
+          return rpc('ui/open-link', {url: u}, 5000).then(function (o) {
+            var ok = result(o);
+            return ok && !ok.isError ? 'opened' : askAgent();
+          });
+        });
+    flow.then(done, function () { done('failed'); });
+  }
+  function status(where, text) {
+    var box = el('div', 'fb ok');
+    box.setAttribute('role', 'status');
+    box.appendChild(el('p', 's', text));
+    where.appendChild(box);
   }
   function copy(text, input, label) {
     function done(ok) { label.textContent = ok ? 'Copied' : 'Select it and copy'; if (!ok && input) input.select(); }
@@ -265,8 +308,9 @@ button:disabled { opacity: .55; cursor: default; }
     if (old) old.remove();
     var box = el('div', 'fb');
     box.setAttribute('role', 'status');
-    box.appendChild(el('p', 'fbt', 'This app didn\u2019t open the link from the card.'));
-    var prompt = 'Open Sellbird\u2019s ' + (PAGE_WORDS[page] || page || 'dashboard') + ' in your browser pane.';
+    box.appendChild(el('p', 'fbt', (host.name || 'This app') + ' didn\u2019t open the link from the card' +
+      (host.message ? ', and didn\u2019t take the request for your agent.' : '.')));
+    var prompt = promptFor(page);
     box.appendChild(el('p', 's', 'Ask your agent to open it, or open the link in your browser.'));
     var line = el('div', 'fbrow');
     var pin = el('input', 'fbin'); pin.readOnly = true; pin.value = prompt; pin.setAttribute('aria-label', 'Prompt for your agent');
@@ -403,6 +447,7 @@ button:disabled { opacity: .55; cursor: default; }
     appCapabilities: {}, capabilities: {},
   }).then(function (res) {
     res = result(res);
+    learnHost(res);
     theme(res && res.hostContext);
     notify('ui/notifications/initialized');
   });

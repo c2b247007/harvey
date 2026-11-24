@@ -22,12 +22,14 @@ CARD = {"kind": "needs_you", "title": "Waiting for you", "count": 1, "only_you":
 HOST = """<!doctype html><html><body><iframe id="f" style="width:600px;height:500px;border:0"></iframe><script>
 window.seen = [];
 const f = document.getElementById('f'); f.srcdoc = %s;
-const card = %s, link = %s, mode = %s;
+const card = %s, link = %s, mode = %s, init = %s, msg = %s;
 const reply = (id, body) => f.contentWindow.postMessage(Object.assign({jsonrpc: '2.0', id}, body), '*');
 window.addEventListener('message', e => {
   const m = e.data; if (!m || m.jsonrpc !== '2.0') return;
   window.seen.push({method: m.method, params: m.params});
-  if (m.method === 'ui/initialize') reply(m.id, {result: {hostContext: {theme: 'light'}}});
+  if (m.method === 'ui/initialize') reply(m.id, {result: Object.assign({hostContext: {theme: 'light'}}, init)});
+  if (m.method === 'ui/message' && msg === 'take') reply(m.id, {result: {}});
+  if (m.method === 'ui/message' && msg === 'refuse') reply(m.id, {error: {code: -32601, message: 'disabled'}});
   if (m.method === 'ui/notifications/initialized')
     f.contentWindow.postMessage({jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: {structuredContent: card}}, '*');
   if (m.method === 'tools/call') reply(m.id, {result: {structuredContent: {ok: true, url: link}, content: [{type: 'text', text: link}]}});
@@ -49,10 +51,15 @@ def browser():
         b.close()
 
 
-def _click_review(browser, mode):
+CODEX = {"hostInfo": {"name": "chatgpt", "client_type": "codex_desktop"}, "hostCapabilities": {"openLinks": {}, "message": {}}}
+MESSAGES = {"hostInfo": {"name": "Example host"}, "hostCapabilities": {"openLinks": {}, "message": {}}}
+
+
+def _click_review(browser, mode, init=None, msg="none"):
     page = browser.new_page()
     html = mcp_cards.card_html()
-    page.set_content(HOST % (json.dumps(html).replace("</", "<\\/"), json.dumps(CARD), json.dumps(LINK), json.dumps(mode)))
+    page.set_content(HOST % (json.dumps(html).replace("</", "<\\/"), json.dumps(CARD), json.dumps(LINK), json.dumps(mode),
+                             json.dumps(init or {}), json.dumps(msg)))
     frame = page.frame_locator("#f")
     frame.locator("button.pri").first.click()
     return page, frame
@@ -79,4 +86,37 @@ def test_a_refused_or_unanswered_link_says_so_and_offers_a_way(browser, mode, wa
     assert values[0].startswith("Open Sellbird’s Outbound") and values[1] == LINK
     assert "dashboard-token" not in json.dumps(values) and "token=" not in json.dumps(values)
     assert frame.locator("button:has-text('Review')").is_enabled()     # it can be tried again
+    page.close()
+
+
+def _methods(page):
+    return [m["method"] for m in page.evaluate("window.seen") if m["method"] in ("tools/call", "ui/open-link", "ui/message")]
+
+
+def test_when_the_host_wont_open_it_the_agent_is_asked_in_one_click(browser):
+    page, frame = _click_review(browser, "refuse", MESSAGES, "take")
+    page.wait_for_timeout(500)
+    assert _methods(page) == ["tools/call", "ui/open-link", "ui/message"]
+    sent = [m for m in page.evaluate("window.seen") if m["method"] == "ui/message"][0]["params"]
+    assert sent == {"role": "user", "content": [{"type": "text", "text": "Open Sellbird\u2019s Outbound (what waits for my approval) in your browser pane."}]}
+    assert "Asked Example host to open it" in frame.locator(".fb").inner_text()
+    assert frame.locator(".fbin").count() == 0                        # nothing to copy
+    page.close()
+
+
+def test_codex_is_never_asked_to_open_a_link_it_drops_the_agent_opens_it(browser):
+    page, frame = _click_review(browser, "open", CODEX, "take")
+    page.wait_for_timeout(500)
+    assert _methods(page) == ["ui/message"]               # no link to Codex, and no code made for nothing
+    assert "Asked Codex to open it in its browser pane." in frame.locator(".fb").inner_text()
+    page.close()
+
+
+def test_when_codex_refuses_both_the_card_names_it_and_offers_the_copy(browser):
+    page, frame = _click_review(browser, "open", CODEX, "refuse")
+    page.wait_for_timeout(500)
+    text = frame.locator(".fb").inner_text()
+    assert _methods(page) == ["ui/message", "tools/call"]          # the link is made only for the copy
+    assert text.startswith("Codex didn\u2019t open the link from the card, and didn\u2019t take the request for your agent.")
+    assert frame.locator(".fbin").nth(1).input_value() == LINK
     page.close()
