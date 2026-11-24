@@ -349,8 +349,10 @@ async function lockIfRefused(r) {
   }
   showLock(r.status === 503
     ? 'The dashboard server can\'t use its token file, so it is refusing every request. ' + why
+    : signInFailed && !authToken()
+      ? 'This sign-in link was used already or has expired. Ask your agent to open the dashboard again.'
     : authToken()
-      ? 'The saved token was not accepted (the dashboard may have a new one).'
+      ? 'The saved token was not accepted (the dashboard may have signed this tab out).'
       : 'This tab doesn\'t have the dashboard token yet.');
   return true;
 }
@@ -4466,6 +4468,15 @@ function agentHtml(d) {
       (on ? '<button class="btn btn-danger btn-sm" onclick="setAgentAccess(\'off\')">Cut it off</button>'
           : '<button class="btn btn-primary btn-sm" onclick="setAgentAccess(\'on\')">Let it back in</button>') +
       '</div></div></section>' +
+    '<section class="sec"><h2>Its browser pane</h2><div class="w">' +
+      ((d.panes || []).length
+        ? (d.panes || []).map(x => r('Signed in in your agent\'s browser pane', 'Since ' + relTime(new Date(x.since * 1000).toISOString()) +
+            '. Signs itself out in ' + Math.max(1, Math.round(x.minutes_left / 60)) + ' hours.', 'Open', 'wait')).join('') +
+          '<div class="row"><div class="grow"><p class="s">Whoever drives that pane can click what you can click there.</p></div>' +
+          '<button class="btn btn-secondary btn-sm" onclick="signOutPanes()">Sign panes out</button></div>'
+        : r('No pane is signed in', 'Your agent can open this dashboard in its own browser pane with a link that works once, for two minutes. ' +
+            'It never gets your key. Cutting it off signs every pane out.')) +
+      '</div></section>' +
     '<section class="sec"><h2>Connect an agent</h2><div class="w pad">' +
       '<p class="s" style="margin-bottom:10px">Run this once in a terminal, in this folder. It adds Sellbird to Claude Code or Codex as an MCP server.</p>' +
       '<pre class="code-block">sellbird mcp install</pre>' +
@@ -4482,6 +4493,12 @@ function agentHtml(d) {
     '<section class="sec span"><h2>What it did</h2><div class="w">' +
       (log || '<div class="row"><div class="grow"><p class="t">Nothing yet</p><p class="s">Every call your agent makes shows up here, including the ones Sellbird refused.</p></div></div>') +
       '<p class="w-f">The newest 100. What it asked for and how it ended; never the contents.</p></div></section></div>';
+}
+
+async function signOutPanes() {
+  const res = await api('/api/pane/sign-out', {method: 'POST'});
+  if (res && res.success) showToast('Signed out. A pane opened by your agent needs a new link now.', 'success');
+  loadAgent();
 }
 
 async function setAgentAccess(access) {

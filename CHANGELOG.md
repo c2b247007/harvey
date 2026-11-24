@@ -34,6 +34,15 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Sellbird inside your agent app.** `dashboard_open` gives your agent a
+  link that opens the full dashboard in its app's browser pane, signed in.
+  The link carries a one-use code that lasts two minutes, never your
+  dashboard token; Set up, Your agent lists signed-in panes and signs them
+  out, and cutting the agent off signs them out too. `show_today`,
+  `show_needs_you` and `show_campaign_report` answer with a card in hosts
+  that support MCP Apps, and as plain text everywhere else. Cards show and
+  link; they never approve. See `docs/agent-app.md`.
+
 - **The dock has seven places, as in the approved prototype.** Outbound
   (waiting for you, replies, campaigns, finding businesses, signals, social)
   and Inbound (leads, texts, mentions) replace Inbox. Set up opens with

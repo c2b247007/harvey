@@ -291,6 +291,107 @@ def is_loopback(host: str) -> bool:
         return False
 
 
+# ── Sign-in links for the agent's browser pane ──
+#
+# The coding agent can open the dashboard in its app's built-in browser pane
+# (Claude desktop, ChatGPT desktop, Codex). It never gets the dashboard
+# token: it asks for a sign-in code, puts it in the link's #fragment, and
+# the page swaps the code, once, for a pane session of its own. A code works
+# once and for two minutes; a session lasts twelve hours and can be signed
+# out from Your agent, and switching the agent off signs every pane out.
+#
+# What this does not change: whoever drives that pane can click what the
+# person can click there. The person sees the pane, and chooses to use it.
+
+PANE_PATH = "/api/pane/redeem"
+CODE_SECONDS = 120
+PANE_SESSION_SECONDS = 12 * 3600
+MAX_OPEN_CODES = 10
+MAX_PANE_SESSIONS = 5
+MAX_FAILED_REDEEMS = 30          # a minute; a code is 256 random bits, this only keeps noise down
+
+
+def _digest(value: str) -> str:
+    import hashlib
+    return hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()
+
+
+class PaneSessions:
+    """Sign-in codes and the pane sessions they become. In memory only: a
+    restarted dashboard signs every pane out. Only digests are kept."""
+
+    def __init__(self, clock=time.monotonic, wall=time.time):
+        self._clock, self._wall = clock, wall
+        self._lock = threading.Lock()
+        self._codes: dict[str, float] = {}
+        self._sessions: dict[str, dict] = {}
+        self._failures: list[float] = []
+
+    def _sweep(self, now: float) -> None:
+        self._codes = {k: v for k, v in self._codes.items() if v > now}
+        self._sessions = {k: v for k, v in self._sessions.items() if v["expires"] > now}
+        self._failures = [t for t in self._failures if t > now - 60]
+
+    def mint(self) -> str | None:
+        """A new code, or None when too many are still open."""
+        with self._lock:
+            now = self._clock()
+            self._sweep(now)
+            if len(self._codes) >= MAX_OPEN_CODES:
+                return None
+            code = secrets.token_urlsafe(32)
+            self._codes[_digest(code)] = now + CODE_SECONDS
+            return code
+
+    def redeem(self, code: str) -> str | None:
+        """The pane token for a good code, once. None for a used, expired or
+        unknown code, and for every attempt once too many have failed."""
+        with self._lock:
+            now = self._clock()
+            self._sweep(now)
+            if len(self._failures) >= MAX_FAILED_REDEEMS:
+                return None
+            if not isinstance(code, str) or not TOKEN_RE.fullmatch(code or ""):
+                self._failures.append(now)
+                return None
+            if self._codes.pop(_digest(code), None) is None:
+                self._failures.append(now)
+                return None
+            while len(self._sessions) >= MAX_PANE_SESSIONS:
+                oldest = min(self._sessions, key=lambda k: self._sessions[k]["expires"])
+                del self._sessions[oldest]
+            token = secrets.token_urlsafe(32)
+            self._sessions[_digest(token)] = {"expires": now + PANE_SESSION_SECONDS,
+                                              "since": self._wall()}
+            return token
+
+    def check(self, header_values: list[str]) -> bool:
+        if len(header_values) != 1:
+            return False
+        scheme, _, presented = header_values[0].partition(" ")
+        if scheme.lower() != "bearer" or not presented.strip():
+            return False
+        with self._lock:
+            now = self._clock()
+            self._sweep(now)
+            want = _digest(presented.strip())
+            return any(hmac.compare_digest(want, k) for k in self._sessions)
+
+    def sessions(self) -> list[dict]:
+        with self._lock:
+            now = self._clock()
+            self._sweep(now)
+            return [{"since": v["since"], "minutes_left": int((v["expires"] - now) // 60)}
+                    for v in sorted(self._sessions.values(), key=lambda v: v["since"])]
+
+    def sign_out_all(self) -> int:
+        with self._lock:
+            n = len(self._sessions)
+            self._sessions.clear()
+            self._codes.clear()
+            return n
+
+
 def is_public_path(method: str, path: str) -> bool:
     if method not in ("GET", "HEAD"):
         return False
@@ -327,10 +428,12 @@ class DashboardGuard:
     """ASGI middleware applying the checks in the module docstring to every
     request, and the security headers to every response."""
 
-    def __init__(self, app, store: TokenStore, agent_store: TokenStore | None = None):
+    def __init__(self, app, store: TokenStore, agent_store: TokenStore | None = None,
+                 panes: PaneSessions | None = None):
         self.app = app
         self.store = store
         self.agent_store = agent_store
+        self.panes = panes
 
     def _same_tokens_message(self) -> str:
         return (f"The agent token ({self.agent_store.path}) is the same as the dashboard "
@@ -391,6 +494,14 @@ class DashboardGuard:
         if public:
             return await self.app(scope, receive, send_secured)
 
+        # A pane's sign-in code is swapped here, with no token yet. Host and
+        # provenance were checked above; the body must be JSON.
+        if self.panes is not None and method == "POST" and path == PANE_PATH:
+            if not _is_json(headers.get("content-type", [""])[0]):
+                return await deny(415, "unsupported_media_type", "Request bodies must be application/json.")
+            scope.setdefault("state", {})["principal"] = "nobody"
+            return await self.app(scope, receive, send_secured)
+
         # 3. Token (fail closed when it can't be loaded). The user's token is
         # checked first, so the UI never loads (or creates) the agent's.
         authorization = headers.get("authorization", [])
@@ -421,6 +532,10 @@ class DashboardGuard:
                     return await deny(503, "token_unavailable", self._same_tokens_message())
                 if bearer_ok(authorization, agent_token):
                     principal = "agent"
+            # A pane the agent opened with a sign-in code: the person's own
+            # session in that pane, signed out with the agent switch.
+            if principal is None and self.panes is not None and self.panes.check(authorization):
+                principal = "pane"
             if principal is None:
                 return await deny(401, "unauthorized",
                                   "Open the link printed by 'sellbird dashboard' to unlock.",

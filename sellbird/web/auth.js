@@ -15,15 +15,48 @@ const AUTH_KEY = 'sellbird-dashboard-token';
 const LEGACY_AUTH_KEY = 'harvey-dashboard-token';
 const AUTH_TOKEN_RE = /^[A-Za-z0-9_-]{43,128}$/;
 
-(function takeFragmentToken() {
+// A sign-in link from the agent's browser pane carries a one-use code, not
+// the token. It is swapped once for a pane session before any other request
+// goes out; a used or expired code leaves the tab locked. (Declared before
+// the fragment is read, which may set it.)
+var _pendingSignIn = null;
+var signInFailed = false;     // the link's code was used already or expired
+
+function takeFragmentToken() {
   const hash = window.location.hash || '';
-  if (!hash) return;
-  const token = new URLSearchParams(hash.slice(1)).get('token');
-  // A fragment with no token names a screen ("#outbox"): leave it for app.js.
-  if (token === null) return;
-  history.replaceState(null, '', window.location.pathname + window.location.search);
+  if (!hash) return false;
+  const params = new URLSearchParams(hash.slice(1));
+  const token = params.get('token');
+  const code = params.get('code');
+  // A fragment with no token or code names a screen ("#outbox"): leave it for app.js.
+  if (token === null && code === null) return false;
+  // The page to open after a sign-in link: a screen name, or person/<id>.
+  const page = (params.get('page') || '').replace(/[^a-z0-9_\/-]/gi, '');
+  history.replaceState(null, '', window.location.pathname + window.location.search + (page ? '#' + page : ''));
   if (token && AUTH_TOKEN_RE.test(token)) setAuthToken(token);
-})();
+  if (code && AUTH_TOKEN_RE.test(code)) { signInFailed = false; _pendingSignIn = redeemSignInCode(code); }
+  return true;
+}
+takeFragmentToken();
+
+// A new link opened in a pane that already shows the dashboard changes only
+// the #fragment: take its code too, then show the page it names.
+if (window.addEventListener) window.addEventListener('hashchange', () => {
+  if (!takeFragmentToken()) return;
+  Promise.resolve(_pendingSignIn).then(() => {
+    if (typeof showTab === 'function' && typeof fromHash === 'function') showTab(fromHash(), {fromHash: true});
+  });
+});
+
+function redeemSignInCode(code) {
+  return fetch('/api/pane/redeem', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: code}),
+    mode: 'same-origin', credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'same-origin',
+  }).then(r => r.ok ? r.json() : null).then(d => {
+    if (d && d.token) setAuthToken(d.token);
+    else signInFailed = true;
+  }).catch(() => {}).finally(() => { _pendingSignIn = null; });
+}
 
 function authToken() {
   try {
@@ -57,6 +90,7 @@ function sameOriginUrl(path) {
 // fetch() for this dashboard's own API, with the token attached. Refuses
 // anything that isn't same-origin, and never follows redirects.
 function authFetch(path, opts) {
+  if (_pendingSignIn) return _pendingSignIn.then(() => authFetch(path, opts));
   const url = sameOriginUrl(path);
   if (!url) return Promise.reject(new Error('refusing to send the dashboard token off-origin'));
   const o = Object.assign({}, opts || {});

@@ -48,9 +48,11 @@ the offer every first email ends with (offer_suggest, offer_preview, offer_propo
 confirm it in the dashboard. You cannot approve or send email, resume sending, confirm
 signals, run discovery, change settings or keys, or delete anything: those are the
 user's, in the dashboard (`sellbird dashboard`). When something needs them, say which tab
-to open (Today, Your company, Outbox, Inboxes, Signals, Discover, Settings) and what to
-click. Never ask the user for
-their dashboard token, and never read data/dashboard-token.
+to open (Today, Outbound, Inbound, People, Set up) and what to click. To open it for them,
+call dashboard_open and open the link in your built-in browser or side panel: it signs that
+pane in once, without the token. To show where things stand in the chat, use show_today,
+show_needs_you and show_campaign_report. Never ask the user for their dashboard token, and
+never read data/dashboard-token.
 """
 
 
@@ -582,6 +584,13 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
         Inboxes tab. To stop every inbox, use sending_pause."""
         return await guarded(lambda c: c.post(
             f"/api/inboxes/{quote(inbox_id, safe='')}/pause", {"reason": reason}))
+
+    # The dashboard in the agent's browser pane, and cards in its chat. The
+    # sign-in link is local only: a server reaching several workspaces has
+    # no dashboard on this machine to open.
+    if workspace_arg is None:
+        from sellbird import mcp_cards
+        mcp_cards.register(server, guarded, read)
 
     # Tools that installed extensions add (sellbird.extensions).
     from sellbird import extensions

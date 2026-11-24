@@ -77,6 +77,10 @@ def _protected_requests():
             continue
         if route.path in ("/", "/static/{path:path}", "/api/instance"):  # public by design
             continue
+        # A one-use sign-in code is swapped here without a token, by design;
+        # its own refusals are in test_agent_pane_and_cards.
+        if route.path == "/api/pane/redeem":
+            continue
         path = re.sub(r"\{[^}]+\}", "x", route.path)
         for method in sorted(route.methods - {"HEAD"}):
             out.append((method, path))

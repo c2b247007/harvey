@@ -60,6 +60,8 @@ def _resolve_config_file() -> Path:
 app = FastAPI(title="Sellbird Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
 token_store = auth.TokenStore(TOKEN_FILE)
 agent_token_store = auth.TokenStore(AGENT_TOKEN_FILE)
+# Sign-in codes for the agent's browser pane, and the sessions they open.
+pane_sessions = auth.PaneSessions()
 AGENT_ACCESS_KEY = "agent_access"   # 'off' cuts the agent off; anything else is on
 
 
@@ -77,7 +79,7 @@ async def _record_agent_request(method: str, path: str, status: int) -> None:
 
 # Innermost first: the guard (added next) sets the principal before this runs.
 app.add_middleware(agent_policy.AgentPolicy, is_off=_agent_is_off, record=_record_agent_request)
-app.add_middleware(auth.DashboardGuard, store=token_store, agent_store=agent_token_store)
+app.add_middleware(auth.DashboardGuard, store=token_store, agent_store=agent_token_store, panes=pane_sessions)
 
 
 class home_middleware:
@@ -499,6 +501,49 @@ async def get_suite():
         return {"groups": groups, "on": sum(1 for p in local if p["state"] == "on"), "total": len(local)}
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/api/campaigns/{campaign_id}/report")
+async def campaign_report(campaign_id: str):
+    """One campaign in numbers: people in it, emails sent and waiting, replies
+    and meetings. "latest" is the newest campaign. Read only."""
+    state = _state()
+    await state.init_db()
+    if campaign_id == "latest":
+        rows = await query_db("SELECT id FROM campaigns ORDER BY created_at DESC LIMIT 1")
+        if not rows:
+            return _refuse("There are no campaigns yet.", 404)
+        campaign_id = rows[0]["id"]
+    rows = await query_db("SELECT id, name, status, prospect_ids_json, created_at FROM campaigns WHERE id = ?",
+                          (campaign_id,))
+    if not rows:
+        return _refuse("There is no such campaign.", 404)
+    c = rows[0]
+    try:
+        people = [p for p in json.loads(c["prospect_ids_json"] or "[]") if isinstance(p, str)]
+    except ValueError:
+        people = []
+
+    async def n(sql: str, params=()) -> int:
+        got = await query_db(sql, params)
+        return int(got[0]["n"]) if got else 0
+
+    marks = ",".join("?" * len(people)) or "''"
+    sent = await n("SELECT COUNT(*) AS n FROM outbox WHERE campaign_id = ? AND status = 'sent'", (campaign_id,))
+    waiting = await n("SELECT COUNT(*) AS n FROM outbox WHERE campaign_id = ? AND status = 'pending_review'",
+                      (campaign_id,))
+    scheduled = await n("SELECT COUNT(*) AS n FROM outbox WHERE campaign_id = ? AND status = 'approved'",
+                        (campaign_id,))
+    replied = await n(f"SELECT COUNT(*) AS n FROM prospects WHERE id IN ({marks}) AND status IN "
+                      "('replied', 'interested', 'accepted_offer', 'meeting', 'not_interested')", tuple(people))
+    meetings = await n(f"SELECT COUNT(DISTINCT prospect_id) AS n FROM meetings WHERE prospect_id IN ({marks})",
+                       tuple(people))
+    reached = await n("SELECT COUNT(DISTINCT prospect_id) AS n FROM outbox WHERE campaign_id = ? AND status = 'sent'",
+                      (campaign_id,))
+    return {"id": c["id"], "name": c["name"], "status": c["status"], "created_at": c["created_at"],
+            "people": len(people), "reached": reached, "sent": sent, "waiting": waiting, "scheduled": scheduled,
+            "replied": replied, "meetings": meetings,
+            "reply_rate": round(100 * replied / reached) if reached else 0}
 
 
 @app.post("/api/finding-choice")
@@ -2017,6 +2062,7 @@ async def get_agent():
     writes = sorted({p for m, p in agent_policy.AGENT_ROUTES if m != "GET"})
     return {
         "access": "off" if await _agent_is_off() else "on",
+        "panes": pane_sessions.sessions(),
         "has_token": agent_token_store.peek() is not None,
         "last_seen": requests_[0]["created_at"] if requests_ else "",
         "reads": len(reads), "may_do": [agent_policy.describe_route(p) for p in writes],
@@ -2035,8 +2081,55 @@ async def set_agent_access(request: Request):
     state = _state()
     await state.init_db()
     await state.set_setting(AGENT_ACCESS_KEY, "off" if access == "off" else "")
-    await state.log_action("agent_access_" + access, "dashboard", {})
-    return {"success": True, "access": access}
+    signed_out = pane_sessions.sign_out_all() if access == "off" else 0
+    await state.log_action("agent_access_" + access, "dashboard", {"panes_signed_out": signed_out})
+    return {"success": True, "access": access, "panes_signed_out": signed_out}
+
+
+# ── The agent's browser pane (sellbird.dashboard_auth.PaneSessions) ──
+
+
+@app.post("/api/pane/code")
+async def pane_code(request: Request):
+    """A sign-in code for the agent's browser pane: one use, two minutes.
+    The agent puts it in the link's #fragment; the page swaps it for a pane
+    session. The dashboard token itself never leaves this machine's file."""
+    code = pane_sessions.mint()
+    if code is None:
+        return _refuse("Too many sign-in links are open. Wait two minutes and try again.", 429)
+    state = _state()
+    await state.init_db()
+    await state.log_action("pane_link_made", "agent" if _who(request) == "agent" else "user", {})
+    return {"success": True, "code": code, "expires_in": auth.CODE_SECONDS}
+
+
+@app.post(auth.PANE_PATH)
+async def pane_redeem(request: Request):
+    """Swap a sign-in code for a pane session. A used, expired or unknown
+    code gets nothing. Neither the code nor the session is ever logged."""
+    body = await _json_body(request)
+    token = pane_sessions.redeem(str(body.get("code") or ""))
+    if token is None:
+        return JSONResponse({"success": False, "error": "code_invalid",
+                             "message": "This sign-in link was used already or has expired. "
+                                        "Ask your agent to open the dashboard again."}, status_code=401)
+    return {"success": True, "token": token, "expires_in": auth.PANE_SESSION_SECONDS}
+
+
+@app.get("/api/pane/sessions")
+async def pane_list():
+    """Browser panes signed in with a link your agent made."""
+    return {"sessions": pane_sessions.sessions()}
+
+
+@app.post("/api/pane/sign-out")
+async def pane_sign_out():
+    """Sign every agent browser pane out. Their open links stop working too."""
+    n = pane_sessions.sign_out_all()
+    state = _state()
+    await state.init_db()
+    await state.log_action("panes_signed_out", "user", {"count": n})
+    return {"success": True, "signed_out": n}
 
 
 @app.get("/api/limits")

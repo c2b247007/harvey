@@ -153,7 +153,9 @@ def test_the_allowlist_is_reads_estimates_pause_and_offer_proposals_only():
                      "/api/mentions/(?!watches$|check$)[^/]+", "/api/mentions/(?!watches/)[^/]+/lead",
                      # A social post is a draft the user approves; "posted" only records one
                      # they approved. Sellbird posts nothing.
-                     "/api/social/posts", "/api/social/posts/[^/]+/posted")
+                     "/api/social/posts", "/api/social/posts/[^/]+/posted",
+                     # A one-use sign-in link for the agent's browser pane: never the token.
+                     "/api/pane/code")
     for method, pattern in agent_policy.AGENT_ROUTES:
         assert method == "GET" or pattern in allowed_posts
     assert not agent_policy.agent_may("POST", "/api/offer")

@@ -156,3 +156,7 @@ sending, confirm signals, start discovery, change settings or keys, or delete
 anything: the dashboard answers 403 to the agent's token for every route that
 isn't on its short allowlist (`sellbird/agent_policy.py`).
 
+It can also open the dashboard in its app's browser pane, signed in, with a
+one-use link (`dashboard_open`), and show cards in the chat. See
+[Sellbird inside your agent app](agent-app.md).
+
