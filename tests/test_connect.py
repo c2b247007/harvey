@@ -168,10 +168,15 @@ def test_sellbird_home_is_written_into_every_entry(tmp_path, monkeypatch):
 
 
 def test_mcp_install_claude_desktop_shares_the_code(tmp_path):
-    make_desktop(tmp_path, {})
+    # `sellbird mcp install` looks where Claude desktop keeps its settings on this
+    # computer, so the test puts the file there, on Mac, Windows and Linux alike.
+    env = {"CODEX_HOME": str(tmp_path / ".codex")}
+    path = mi.desktop_config_path(env=env, home=tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("{}", encoding="utf-8")
     lines = []
     code = mi.run_command("install", "claude-desktop", yes=True, home=tmp_path,
-                          env={"CODEX_HOME": str(tmp_path / ".codex")}, which=no_cli,
+                          env=env, which=no_cli,
                           runner=never_run, out=lines.append, now=NOW)
     assert code == 0
     assert "Added Sellbird to Claude desktop." in "\n".join(lines)

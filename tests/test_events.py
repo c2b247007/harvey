@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -136,11 +137,11 @@ def test_a_failing_endpoint_is_retried_later_and_given_up_on_in_the_end(state):
     http = FakeClient([500, ConnectionError("down"), 200])
     assert run(events.deliver_pending(config, state, client=http)) == {"delivered": 0, "failed": 1, "skipped": 0}
     assert run(events.deliver_pending(config, state, client=http))["failed"] == 0      # not due yet
-    with sqlite3.connect(state.db_path) as conn:
+    with closing(sqlite3.connect(state.db_path)) as conn, conn:
         assert conn.execute("SELECT status, attempts, response_status FROM event_deliveries").fetchall() == [("retrying", 1, 500)]
         conn.execute("UPDATE event_deliveries SET next_attempt_at = '2000-01-01T00:00:00'")
     assert run(events.deliver_pending(config, state, client=http))["failed"] == 1      # no answer at all
-    with sqlite3.connect(state.db_path) as conn:
+    with closing(sqlite3.connect(state.db_path)) as conn, conn:
         conn.execute("UPDATE event_deliveries SET next_attempt_at = '2000-01-01T00:00:00'")
     assert run(events.deliver_pending(config, state, client=http))["delivered"] == 1
     assert events.next_attempt_after(events.MAX_ATTEMPTS) is None
@@ -174,7 +175,7 @@ def test_nothing_is_sent_when_no_endpoint_is_set(state):
 
 def test_the_events_route_lists_types_endpoints_and_events_without_secrets(client):
     run(StateManager(str(client.db_path)).init_db())
-    with sqlite3.connect(client.db_path) as conn:
+    with closing(sqlite3.connect(client.db_path)) as conn, conn:
         conn.execute("INSERT INTO prospects (id, first_name, email, status) VALUES ('p1', 'Avery', 'avery@example.com', 'contacted')")
     assert client.post("/api/prospects/p1/stage", json={"stage": "proposal"}).status_code == 200
     data = client.get("/api/events").json()

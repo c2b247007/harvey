@@ -5,6 +5,7 @@ Every name and address here is made up."""
 
 import json
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -44,7 +45,7 @@ def _config(**inbound):
 
 
 def _rows(db, query, params=()):
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         conn.row_factory = sqlite3.Row
         return [dict(r) for r in conn.execute(query, params).fetchall()]
 
