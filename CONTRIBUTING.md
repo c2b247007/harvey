@@ -69,15 +69,34 @@ Every GitHub release note opens with this line, so people watching releases know
 
 Announce the release on X first, then link that post from the release notes.
 
-## License and sign-off
+## License, CLA and sign-off
 
 Sellbird is licensed under the GNU Affero General Public License v3.0 only
 (see `LICENSE`). Code from the MIT-licensed Harvey releases (0.3.x and
 earlier) keeps its MIT notice in `NOTICE`.
 
-By contributing, you agree that your contribution is licensed under the
-project's license. Sign off every commit to certify that you wrote it or have
-the right to submit it, under the
+### Contributor License Agreement
+
+Before your first pull request can be merged, sign the
+[Sellbird Contributor License Agreement](CLA.md). You keep the copyright in
+your work. The CLA gives Sellbird a permanent license to use your contribution
+anywhere, including in the hosted version of Sellbird, and to release it under
+other licenses later. Your contribution is still published under the AGPL for
+everyone else.
+
+To sign, post this comment on your pull request:
+
+```text
+I have read the Sellbird CLA and I agree to it.
+```
+
+A bot checks every pull request and records who signed. You only sign once,
+and it covers your earlier contributions too.
+
+### Sign-off
+
+Also sign off every commit to certify that you wrote it or have the right to
+submit it, under the
 [Developer Certificate of Origin](https://developercertificate.org/):
 
 ```sh

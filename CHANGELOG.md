@@ -293,6 +293,12 @@ sellbird dashboard
 
 ### Changed
 
+- **Contributor License Agreement.** Outside contributors now sign the
+  [Sellbird CLA](CLA.md) once, by commenting on their first pull request. They
+  keep their copyright and give Sellbird a license to use the contribution in
+  any version of Sellbird, hosted included. A bot checks every pull request.
+  The DCO sign-off stays.
+
 - **Today, by importance.** One column: the answer, the four numbers, Finish
   setting up (steps in order, the next one as the only primary button, gone
   once done), Needs you, then the last five things your agent did with Show
