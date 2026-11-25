@@ -52,6 +52,10 @@ sellbird status                # pipeline summary
 sellbird usage                 # active provider's quota + per-agent tokens
 sellbird outbox                # review queued email
 sellbird export                # deliverable prospects → CSV
+sellbird import people.csv     # bring your own list in; checks each address, emails nobody
+sellbird leads [add --email ...]  # leads that came to you; add records one (docs/inbound-leads.md)
+sellbird mentions [watch TERM|check]  # brand mentions: what was found; watch a term; search now (docs/mentions.md)
+sellbird social [on|off PLAYBOOK|approve|skip ID]  # social playbooks and post drafts (docs/social.md)
 sellbird precleared-key        # free key for the cold-email check, saved to .env
 sellbird companies             # company register → CSV: every company, fit, and why it wasn't contacted
 sellbird sending pause|resume  # kill switch
@@ -59,7 +63,8 @@ sellbird suppressions [add|remove <value>]  # addresses and domains never emaile
 sellbird inboxes list|connect|test|pause|resume|cap|name|remove|use  # several sending inboxes
 sellbird tray                  # menu-bar (macOS) / tray (Windows) icon; --status prints the state
 sellbird autostart install|uninstall|status  # start the tray at login
-sellbird mcp install [claude|codex]  # let your coding agent read Sellbird and pause sending
+sellbird connect [claude|claude-desktop|codex]  # add Sellbird to your agents (all found, by default)
+sellbird mcp install [claude|claude-desktop|codex]  # the same for one agent
 sellbird warmup [domain]       # is the sending domain ready? (SPF/DKIM/DMARC, age, blocklists, warmup)
 sellbird trulyinbox connect    # connect TrulyInbox so Sellbird reads the mailbox's warmup
 sellbird retry-writes          # retry prospects the Writer gave up on
@@ -112,7 +117,7 @@ sellbird inboxes list                                           # each inbox and
 - Replies are read from every inbox each cycle. If one can't be read,
   nothing is sent that cycle, as with one inbox, and the Today page says
   which inbox.
-- The dashboard's **Inboxes** tab shows every inbox with today's cold sends
+- The dashboard's **Inboxes** screen (under Set up) shows every inbox with today's cold sends
   against its cap. Click one to pause, resume, cap, rename, check or remove
   it. **Add inbox** connects one: Gmail and Microsoft 365 open their sign-in
   in the browser on the computer running Sellbird (it needs the same
@@ -137,8 +142,10 @@ as services instead.
 
 ## Your coding agent (MCP)
 
-`sellbird mcp install` adds Sellbird to Claude Code (`sellbird mcp install codex`
-for Codex). It shows the exact change to your agent's config first and applies it
+`sellbird connect` adds Sellbird to every agent it finds here: Claude Code,
+Claude desktop and Codex, on one yes (`sellbird connect --remove` takes it out).
+`sellbird mcp install` does one agent: Claude Code by default,
+`sellbird mcp install claude-desktop` or `codex` for the others. Both show the exact change to your agent's config first and applies it
 only on a yes, touches only its own entry, and refuses if a Sellbird entry it
 didn't write is already there. `--print` shows the entry to add by hand to any
 other MCP client; `sellbird mcp uninstall` takes it out again.
@@ -151,4 +158,8 @@ run would cost, and pause sending. It can't approve or send email, resume
 sending, confirm signals, start discovery, change settings or keys, or delete
 anything: the dashboard answers 403 to the agent's token for every route that
 isn't on its short allowlist (`sellbird/agent_policy.py`).
+
+It can also open the dashboard in its app's browser pane, signed in, with a
+one-use link (`dashboard_open`), and show cards in the chat. See
+[Sellbird inside your agent app](agent-app.md).
 

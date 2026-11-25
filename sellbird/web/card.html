@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sellbird</title>
+<!--
+  One small page for every Sellbird card in an agent's chat (the MCP Apps
+  standard). The host sends the tool's result; the card shows it and links
+  to the dashboard. A card never approves, sends or changes anything: its
+  only button opens the item in the dashboard, where the person decides.
+  Everything shown is set as text, never as HTML.
+
+  The look is the dashboard's: one bordered panel, a 48px header with the
+  logo mark, the answer sentence first, stat tiles with sparklines, rows split
+  by hairlines, five tones, and "Only you" next to a decision.
+-->
+<style>
+/*FONT*/
+:root {
+  color-scheme: light;
+  --surface: #FFFFFF; --subtle: #F2F5F3; --hover: #F6F8F7; --line: #E3E8E5; --line2: #D3DAD6;
+  --fg: #15212A; --fg2: #4F5D67; --fg3: #6B7780;
+  --accent: #244B62; --accent-h: #1B3A4C; --on: #FFFFFF; --soft: #E9F0F4; --accent-line: #C9DAE4;
+  --good: #16794A; --good-bg: #E7F4EC; --good-line: #BFE3CD; --good-solid: #22A364;
+  --wait: #8A4B06; --wait-bg: #FCF2DF; --wait-line: #F0D29B; --wait-solid: #E09A1E;
+  --bad: #AB2A1F; --bad-bg: #FCEBE9; --bad-line: #F3C2BC; --bad-solid: #DC4637;
+  --shadow-xs: 0 1px 2px rgb(21 33 42 / .06);
+  --sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #151C21; --subtle: #1C252B; --hover: #1A2228; --line: #243038; --line2: #2F3C45;
+  --fg: #E8EEF1; --fg2: #A6B3BC; --fg3: #8592A0;
+  --accent: #7FB3D1; --accent-h: #A3CBE2; --on: #0C1A22; --soft: #17303E; --accent-line: #24455A;
+  --good: #6FD19B; --good-bg: #12291D; --good-line: #1F4A33; --good-solid: #3CBF78;
+  --wait: #F0BE6A; --wait-bg: #2B2112; --wait-line: #4D3A17; --wait-solid: #E0A43A;
+  --bad: #F08A7E; --bad-bg: #2E1715; --bad-line: #55271F; --bad-solid: #E06253;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / .35);
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { background: transparent; }
+body { font: 400 14px/20px var(--sans); color: var(--fg); -webkit-font-smoothing: antialiased; }
+
+/* The card takes the whole width the host gives it; a cap only when the host is very wide. */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; width: 100%; max-width: 960px; overflow: clip; }
+/* One opacity fade on the first render, nothing that moves: the same with reduced motion. */
+.card.in { animation: fade 150ms ease-out both; }
+@keyframes fade { from { opacity: 0; } }
+
+/* Header: the mark, the title, a count, the date. */
+.hd { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.mark { width: 20px; height: 13px; flex: none; color: var(--accent); }
+.hd h1 { font: 600 14px/20px var(--sans); letter-spacing: -0.005em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center;
+  font: 600 11.5px/20px var(--sans); background: var(--wait-bg); color: var(--wait); font-variant-numeric: tabular-nums; }
+.date { margin-left: auto; font: 500 12px/16px var(--sans); color: var(--fg3); white-space: nowrap; }
+
+.answer { padding: 14px 16px 0; font: 600 16px/22px var(--sans); letter-spacing: -0.01em; text-wrap: balance; }
+.answer .agent { color: var(--accent); }
+
+/* Tiles: label, number, sparkline, the change. */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 14px 16px 16px; }
+@media (min-width: 560px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.tile { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tile .l { font-size: 12px; line-height: 16px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .m { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; min-height: 28px; }
+.tile b { font: 600 20px/28px var(--sans); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.tile b.zero { color: var(--fg3); }
+.tile.wait b { color: var(--wait); } .tile.bad b { color: var(--bad); } .tile.good b { color: var(--good); }
+.tile svg { width: 56px; height: 20px; flex: none; color: var(--accent); }
+.tile .d { font-size: 12px; line-height: 16px; color: var(--fg3); }
+.tile .d.up { color: var(--good); } .tile .d.down { color: var(--bad); }
+
+/* Rows: hairlines edge to edge; a tinted tile only on what needs you. */
+.rows { border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; min-width: 0; }
+.row + .row { border-top: 1px solid var(--line); }
+.ic { width: 28px; height: 28px; flex: none; border-radius: 8px; display: grid; place-items: center; background: var(--wait-bg); color: var(--wait); }
+.ic.bad { background: var(--bad-bg); color: var(--bad); }
+.ic svg { width: 15px; height: 15px; }
+.grow { flex: 1; min-width: 0; }
+.t { font-weight: 550; overflow-wrap: anywhere; }
+.s { color: var(--fg2); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 999px; font: 550 11.5px/1 var(--sans);
+  border: 1px solid var(--line); background: var(--subtle); color: var(--fg2); }
+.tag.wait { background: var(--wait-bg); color: var(--wait); border-color: var(--wait-line); }
+.tag.bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-line); }
+.tag.good { background: var(--good-bg); color: var(--good); border-color: var(--good-line); }
+.tag.acc { background: var(--soft); color: var(--accent); border-color: var(--accent-line); }
+.you { display: inline-flex; align-items: center; gap: 4px; font: 500 11.5px/16px var(--sans); color: var(--fg3); white-space: nowrap; }
+.you svg { width: 11px; height: 11px; }
+.acts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.empty { padding: 14px 16px; color: var(--fg2); font-size: 13px; }
+
+button { flex: none; min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line2);
+  background: var(--surface); color: var(--fg); font: 550 13px/1 var(--sans); cursor: pointer; box-shadow: var(--shadow-xs);
+  transition-property: scale, background-color, border-color; transition-duration: 150ms; transition-timing-function: ease-out;
+  -webkit-tap-highlight-color: transparent; }
+button.pri { background: var(--accent); border-color: var(--accent); color: var(--on); }
+@media (hover: hover) { button:hover:not(:disabled) { background: var(--subtle); } button.pri:hover:not(:disabled) { background: var(--accent-h); border-color: var(--accent-h); } }
+@media (prefers-reduced-motion: no-preference) { button:not(:disabled):active { scale: 0.96; } }
+@media (pointer: coarse) { button { min-height: 40px; } }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .55; cursor: default; }
+
+.ft { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid var(--line); }
+.note { color: var(--fg3); font-size: 12px; line-height: 16px; flex: 1 1 180px; }
+.hd-you { margin-left: auto; } .hd-you + .date { margin-left: 10px; }
+/* When the host won't open a link: what to do instead, under what was clicked. */
+.row { flex-wrap: wrap; }
+.fb { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px 12px; border-radius: 10px;
+  background: var(--wait-bg); border: 1px solid var(--wait-line); }
+.fbt { font-weight: 550; color: var(--wait); }
+.fb.ok { background: var(--soft); border-color: var(--accent-line); }
+.fb.quiet { background: transparent; border-color: var(--line); padding: 8px 10px; }
+.fb.quiet .fbrow { align-items: center; justify-content: space-between; }
+.fb.quiet .s { flex: 1; min-width: 0; }
+.fb.ok .s { color: var(--fg); }
+.fb .note { flex: none; }
+.fbrow { display: flex; gap: 6px; min-width: 0; }
+.fbin { flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--line2); border-radius: 8px; background: var(--surface);
+  color: var(--fg); font: 400 12.5px/1 var(--sans); text-overflow: ellipsis; }
+.fbin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* Narrow: the words keep the width; the button and "Only you" go under them. */
+@media (max-width: 420px) {
+  .row { flex-wrap: wrap; align-items: flex-start; }
+  .grow { flex: 1 1 calc(100% - 40px); }
+  .acts { flex-direction: row-reverse; align-items: center; gap: 10px; margin-left: auto; }
+  .ic { margin-top: 2px; }
+}
+@media (max-width: 340px) { .date { display: none; } }
+</style>
+</head>
+<body>
+<div class="card" id="card" aria-live="polite"><p class="empty">Loading Sellbird...</p></div>
+<script>
+(function () {
+  'use strict';
+  var nextId = 0, pending = {}, firstRender = true;
+  var card = document.getElementById('card');
+  var NS = 'http://www.w3.org/2000/svg';
+
+  function send(msg) { window.parent.postMessage(msg, '*'); }
+  // A request to the host. It answers {result}, {error}, or nothing in time:
+  // each is told apart, so a refusal is never taken for success.
+  function rpc(method, params, wait) {
+    var id = ++nextId;
+    send({jsonrpc: '2.0', id: id, method: method, params: params || {}});
+    return new Promise(function (resolve) {
+      pending[id] = resolve;
+      setTimeout(function () { if (pending[id]) { delete pending[id]; resolve({timedOut: true}); } }, wait || 8000);
+    });
+  }
+  function result(r) { return r && !r.error && !r.timedOut ? (r.result || null) : null; }
+  function notify(method, params) { send({jsonrpc: '2.0', method: method, params: params || {}}); }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  // A small SVG, built node by node (never parsed from a string).
+  function svg(viewBox, cls, parts) {
+    var s = document.createElementNS(NS, 'svg');
+    s.setAttribute('viewBox', viewBox);
+    s.setAttribute('aria-hidden', 'true');
+    if (cls) s.setAttribute('class', cls);
+    parts.forEach(function (p) {
+      var n = document.createElementNS(NS, p[0]);
+      Object.keys(p[1]).forEach(function (k) { n.setAttribute(k, p[1][k]); });
+      s.appendChild(n);
+    });
+    return s;
+  }
+  // The Sellbird mark (sellbird-mark.svg), in the accent colour.
+  function mark() {
+    return svg('0 0 1040 640', 'mark', [['path', {fill: 'currentColor', d: 'M83 0C246 47 417 91 562 157C676 209 759 258 744 314C813 257 896 239 954 301L1034 324L944 359C837 473 731 548 563 524C506 516 464 513 427 519L0 631L407 406L224 213L555 300L420 428L663 315L630 281C407 229 264 237 83 0Z'}]]);
+  }
+  var STROKE = {fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'};
+  function lock() {
+    return svg('0 0 16 16', '', [['rect', Object.assign({x: '4', y: '7.5', width: '8', height: '6', rx: '1.2'}, STROKE)],
+                                 ['path', Object.assign({d: 'M5.8 7.5V5.6a2.2 2.2 0 0 1 4.4 0v1.9'}, STROKE)]]);
+  }
+  function flag(bad) {
+    return bad ? svg('0 0 16 16', '', [['path', Object.assign({d: 'M8 2.5 14 13H2Z'}, STROKE)], ['path', Object.assign({d: 'M8 6.5v3M8 11.3v.2'}, STROKE)]])
+               : svg('0 0 16 16', '', [['path', Object.assign({d: 'M4 14V2.5M4 3h7.5l-1.6 3 1.6 3H4'}, STROKE)]]);
+  }
+  function spark(values) {
+    var v = (values || []).map(function (x) { return Number(x) || 0; });
+    if (v.length < 2) return null;
+    var max = Math.max.apply(null, v.concat([1]));
+    var pts = v.map(function (x, i) { return (2 + i * 52 / (v.length - 1)).toFixed(1) + ',' + (18 - 15 * x / max).toFixed(1); });
+    var last = pts[pts.length - 1].split(',');
+    return svg('0 0 56 20', '', [['polyline', {points: pts.join(' '), fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6',
+                                               'stroke-linejoin': 'round', 'stroke-linecap': 'round'}],
+                                 ['circle', {cx: last[0], cy: last[1], r: '2.2', fill: 'currentColor'}]]);
+  }
+  function num(n) { return Number(n || 0).toLocaleString(); }
+  // The change against the period before, as the dashboard says it: a
+  // percent only on a base of 10 or more; otherwise "up from 3".
+  function change(now, before, days) {
+    if (before === null || before === undefined || !days) return null;
+    if (!before && !now) return ['None in the ' + days + ' days before either', ''];
+    if (!before) return ['Up from none in the ' + days + ' days before', 'up'];
+    var pct = Math.round(100 * (now - before) / before), dir = pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+    if (before < 10 || Math.abs(pct) > 200) return [(pct > 0 ? 'Up from ' : pct < 0 ? 'Down from ' : 'Same as ') + num(before) + ' the ' + days + ' days before', dir];
+    return [(pct > 0 ? '+' : pct < 0 ? '−' : '') + Math.abs(pct) + '% vs the ' + days + ' days before', dir];
+  }
+
+  function theme(ctx) {
+    var t = ctx && ctx.theme;
+    if (!t && window.matchMedia) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+    // The host's own font, when it gives one.
+    var vars = ctx && ctx.styles && ctx.styles.variables;
+    var font = vars && (vars['--font-sans'] || vars['--font-family']);
+    if (font && /^[\w\s,'"-]+$/.test(font)) document.documentElement.style.setProperty('--sans', font);
+  }
+  // The card's own height. Not the page's scrollHeight: that never drops below
+  // the frame's current height, so a card could only ever grow. Height only:
+  // a width would ask the host to shrink the frame to the card, and the card
+  // should fill whatever width the host gives it.
+  var lastH = 0;
+  function resized() {
+    var h = Math.ceil(card.getBoundingClientRect().height);
+    if (h === lastH) return;
+    lastH = h;
+    notify('ui/notifications/size-changed', {height: h});
+  }
+
+  // Opening something in the dashboard, in one click, without the chat.
+  //  1. dashboard_navigate: Sellbird tells the dashboard tab you already have
+  //     open (side panel, pane or browser) to show the page. No link, no code.
+  //  2. No tab open: ask the host to open a one-use sign-in link (never the
+  //     token), then check a tab came up. Codex opens only https links from a
+  //     card, so it is not asked.
+  //  3. Neither: one quiet line saying to open Sellbird first, with a prompt
+  //     to copy. The card never posts into the chat.
+  var host = {name: '', codex: false};
+  // The card's pass, from the tool result: it can only switch the page of a
+  // Sellbird tab already open. Posted straight to the dashboard when the app
+  // doesn't pass the card's tool calls on.
+  var go = null;
+  function direct(page) {
+    if (!go || !window.fetch) return Promise.resolve(null);
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 5000);
+    return fetch(go.url, {method: 'POST', mode: 'cors', credentials: 'omit', cache: 'no-store',
+                          headers: {'content-type': 'application/json'},
+                          body: JSON.stringify({pass: go.pass, page: page || ''}),
+                          signal: ctl ? ctl.signal : undefined})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) { clearTimeout(timer); return s && typeof s.delivered === 'boolean' ? s : null; },
+            function () { clearTimeout(timer); return null; });
+  }
+  function learnHost(res) {
+    var info = (res && res.hostInfo) || {};
+    host.codex = info.client_type === 'codex_desktop' || /codex/i.test(String(info.name || ''));
+    host.name = host.codex ? 'Codex' : /claude/i.test(String(info.name || '')) ? 'Claude' : String(info.title || info.name || '');
+  }
+  // A tool on Sellbird's server, through the host. `reached` is false when the
+  // host refused or never answered: some hosts (Claude Code today) don't pass
+  // a card's tool calls on to the server at all.
+  function call(name, page) {
+    return rpc('tools/call', {name: name, arguments: {page: page || ''}}, 8000).then(function (r) {
+      var res = result(r);
+      var s = (res && !res.isError && res.structuredContent) || {};
+      s.reached = !!(res && !res.isError && res.structuredContent);
+      return s;
+    });
+  }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function open(page, button, where) {
+    if (button) button.disabled = true;
+    var reached = true, tools = true;    // the click reached Sellbird; the app passes tool calls on
+    var navigate = function () {
+      return call('dashboard_navigate', page).then(function (s) { if (!s.reached) reached = tools = false; return !!s.delivered; });
+    };
+    var viaLink = function () {
+      if (host.codex || !tools) return Promise.resolve(false);
+      return call('dashboard_open', page).then(function (s) {
+        var u = s.url;
+        if (!(u && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/#/.test(u))) return false;
+        return rpc('ui/open-link', {url: u}, 5000).then(function (o) {
+          var ok = result(o);
+          if (!ok || ok.isError) return false;
+          // The host said it opened it: believe it once a tab answers.
+          return wait(1500).then(navigate).then(function (yes) { return yes || wait(1500).then(navigate); });
+        });
+      });
+    };
+    // 1. The app's own tool call (Codex). 2. If the app never passed it on,
+    //    the card posts it straight to the dashboard with its pass.
+    //    3. Then a link, or the quiet line.
+    var first = navigate().then(function (yes) {
+      if (yes || reached) return yes;
+      return direct(page).then(function (s) { if (s) reached = true; return !!(s && s.delivered); });
+    });
+    first.then(function (yes) { return yes ? 'tab' : viaLink().then(function (ok) { return ok ? 'opened' : 'none'; }); })
+      .then(function (how) { finish(how); }, function () { finish('none'); });
+    function finish(how) {
+      if (button) button.disabled = false;
+      var old = where.querySelector('.fb'); if (old) old.remove();
+      if (how === 'tab') status(where, 'Opened in your Sellbird tab.');
+      else if (how === 'opened') status(where, 'Opened Sellbird in a new tab.');
+      else if (!reached) unpassed(where, page);
+      else fallback(where);
+      resized();
+    }
+  }
+  function status(where, text) {
+    var box = el('div', 'fb ok');
+    box.setAttribute('role', 'status');
+    box.appendChild(el('p', 's', text));
+    where.appendChild(box);
+  }
+  function copy(text, input, label) {
+    function done(ok) { label.textContent = ok ? 'Copied' : 'Select it and copy'; if (!ok && input) input.select(); }
+    try {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(legacyCopy(input)); });
+    } catch (e) { done(legacyCopy(input)); }
+  }
+  function legacyCopy(input) {
+    if (!input) return false;
+    try { input.select(); return document.execCommand('copy'); } catch (e) { return false; }
+  }
+  // No Sellbird tab is open, and the host didn't open one: one quiet line.
+  function fallback(where) {
+    quiet(where, 'Open Sellbird in your side panel first, then click again.', 'Open Sellbird in your browser pane.');
+  }
+  // The host never passed the click to Sellbird, so no tab could hear it.
+  // Asking the agent works: its own call to dashboard_navigate goes through.
+  function unpassed(where, page) {
+    var app = host.name || 'This app';
+    quiet(where, app + ' doesn’t pass card clicks to Sellbird yet. Ask your agent instead.',
+          'Show ' + (page || 'today') + ' in my Sellbird tab.');
+  }
+  function quiet(where, text, prompt) {
+    var box = el('div', 'fb quiet');
+    box.setAttribute('role', 'status');
+    var line = el('div', 'fbrow');
+    line.appendChild(el('p', 's', text));
+    var pin = el('input', 'fbin sr'); pin.readOnly = true; pin.value = prompt; pin.tabIndex = -1;
+    var pb = el('button', '', 'Copy prompt'); pb.type = 'button';
+    pb.title = 'Copies \u201c' + prompt + '\u201d to paste to your agent';
+    pb.addEventListener('click', function () { copy(prompt, pin, pb); });
+    line.appendChild(pin); line.appendChild(pb); box.appendChild(line);
+    where.appendChild(box);
+  }
+
+  // Tiles from `tiles`, or from the older `stats` ([value, label]) a host may still send.
+  function tiles(data) {
+    var list = data.tiles || (data.stats || []).map(function (s) { return {label: s[1], value: s[0]}; });
+    if (!list.length) return null;
+    var box = el('div', 'tiles');
+    list.forEach(function (t) {
+      var d = el('div', 'tile' + (t.tone ? ' ' + t.tone : ''));
+      d.appendChild(el('span', 'l', t.label));
+      var m = el('div', 'm');
+      m.appendChild(el('b', Number(t.value) ? '' : 'zero', num(t.value)));
+      var s = spark(t.series);
+      if (s) m.appendChild(s);
+      d.appendChild(m);
+      var c = t.note ? [t.note, ''] : change(Number(t.value) || 0, t.before, t.days);
+      if (c) d.appendChild(el('span', 'd' + (c[1] ? ' ' + c[1] : ''), c[0]));
+      box.appendChild(d);
+    });
+    return box;
+  }
+  function row(item) {
+    var r = el('div', 'row');
+    if (item.attention) {
+      var ic = el('span', 'ic' + (item.tone === 'bad' ? ' bad' : ''));
+      ic.appendChild(flag(item.tone === 'bad'));
+      ic.appendChild(el('span', 'sr', item.tag || 'Needs you'));
+      r.appendChild(ic);
+    }
+    var g = el('div', 'grow');
+    g.appendChild(el('p', 't', item.title));
+    if (item.detail) g.appendChild(el('p', 's', item.detail));
+    if (item.tag && !(item.attention && item.tag === 'Needs you')) {
+      var tags = el('div', 'tags');
+      tags.appendChild(el('span', 'tag ' + (item.tone || ''), item.tag));
+      g.appendChild(tags);
+    }
+    r.appendChild(g);
+    if (item.page) {
+      var acts = el('div', 'acts');
+      var b = el('button', item.primary ? 'pri' : '', item.action || 'Review');
+      b.type = 'button';
+      b.addEventListener('click', function () { open(item.page, b, r); });
+      acts.appendChild(b);
+      if (item.decision) {
+        var you = el('span', 'you');
+        you.title = 'Your agent can’t do this; only you can';
+        you.appendChild(lock());
+        you.appendChild(document.createTextNode('Only you'));
+        acts.appendChild(you);
+      }
+      r.appendChild(acts);
+    }
+    return r;
+  }
+
+  function render(data) {
+    go = (data && data.go && /^http:\/\/(127\.0\.0\.1|localhost):\d+\/api\/navigate\/card$/.test(data.go.url || '')) ? data.go : null;
+    if (!data || typeof data !== 'object') return;
+    card.textContent = '';
+    if (firstRender) { card.classList.add('in'); firstRender = false; }
+    var hd = el('div', 'hd');
+    hd.appendChild(mark());
+    hd.appendChild(el('h1', '', data.title || 'Sellbird'));
+    if (data.count) hd.appendChild(el('span', 'count', data.count));
+    if (data.only_you) {   // every row here is a decision only the person makes
+      var you = el('span', 'you hd-you');
+      you.title = 'Your agent can\u2019t approve any of this; only you can';
+      you.appendChild(lock());
+      you.appendChild(document.createTextNode('Only you'));
+      hd.appendChild(you);
+    }
+    hd.appendChild(el('span', 'date', data.when ||
+      new Date().toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'})));
+    card.appendChild(hd);
+    var text = data.answer || data.subtitle || '';
+    if (text) {
+      var p = el('p', 'answer');
+      var who = data.agent || '';
+      if (who && text.indexOf(who + ' ') === 0) {
+        p.appendChild(el('span', 'agent', who));
+        p.appendChild(document.createTextNode(text.slice(who.length)));
+      } else p.textContent = text;
+      card.appendChild(p);
+    }
+    var t = tiles(data);
+    if (t) card.appendChild(t);
+    var rows = el('div', 'rows');
+    (data.items || []).forEach(function (it) { rows.appendChild(row(it)); });
+    if (!(data.items || []).length && data.empty) rows.appendChild(el('p', 'empty', data.empty));
+    if (rows.childNodes.length) card.appendChild(rows);
+    var ft = el('div', 'ft');
+    ft.appendChild(el('span', 'note', data.note || 'Nothing sends until you approve it in the dashboard.'));
+    var all = el('button', '', data.open_label || 'Open the dashboard');
+    all.type = 'button';
+    all.addEventListener('click', function () { open(data.page || '', all, ft); });
+    ft.appendChild(all);
+    card.appendChild(ft);
+    resized();
+  }
+
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent) return;
+    var m = e.data;
+    if (!m || m.jsonrpc !== '2.0') return;
+    if (m.id !== undefined && pending[m.id]) {
+      var f = pending[m.id]; delete pending[m.id];
+      f(m.error ? {error: m.error} : {result: m.result || {}});
+      return;
+    }
+    if (m.method === 'ui/notifications/tool-result') render((m.params || {}).structuredContent);
+    else if (m.method === 'ui/notifications/host-context-changed') theme(m.params);
+  });
+
+  theme(null);
+  rpc('ui/initialize', {
+    protocolVersion: '2026-01-26',
+    appInfo: {name: 'sellbird-card', version: '2'}, clientInfo: {name: 'sellbird-card', version: '2'},
+    appCapabilities: {}, capabilities: {},
+  }).then(function (res) {
+    res = result(res);
+    learnHost(res);
+    theme(res && res.hostContext);
+    notify('ui/notifications/initialized');
+  });
+  // A host that renders the page without the protocol (or a preview) can
+  // hand data in directly.
+  window.sellbirdRender = render;
+  if (window.ResizeObserver) new ResizeObserver(resized).observe(document.body);
+})();
+</script>
+</body>
+</html>

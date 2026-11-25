@@ -16,32 +16,37 @@ Plain HTML, CSS and JavaScript served from `sellbird/web/`. No build step, no fr
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="screenshots/today-dark.png">
-  <img alt="The Today screen: four headline figures with 14-day trends, the list of things waiting on you, contacts by stage, and collector runs" src="screenshots/today-light.png">
+  <img alt="The Today page: one sentence on what Claude did in the last day, four headline figures with trends, the setup steps left, and what needs you" src="screenshots/today-light.png">
 </picture>
 
-The sidebar is grouped by what you're doing: **Work** (what needs you), **Pipeline** (what Sellbird is building) and **System** (how it's running). Counts next to a tab mean something is waiting there.
+There is no sidebar. A dock floats at the bottom with six places, and Set up at its end. A count on a place means something is waiting there. The layout reads the size of its own frame, not the window, so it works the same in a browser, on a phone, and inside the 320 to 420 pixel side panel of an agent app such as Claude desktop or Codex. Today, Outbound, Calendar and Numbers each open with one sentence on where things stand.
 
-**Work**
-- **Today** — four headline figures with 14-day trends (contacts found, emails sent, conversations, waiting on you), then everything that needs a decision, contacts by stage, collector runs and what the pipeline is doing right now. Setup shows here until it's finished, then disappears.
-- **Outbox** — the decisions desk. Each email sits next to what Sellbird knew when it wrote it: the company, how the address was found and verified, and the signals the email draws on. `J`/`K` to move, `A` approve, `E` edit, `R` reject.
-- **Conversations** — every reply in the context of the emails that led to it. Threads Sellbird handed to you (a contract request, a reply it had no safe answer for) come first, with **Hand back to Sellbird**, **Close** and **Reopen**.
+- **Today**: what your agent did since yesterday, then four headline figures with 14-day trends (each opens a chart and the list behind it), what is left to set up, and what needs you, most important first. **What Claude did here** opens the agent's log.
+- **Outbound**: **Waiting for you** is the Outbox, every draft next to what Sellbird knew when it wrote it and why that person was picked (`J`/`K` to move, `A` approve, `E` edit, `R` reject). **Replies** is every reply in the context of the emails that led to it; threads Sellbird handed to you come first, with **Hand back to Sellbird**, **Close** and **Reopen**. Then **Campaigns**, **Find businesses** (the provider menu with prices side by side, an estimate, then a run), **Signals** (the confirmation gate and the cohort builder) and **Social**.
+- **Inbound**: **Leads**, **Texts** and **Mentions**, described below.
+- **People**: everyone found, by stage, searchable, with CSV export. **Companies** is the second view, sorted by a 0-100 fit score, with each company's status (emailed, draft waiting, or why not contacted). A name opens that person's page.
+- **Calendar**: a week or a month, with meetings, emails waiting for you, approved and scheduled, and sent. Sellbird records that a meeting was agreed; the time lives on your own calendar.
+- **Numbers**: people found, emails sent, replies and meetings over 7, 30 or 90 days or all time, by campaign, as charts over time and a found-to-meeting funnel. **Model usage** is the second view: Claude or Codex quota gauges and per-agent token counts, with no dollar figures, because a subscription is not billed per token.
+- **Set up**: grouped as **Get started** (the steps left, in order), **Sending** (Inboxes, Domains and email records, Sending mode and keys, Limits and rules, Opt-outs and bounces), **Finding people** (Your company, Signals, Find businesses), **Inbound** (Leads from your forms, Brand mentions, Texting and consent), **Your agent** (Connect and permissions), **Account** (Engine, Events and webhooks, Activity, Help, Appearance) and **Everything Sellbird does** (each part, on or off, with what is left to switch on). Each opens with a way back.
 
-**Pipeline**
-- **Signals** — the confirmation gate and the cohort builder
-- **Discover** — the provider menu with prices side by side, an estimate, then a run; plus reading the sites of companies found but not yet looked at
-- **Companies / Contacts** — everything found, searchable, with CSV export. Companies are sorted by a 0-100 fit score and show their status (emailed, draft waiting, or why not contacted); click one for its details card, or export the whole company register
-- **Campaigns** — each sequence Sellbird wrote, who it's going to, and per-campaign feedback for the writer
+Under **Set up** there are also: **Email records** (MX, SPF, DKIM and DMARC on each sending domain, with what to change; read only), **Limits and rules** (the stop button, every sending limit, and anything that sends without you), **Opt-outs and bounces** (the never-email list, with the reason for each entry and a CSV export), **Texting and consent**, **Events and webhooks**, and **Your agent** (what your coding agent may do, a log of every call it made, and a switch that cuts it off at once; only you can switch it back on). A name on **People** opens that person's page: the deal (worth, next step, notes), every email, reply and text, their consent records, stage history and meetings.
 
-**System**
-- **Activity**, **Usage**, **Controls**, **Settings**, **Help**. Usage shows Claude or Codex quota gauges and per-agent token counts, with no dollar figures: you're on a subscription and aren't billed per token, so showing costs would be made up.
+**Leads**, under Inbound, lists the people who came to you (a form email Sellbird read, or a lead you or your agent added), what each one sent, and where its first answer stands. It has a short form for adding one by hand and shows how leads arrive. See [inbound leads](inbound-leads.md).
 
-| Outbox | Conversations |
-|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="screenshots/outbox-dark.png"><img alt="The outbox decisions desk: a drafted reply to an objection, with the company, contact, verification and signals beside it" src="screenshots/outbox-light.png"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="screenshots/conversations-dark.png"><img alt="A conversation that needs you: the two emails Sellbird sent and the prospect's reply, marked Objection and Needs you" src="screenshots/conversations-light.png"></picture> |
+**Mentions**, under Inbound, lists where people wrote about you, a competitor or the thing you sell. Each one can become a lead, a reply you copy and post yourself, or a note. **What is watched**, opened from Mentions, is what is watched and where Sellbird looks. See [brand mentions](mentions.md).
 
-Colour is kept for meaning. The chrome is neutral and a single blue marks what you can act on. Status (waiting on you, done, failed, running) uses the same small set of tones in every tab, so "waiting on you" looks the same wherever it shows up. Figures are tabular, so columns line up and a changing number doesn't shift the layout.
+**Social**, under Outbound, lists the playbooks your agent writes posts from, with a switch for each, and the posts it drafted: waiting for you, approved and not yet posted, and recent. Sellbird posts nothing itself. See [social playbooks](social.md).
 
-Appearance has three states: `auto` follows your OS and is the default, or pick light or dark from the button at the bottom of the sidebar. Dark mode uses the same layout with a different set of colour tokens.
+Addresses work as links: `#outbox`, `#signals`, `#calendar` and so on open that screen.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/numbers-dark.png">
+  <img alt="The Numbers page: 9 replies from 57 emails in the last 30 days, with people found, emails sent, replies and meetings over time" src="screenshots/numbers-light.png">
+</picture>
+
+Colour is kept for meaning. The surface is neutral and a single accent, Pale Harbor, marks what you can act on and where you are. Status (waiting on you, done, failed, running) uses the same small set of tones on every screen. Figures are tabular, so columns line up and a changing number does not shift the layout. The logo is the real signature file, `sellbird/web/sellbird-signature.svg`, drawn as a mask so it takes the text colour.
+
+Appearance has three states: `auto` follows your OS and is the default, or pick light or dark under Set up. Dark mode uses the same layout with a different set of colour tokens.
 
 ---
 

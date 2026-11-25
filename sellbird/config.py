@@ -15,7 +15,7 @@ import yaml
 from sellbird.textio import read_user_text
 from dotenv import load_dotenv
 from pydantic import (
-    BaseModel, PrivateAttr, TypeAdapter, ValidationError, field_validator, model_validator,
+    BaseModel, Field, PrivateAttr, TypeAdapter, ValidationError, field_validator, model_validator,
 )
 
 from sellbird.paths import PROJECT_ROOT
@@ -642,7 +642,7 @@ def compliance_notice(config) -> str:
     if not missing:
         return ""
     return (
-        "Cold emails are going out without " + " or ".join(missing) + ". US law "
+        "Cold emails will go out without " + " or ".join(missing) + ". US law "
         "(CAN-SPAM) requires both in every cold email. Set them in sellbird.yaml "
         "(or sellbird.local.yaml if you trained Sellbird)."
     )
@@ -775,6 +775,11 @@ class WriterConfig(BaseModel):
     # written for, instead of getting a draft that says it has no advice. Put
     # them back with `sellbird retry-writes --no-tip`, once more is known.
     require_tip: bool = False
+    # How many emails a sequence has: the first email plus follow-ups. There
+    # is no upper limit; choose what suits the people you write to. Whatever
+    # the length, follow-ups to someone stop the moment they reply, book a
+    # meeting or opt out. 1 means a first email and no follow-ups.
+    sequence_length: int = Field(default=3, ge=1)
 
     @field_validator("email_rules", mode="before")
     @classmethod
@@ -830,6 +835,76 @@ class HandoffConfig(BaseModel):
     arguments: dict = {}
 
 
+class TextQuietHours(BaseModel):
+    start: str = "21:00"
+    end: str = "08:00"
+
+
+class TextingConfig(BaseModel):
+    """Texts through your own Twilio account (sellbird.texting). Off until you
+    turn it on. Whatever is set here, a text goes only to someone with a
+    stored yes, never to a number that said STOP, and never in quiet hours:
+    that check is in code (sellbird.consent) and has no off switch."""
+    enabled: bool = False
+    # Their local time when Sellbird knows their time zone, else yours.
+    quiet_hours: TextQuietHours = TextQuietHours()
+    # Someone who texts your number first may be answered. false = even then
+    # a yes has to be recorded by hand before any reply goes out.
+    reply_to_inbound: bool = True
+    # For numbers written without a country code.
+    default_country_code: str = "1"
+
+
+class InboundConfig(BaseModel):
+    """Leads that come to you (sellbird.leads, sellbird.form_mail). Sellbird
+    hosts no forms: it reads the notification emails your form tool already
+    sends to an inbox Sellbird reads, and your agent can add a lead from
+    anywhere. What a submitter typed is kept as data and never followed."""
+    # Addresses or domains whose mail is a form notification, for example
+    # the address your own website's form plugin sends from.
+    form_senders: list[str] = []
+    # Also recognise mail from the form tools Sellbird knows by their
+    # sending domain (sellbird.form_mail.KNOWN_FORM_SENDERS).
+    known_form_tools: bool = True
+    # Sellbird drafts a first answer to each new lead on its next cycle.
+    # false = the lead is recorded and the answer is left to you or your agent.
+    draft_answers: bool = True
+    # A first answer waits for you even on autopilot: the address was typed
+    # into a form by a stranger. false = it follows your sending mode.
+    answers_wait_for_approval: bool = True
+    # No more first answers than this are drafted in a day; later leads are
+    # still recorded.
+    max_drafts_per_day: int = Field(default=50, ge=0, le=1000)
+
+
+class MentionsConfig(BaseModel):
+    """Brand mentions (sellbird.mentions): Sellbird searches for the terms
+    you watch and lists what it finds. It only ever searches and reads; it
+    never posts. Nothing runs until at least one term is being watched."""
+    # Where to look. hackernews and news need no key. reddit and youtube use
+    # your own free keys and are skipped without them. "web" (a web search
+    # through your Serper or TinyFish key) is left out until you add it,
+    # because Serper searches are paid for with credits.
+    sources: list[str] = ["hackernews", "news", "reddit", "youtube"]
+    # How often the running engine checks. Each check is one search per
+    # watched term per source.
+    check_every_hours: int = Field(default=6, ge=1, le=168)
+    # Only posts from the last this-many days are brought in.
+    lookback_days: int = Field(default=7, ge=1, le=30)
+    # The most results kept per term per source in one check.
+    max_per_search: int = Field(default=10, ge=1, le=50)
+
+
+class WebhookConfig(BaseModel):
+    """One address that hears about events (sellbird.events): a reply, a new
+    lead, a booking, a stage change. Every request is signed with the secret
+    in the environment variable ``secret_env`` (never written in this file).
+    ``events`` empty means all four."""
+    url: str
+    secret_env: str = "SELLBIRD_WEBHOOK_SECRET"
+    events: list[str] = []
+
+
 class SellbirdConfig(BaseModel):
     persona: PersonaConfig
     product: ProductConfig
@@ -840,6 +915,10 @@ class SellbirdConfig(BaseModel):
     compliance: ComplianceConfig = ComplianceConfig()
     writer: WriterConfig = WriterConfig()
     handoff: HandoffConfig = HandoffConfig()
+    webhooks: list[WebhookConfig] = []
+    texting: TextingConfig = TextingConfig()
+    inbound: InboundConfig = InboundConfig()
+    mentions: MentionsConfig = MentionsConfig()
     # The file it was loaded from, so a running Sellbird can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)

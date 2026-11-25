@@ -30,13 +30,20 @@ BREAKUP_MAX_WORDS = 30
 REPLY_MAX_WORDS = 120
 
 
-def max_words(step: int) -> int:
-    """The cap for sequence step ``step`` (1-based)."""
+def max_words(step: int, last: bool | None = None) -> int:
+    """The cap for sequence step ``step`` (1-based).
+
+    A sequence has no fixed length, so "the short closing email" is whichever
+    step is last, and only when there are at least three. ``last`` says
+    whether this step is that one. Left as None (a caller that only knows the
+    step number) it keeps the old reading of a three-email sequence."""
     if step <= 1:
         return FIRST_EMAIL_MAX_WORDS
-    if step == 2:
-        return FOLLOW_UP_MAX_WORDS
-    return BREAKUP_MAX_WORDS
+    if last is None:
+        last = step == 3
+    if last and step >= 3:
+        return BREAKUP_MAX_WORDS
+    return FOLLOW_UP_MAX_WORDS
 
 
 # Dashes: the single most-noticed AI tell. A hyphen inside a word
@@ -129,11 +136,12 @@ def _first_line(body: str) -> str:
 
 
 def style_problems(subject: str, body: str, *, kind: str = "cold", step: int = 1,
-                   names=(), shape: bool = True) -> list[str]:
+                   names=(), shape: bool = True, last: bool | None = None) -> list[str]:
     """Why this email breaks Sellbird's writing rules, or [] when it doesn't.
 
     kind: "cold" for a sequence email, "reply" for an answer to someone.
     step: the sequence step, for the word cap.
+    last: whether that step closes the sequence (see max_words).
     names: the prospect's name, company and similar: text that is theirs, so
         it is never read as a tell.
     shape: False when the operator's own email rules set length and
@@ -164,7 +172,7 @@ def style_problems(subject: str, body: str, *, kind: str = "cold", step: int = 1
         reasons.append(f"sounds AI-written or salesy: {shown}")
 
     if kind == "cold" and shape:
-        cap = max_words(step)
+        cap = max_words(step, last)
         count = words(body)
         if count > cap:
             reasons.append(f"is {count} words; email {step} must be {cap} or fewer")

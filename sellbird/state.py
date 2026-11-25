@@ -29,6 +29,7 @@ from sellbird.startups import parse_funding
 DB_PATH = PROJECT_ROOT / "data" / "sellbird.db"
 
 # How long (seconds) a connection waits on a locked database before failing.
+from sellbird import deals  # noqa: E402
 from sellbird import storage  # noqa: E402
 from sellbird.storage import BUSY_TIMEOUT_SECONDS  # noqa: E402,F401 (re-exported)
 
@@ -53,6 +54,8 @@ SENDS_HELD_KEY = "sends_held"
 # Outbox error on a sequence email cancelled because someone else at the
 # company replied: one answer from a company stops the cold email to all of it.
 COLLEAGUE_REPLIED = "a colleague replied"
+# Why queued emails were cancelled when a meeting was booked.
+MEETING_BOOKED = "meeting booked"
 # Setting set (to their name) when someone's reply stops their company.
 # An out-of-office or a "wrong person" doesn't set it.
 COMPANY_STOP_KEY = "company_stop:"
@@ -558,7 +561,131 @@ MIGRATIONS: list[str] = [
     ALTER TABLE conversations ADD COLUMN mailbox_id TEXT DEFAULT '';
     CREATE INDEX IF NOT EXISTS idx_outbox_mailbox_sent ON outbox(mailbox_id, status, sent_at);
     """,
+    # ── v17: where each person stands, and where they came from ──
+    # stage is one of sellbird.deals.STAGES and lead_source one of its
+    # SOURCES. Every stage change is kept in stage_events, with who made it.
+    # A meeting is a row of its own: the time is optional, because a booking
+    # made on your own calendar link may only be known as "they booked".
+    """
+    ALTER TABLE prospects ADD COLUMN stage TEXT DEFAULT 'new';
+    ALTER TABLE prospects ADD COLUMN stage_changed_at TIMESTAMP;
+    ALTER TABLE prospects ADD COLUMN lead_source TEXT DEFAULT 'cold_email';
+    UPDATE prospects SET stage = 'talking' WHERE status IN ('replied', 'interested', 'accepted_offer');
+    UPDATE prospects SET stage = 'meeting_booked' WHERE status = 'meeting';
+    UPDATE prospects SET stage = 'lost' WHERE status IN ('not_interested', 'opted_out', 'lost', 'bounced');
+    CREATE INDEX IF NOT EXISTS idx_prospects_stage ON prospects(stage);
+    CREATE TABLE IF NOT EXISTS stage_events (id TEXT PRIMARY KEY, prospect_id TEXT NOT NULL,
+      from_stage TEXT DEFAULT '', to_stage TEXT NOT NULL, changed_by TEXT DEFAULT 'sellbird',
+      reason TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_stage_events_prospect ON stage_events(prospect_id, created_at);
+    CREATE TABLE IF NOT EXISTS meetings (id TEXT PRIMARY KEY, prospect_id TEXT NOT NULL,
+      starts_at TIMESTAMP, note TEXT DEFAULT '', recorded_by TEXT DEFAULT 'you',
+      status TEXT DEFAULT 'booked', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_meetings_prospect ON meetings(prospect_id);
+    """,
+    # ── v18: events other tools can listen to (sellbird.events) ──
+    # An event is written in the same transaction as the change it describes.
+    # event_deliveries tracks each endpoint's copy: delivered, retrying or failed.
+    """
+    CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL,
+      payload_json TEXT DEFAULT '{}', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+    CREATE TABLE IF NOT EXISTS event_deliveries (event_id TEXT NOT NULL, endpoint TEXT NOT NULL,
+      status TEXT DEFAULT 'retrying', attempts INTEGER DEFAULT 0, response_status INTEGER DEFAULT 0,
+      error TEXT DEFAULT '', next_attempt_at TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (event_id, endpoint));
+    """,
+    # ── v19: consent for calls and texts, and texts themselves ──
+    # consents is a record, never edited: a later no is a new row, and the
+    # newest row for a phone and channel is the answer (sellbird.consent).
+    # phone_blocks is the do-not-contact list for numbers. texts holds every
+    # text in and out; an outbound one waits as pending_review until a
+    # person approves it.
+    """
+    CREATE TABLE IF NOT EXISTS consents (id TEXT PRIMARY KEY, prospect_id TEXT DEFAULT '',
+      phone TEXT NOT NULL, channel TEXT NOT NULL, status TEXT NOT NULL, source TEXT DEFAULT '',
+      evidence TEXT DEFAULT '', recorded_by TEXT DEFAULT 'you',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_consents_phone ON consents(phone, channel, created_at);
+    CREATE TABLE IF NOT EXISTS phone_blocks (phone TEXT PRIMARY KEY, reason TEXT DEFAULT 'manual',
+      source TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS texts (id TEXT PRIMARY KEY, prospect_id TEXT DEFAULT '',
+      phone TEXT NOT NULL, direction TEXT NOT NULL, body TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending_review', error TEXT DEFAULT '', provider_sid TEXT DEFAULT '',
+      drafted_by TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, sent_at TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_texts_status ON texts(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_texts_phone ON texts(phone, created_at);
+    """,
+    # ── v20: the deal on a person, and what the agent did ──
+    # A deal is three plain fields on the person, so the People list and the
+    # person's page read them with no join. agent_requests is a record of
+    # every call made with the agent's token: what it asked for and whether
+    # it was let through. It holds no request body.
+    """
+    ALTER TABLE prospects ADD COLUMN deal_value INTEGER DEFAULT 0;
+    ALTER TABLE prospects ADD COLUMN next_step TEXT DEFAULT '';
+    ALTER TABLE prospects ADD COLUMN deal_notes TEXT DEFAULT '';
+    CREATE TABLE IF NOT EXISTS agent_requests (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_agent_requests_time ON agent_requests(created_at);
+    """,
+    # ── v21: leads that came to you ──
+    # One row each time someone reaches out: a form they filled in, or a lead
+    # your agent or you added. The person is a prospect like any other; this
+    # is the record of what they sent, kept as they typed it. dedup_key is
+    # the notification email's id, so one email makes one lead.
+    """
+    CREATE TABLE IF NOT EXISTS leads (id TEXT PRIMARY KEY, prospect_id TEXT DEFAULT '',
+      source TEXT DEFAULT 'form', via TEXT DEFAULT '', form_name TEXT DEFAULT '',
+      email TEXT DEFAULT '', phone TEXT DEFAULT '', name TEXT DEFAULT '',
+      message TEXT DEFAULT '', fields_json TEXT DEFAULT '{}', status TEXT DEFAULT 'new',
+      note TEXT DEFAULT '', outbox_id TEXT DEFAULT '', conversation_id TEXT DEFAULT '',
+      mailbox_id TEXT DEFAULT '', draft_tries INTEGER DEFAULT 0, dedup_key TEXT DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_leads_time ON leads(created_at);
+    CREATE INDEX IF NOT EXISTS idx_leads_prospect ON leads(prospect_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_dedup ON leads(dedup_key) WHERE dedup_key != '';
+    """,
+    # ── v22: brand mentions ──
+    # mention_watches is what to look for: your name, a competitor, or a
+    # question buyers ask. One your agent proposes stays off until you turn
+    # it on. mentions is what a check found, one row per address, with the
+    # reply drafted for it (Sellbird never posts) and what you did about it.
+    """
+    CREATE TABLE IF NOT EXISTS mention_watches (id TEXT PRIMARY KEY, term TEXT NOT NULL,
+      kind TEXT DEFAULT 'brand', active INTEGER DEFAULT 1, added_by TEXT DEFAULT 'you',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_mention_watches_term ON mention_watches(term COLLATE NOCASE);
+    CREATE TABLE IF NOT EXISTS mentions (id TEXT PRIMARY KEY, watch_id TEXT DEFAULT '',
+      term TEXT DEFAULT '', watch_kind TEXT DEFAULT 'brand', source TEXT NOT NULL, url TEXT NOT NULL,
+      title TEXT DEFAULT '', body TEXT DEFAULT '', author TEXT DEFAULT '', posted_at TEXT DEFAULT '',
+      hint TEXT DEFAULT '', kind TEXT DEFAULT '', status TEXT DEFAULT 'new', reply TEXT DEFAULT '',
+      reply_by TEXT DEFAULT '', note TEXT DEFAULT '', prospect_id TEXT DEFAULT '',
+      found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_mentions_url ON mentions(url);
+    CREATE INDEX IF NOT EXISTS idx_mentions_status ON mentions(status, found_at);
+    """,
+    # ── v23: social playbooks and post drafts ──
+    # A playbook is a markdown file; social_playbooks only remembers which
+    # ones you switched on. social_posts holds every drafted post. One waits
+    # as pending_review until you approve it; Sellbird posts nothing itself.
+    """
+    CREATE TABLE IF NOT EXISTS social_playbooks (key TEXT PRIMARY KEY, active INTEGER DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS social_posts (id TEXT PRIMARY KEY, playbook TEXT DEFAULT '',
+      platform TEXT NOT NULL, body TEXT NOT NULL, media_note TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending_review', drafted_by TEXT DEFAULT 'you', posted_url TEXT DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, approved_at TIMESTAMP, posted_at TIMESTAMP);
+    CREATE INDEX IF NOT EXISTS idx_social_posts_status ON social_posts(status, created_at);
+    """,
 ]
+
+# The deal on a person (set_deal) and the agent's request log.
+DEAL_VALUE_MAX = 1_000_000_000
+DEAL_TEXT_MAX = 300
+DEAL_NOTES_MAX = 4000
+AGENT_LOG_KEEP = 5000
 
 BRAIN_PROVIDERS = ("claude", "codex")
 _USAGE_LOG_COLUMN = {"claude": "claude_calls", "codex": "codex_calls"}
@@ -802,9 +929,12 @@ class StateManager:
         d["timezone"] = d.get("timezone") or ""
         return Prospect(**d)
 
-    async def add_prospect(self, prospect: Prospect) -> str:
+    async def add_prospect(self, prospect: Prospect, *, lead_source: str = "") -> str:
         """Insert a prospect. Duplicates (same email or LinkedIn URL) are not
-        re-inserted; the existing record's id is returned instead."""
+        re-inserted; the existing record's id is returned instead.
+        ``lead_source`` is where they came from when it isn't cold outreach
+        (a form, a mention): stored and announced in the same write."""
+        lead_source = deals.clean_source(lead_source) if lead_source else deals.DEFAULT_SOURCE
         if not prospect.id:
             prospect.id = _new_id()
         prospect.email = _norm(prospect.email)
@@ -834,6 +964,15 @@ class StateManager:
                     prospect.updated_at.isoformat(),
                 ),
             )
+            if cursor.rowcount == 1:
+                if lead_source != deals.DEFAULT_SOURCE:
+                    await db.execute("UPDATE prospects SET lead_source = ? WHERE id = ?",
+                                     (lead_source, prospect.id))
+                await self._insert_event(db, "lead.created", {"person": {
+                    "id": prospect.id, "email": prospect.email,
+                    "name": " ".join(x for x in (prospect.first_name, prospect.last_name) if x),
+                    "title": prospect.title, "company": prospect.company, "stage": "new",
+                    "source": lead_source}, "found_via": prospect.source})
             await db.commit()
             if cursor.rowcount == 0:
                 # Unique-constraint conflict: resolve to the existing record.
@@ -887,10 +1026,717 @@ class StateManager:
         async with self._connect() as db:
             await db.execute(
                 "UPDATE prospects SET status = ?, updated_at = ? "
-                "WHERE id = ? AND status IS NOT 'opted_out'",
-                (status, _utcnow().isoformat(), prospect_id),
+                "WHERE id = ? AND status IS NOT 'opted_out' "
+                # A booked meeting outlives a later reply: they stay booked.
+                "AND NOT (status = 'meeting' AND ? IN ('new', 'queued', 'contacted', 'replied', 'interested'))",
+                (status, _utcnow().isoformat(), prospect_id, status),
             )
             await db.commit()
+        # A status that says where they stand moves their stage with it.
+        implied = deals.STAGE_FOR_STATUS.get(status)
+        if implied:
+            await self.set_stage(prospect_id, implied, reason=f"status: {status}")
+
+    # ── Consent, the do-not-contact list for numbers, and texts ──
+
+    async def add_consent(self, *, phone: str, channel: str, status: str, prospect_id: str = "",
+                          source: str = "", evidence: str = "", recorded_by: str = "you") -> str:
+        consent_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO consents (id, prospect_id, phone, channel, status, source, evidence, "
+                "recorded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (consent_id, prospect_id or "", phone, channel, status, source[:60], evidence[:500],
+                 recorded_by, _utcnow().isoformat()))
+            await db.commit()
+        return consent_id
+
+    async def current_consent(self, phone: str, channel: str) -> dict | None:
+        """The newest record for this number and channel, or None when there is none."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT * FROM consents WHERE phone = ? AND channel = ? "
+                    "ORDER BY created_at DESC, rowid DESC LIMIT 1", (phone, channel)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_consents(self, limit: int = 200) -> list[dict]:
+        """Every consent record, newest first, with the person's name when known."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT c.*, p.first_name, p.last_name, p.company FROM consents c "
+                    "LEFT JOIN prospects p ON p.id = c.prospect_id "
+                    "ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?", (limit,)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def block_phone(self, phone: str, reason: str = "manual", source: str = "") -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO phone_blocks (phone, reason, source, created_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(phone) DO NOTHING", (phone, reason, source[:120], _utcnow().isoformat()))
+            await db.commit()
+
+    async def unblock_phone(self, phone: str) -> bool:
+        """Take a number you added off the list. One that said STOP stays."""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "DELETE FROM phone_blocks WHERE phone = ? AND reason != 'opted_out'", (phone,))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def phone_blocked(self, phone: str) -> str:
+        """Why this number may not be contacted ('opted_out', 'manual', ...), or ''."""
+        async with self._connect() as db:
+            async with db.execute("SELECT reason FROM phone_blocks WHERE phone = ?", (phone,)) as cursor:
+                row = await cursor.fetchone()
+        return (row[0] or "manual") if row else ""
+
+    async def get_phone_blocks(self, limit: int = 200) -> list[dict]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM phone_blocks ORDER BY created_at DESC LIMIT ?",
+                                  (limit,)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def prospect_id_for_phone(self, phone: str) -> str:
+        """The person this number belongs to, matched on its last ten digits."""
+        tail = "".join(ch for ch in phone if ch.isdigit())[-10:]
+        if len(tail) < 7:
+            return ""
+        async with self._connect() as db:
+            async with db.execute("SELECT id, phone FROM prospects WHERE phone != ''") as cursor:
+                for pid, stored in await cursor.fetchall():
+                    if "".join(ch for ch in (stored or "") if ch.isdigit())[-10:] == tail:
+                        return pid
+        return ""
+
+    # ── Leads that came to you (sellbird.leads) ──
+
+    async def add_lead(self, *, prospect_id: str = "", source: str = "form", via: str = "",
+                       form_name: str = "", email: str = "", phone: str = "", name: str = "",
+                       message: str = "", fields: dict | None = None, status: str = "new",
+                       note: str = "", mailbox_id: str = "", dedup_key: str = "") -> str | None:
+        """Record one lead. None when this notification was already recorded."""
+        lead_id = _new_id()
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO leads (id, prospect_id, source, via, form_name, email, phone, "
+                "name, message, fields_json, status, note, mailbox_id, dedup_key, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (lead_id, prospect_id or "", source, via, form_name, _norm(email), phone, name, message,
+                 json.dumps(fields or {}), status, note, mailbox_id or "", dedup_key or "",
+                 _utcnow().isoformat()))
+            await db.commit()
+            return lead_id if cursor.rowcount == 1 else None
+
+    @staticmethod
+    def _lead_from_row(row) -> dict:
+        lead = dict(row)
+        try:
+            lead["fields"] = json.loads(lead.pop("fields_json", None) or "{}")
+        except (TypeError, ValueError):
+            lead["fields"] = {}
+        return lead
+
+    async def get_leads(self, limit: int = 100) -> list[dict]:
+        """Leads, newest first, each with its person's name and stage and how
+        its answer stands in the Outbox."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT l.*, p.first_name, p.last_name, p.company, p.stage, "
+                    "o.status AS answer_status, o.sent_at AS answer_sent_at, o.error AS answer_note "
+                    "FROM leads l LEFT JOIN prospects p ON p.id = l.prospect_id "
+                    "LEFT JOIN outbox o ON o.id = l.outbox_id "
+                    "ORDER BY l.created_at DESC, l.rowid DESC LIMIT ?", (limit,)) as cursor:
+                return [self._lead_from_row(r) for r in await cursor.fetchall()]
+
+    async def get_lead(self, lead_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)) as cursor:
+                row = await cursor.fetchone()
+        return self._lead_from_row(row) if row else None
+
+    async def update_lead(self, lead_id: str, **fields) -> None:
+        allowed = {"status", "note", "outbox_id", "conversation_id", "draft_tries", "prospect_id"}
+        cols = [k for k in fields if k in allowed]
+        if not cols:
+            return
+        async with self._connect() as db:
+            await db.execute(f"UPDATE leads SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                             (*[fields[c] for c in cols], lead_id))
+            await db.commit()
+
+    async def leads_waiting_for_a_draft(self, max_tries: int, limit: int = 20) -> list[dict]:
+        """New leads with a person and an address but no answer drafted yet, oldest first."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT * FROM leads WHERE status = 'new' AND outbox_id = '' AND prospect_id != '' "
+                    "AND email != '' AND draft_tries < ? ORDER BY created_at, rowid LIMIT ?",
+                    (max_tries, limit)) as cursor:
+                return [self._lead_from_row(r) for r in await cursor.fetchall()]
+
+    async def count_lead_answers_since(self, since_iso: str) -> int:
+        async with self._connect() as db:
+            async with db.execute(
+                    "SELECT COUNT(*) FROM leads WHERE outbox_id != '' AND created_at >= ?",
+                    (since_iso,)) as cursor:
+                return (await cursor.fetchone())[0]
+
+    async def count_leads_needing_you(self) -> int:
+        """Leads nobody has answered or set aside: no draft, or one Sellbird could not read."""
+        async with self._connect() as db:
+            async with db.execute(
+                    "SELECT COUNT(*) FROM leads WHERE status IN ('new', 'unreadable') "
+                    "AND outbox_id = ''") as cursor:
+                return (await cursor.fetchone())[0]
+
+    # ── Brand mentions (sellbird.mentions) ──
+
+    async def add_mention_watch(self, term: str, kind: str = "brand", *, active: bool = True,
+                                added_by: str = "you") -> str | None:
+        """Start watching a term. None when it is already watched."""
+        watch_id = _new_id()
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO mention_watches (id, term, kind, active, added_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (watch_id, term, kind, int(active), added_by, _utcnow().isoformat()))
+            await db.commit()
+            return watch_id if cursor.rowcount == 1 else None
+
+    async def get_mention_watches(self, active_only: bool = False) -> list[dict]:
+        where = "WHERE w.active = 1" if active_only else ""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT w.*, (SELECT COUNT(*) FROM mentions m WHERE m.watch_id = w.id) AS found "
+                    f"FROM mention_watches w {where} ORDER BY w.created_at, w.rowid") as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def set_mention_watch_active(self, watch_id: str, active: bool) -> bool:
+        async with self._connect() as db:
+            cursor = await db.execute("UPDATE mention_watches SET active = ? WHERE id = ?",
+                                      (int(active), watch_id))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def remove_mention_watch(self, watch_id: str) -> bool:
+        """Stop watching a term. What it already found stays."""
+        async with self._connect() as db:
+            cursor = await db.execute("DELETE FROM mention_watches WHERE id = ?", (watch_id,))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def add_mention(self, *, watch_id: str, term: str, watch_kind: str, source: str, url: str,
+                          title: str = "", body: str = "", author: str = "", posted_at: str = "",
+                          hint: str = "") -> str | None:
+        """Record one mention. None when that address was already recorded."""
+        mention_id = _new_id()
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO mentions (id, watch_id, term, watch_kind, source, url, title, body, "
+                "author, posted_at, hint, found_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (mention_id, watch_id, term, watch_kind, source, url, title, body, author, posted_at, hint,
+                 _utcnow().isoformat()))
+            await db.commit()
+            return mention_id if cursor.rowcount == 1 else None
+
+    async def get_mentions(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        where, params = ("WHERE status = ?", [status]) if status else ("", [])
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    f"SELECT * FROM mentions {where} ORDER BY found_at DESC, rowid DESC LIMIT ?",
+                    (*params, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_mention(self, mention_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM mentions WHERE id = ?", (mention_id,)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_mention(self, mention_id: str, **fields) -> bool:
+        allowed = {"kind", "status", "reply", "reply_by", "note", "prospect_id"}
+        cols = [k for k in fields if k in allowed]
+        if not cols:
+            return False
+        async with self._connect() as db:
+            cursor = await db.execute(
+                f"UPDATE mentions SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                (*[fields[c] for c in cols], mention_id))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def count_mentions(self, status: str = "new") -> int:
+        async with self._connect() as db:
+            async with db.execute("SELECT COUNT(*) FROM mentions WHERE status = ?", (status,)) as cursor:
+                return (await cursor.fetchone())[0]
+
+    # ── Social playbooks and post drafts (sellbird.social) ──
+
+    async def active_social_playbooks(self) -> set[str]:
+        async with self._connect() as db:
+            async with db.execute("SELECT key FROM social_playbooks WHERE active = 1") as cursor:
+                return {row[0] for row in await cursor.fetchall()}
+
+    async def set_social_playbook(self, key: str, active: bool) -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO social_playbooks (key, active, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET active = excluded.active, updated_at = excluded.updated_at",
+                (key, int(active), _utcnow().isoformat()))
+            await db.commit()
+
+    async def add_social_post(self, *, playbook: str, platform: str, body: str, media_note: str = "",
+                              drafted_by: str = "you") -> str:
+        post_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO social_posts (id, playbook, platform, body, media_note, drafted_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (post_id, playbook, platform, body, media_note, drafted_by, _utcnow().isoformat()))
+            await db.commit()
+        return post_id
+
+    async def get_social_posts(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        where, params = ("WHERE status = ?", [status]) if status else ("", [])
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    f"SELECT * FROM social_posts {where} ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                    (*params, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_social_post(self, post_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM social_posts WHERE id = ?", (post_id,)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def move_social_post(self, post_id: str, new: str, *, only_from: tuple[str, ...],
+                               **fields) -> bool:
+        """Move one post between statuses, only when it is in one of
+        ``only_from``, setting any of body, media_note, posted_url and the
+        time stamps in the same write."""
+        allowed = {"body", "media_note", "posted_url", "approved_at", "posted_at"}
+        cols = [k for k in fields if k in allowed]
+        marks = ",".join("?" * len(only_from))
+        async with self._connect() as db:
+            cursor = await db.execute(
+                f"UPDATE social_posts SET status = ?{''.join(', ' + c + ' = ?' for c in cols)} "
+                f"WHERE id = ? AND status IN ({marks})",
+                (new, *[fields[c] for c in cols], post_id, *only_from))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def count_social_posts(self, status: str = "pending_review") -> int:
+        async with self._connect() as db:
+            async with db.execute("SELECT COUNT(*) FROM social_posts WHERE status = ?", (status,)) as cursor:
+                return (await cursor.fetchone())[0]
+
+    async def add_text(self, *, phone: str, direction: str, body: str, status: str,
+                       prospect_id: str = "", drafted_by: str = "", provider_sid: str = "",
+                       created_at: str | None = None) -> str:
+        text_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO texts (id, prospect_id, phone, direction, body, status, drafted_by, "
+                "provider_sid, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (text_id, prospect_id or "", phone, direction, body, status, drafted_by, provider_sid,
+                 created_at or _utcnow().isoformat()))
+            await db.commit()
+        return text_id
+
+    async def get_texts(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        """Texts, newest first (oldest first for one status, so a queue drains in order)."""
+        where, params, order = "", [], "t.created_at DESC, t.rowid DESC"
+        if status:
+            where, params, order = "WHERE t.status = ?", [status], "t.created_at, t.rowid"
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT t.*, p.first_name, p.last_name, p.company FROM texts t "
+                    f"LEFT JOIN prospects p ON p.id = t.prospect_id {where} ORDER BY {order} LIMIT ?",
+                    (*params, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_text(self, text_id: str) -> dict | None:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM texts WHERE id = ?", (text_id,)) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_text(self, text_id: str, **fields) -> None:
+        allowed = {"status", "error", "body", "provider_sid", "sent_at"}
+        cols = [k for k in fields if k in allowed]
+        if not cols:
+            return
+        async with self._connect() as db:
+            await db.execute(f"UPDATE texts SET {', '.join(c + ' = ?' for c in cols)} WHERE id = ?",
+                             (*[fields[c] for c in cols], text_id))
+            await db.commit()
+
+    async def set_text_status(self, text_id: str, new: str, *, only_from: tuple[str, ...]) -> bool:
+        """Move one text between statuses, only when it is in one of ``only_from``."""
+        marks = ",".join("?" * len(only_from))
+        async with self._connect() as db:
+            cursor = await db.execute(
+                f"UPDATE texts SET status = ?, error = '' WHERE id = ? AND direction = 'out' "
+                f"AND status IN ({marks})", (new, text_id, *only_from))
+            await db.commit()
+            return cursor.rowcount == 1
+
+    async def claim_text(self, text_id: str) -> bool:
+        """approved -> sending, once: the caller that wins sends it."""
+        return await self.set_text_status(text_id, "sending", only_from=("approved",))
+
+    async def has_texted(self, phone: str) -> bool:
+        async with self._connect() as db:
+            async with db.execute(
+                    "SELECT 1 FROM texts WHERE phone = ? AND direction = 'out' AND status = 'sent' LIMIT 1",
+                    (phone,)) as cursor:
+                return await cursor.fetchone() is not None
+
+    async def text_exists(self, provider_sid: str) -> bool:
+        async with self._connect() as db:
+            async with db.execute("SELECT 1 FROM texts WHERE provider_sid = ? LIMIT 1",
+                                  (provider_sid,)) as cursor:
+                return await cursor.fetchone() is not None
+
+    async def cancel_texts_for(self, phone: str, reason: str) -> int:
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "UPDATE texts SET status = 'cancelled', error = ? WHERE phone = ? AND direction = 'out' "
+                "AND status IN ('pending_review', 'approved')", (reason, phone))
+            await db.commit()
+            return cursor.rowcount
+
+    # ── Events (sellbird.events) ──
+
+    @staticmethod
+    async def _insert_event(db, event_type: str, data: dict) -> str:
+        """Write one event on an open connection, inside the caller's transaction."""
+        event_id = "evt_" + _new_id().replace("-", "")
+        await db.execute("INSERT INTO events (id, type, payload_json, created_at) VALUES (?, ?, ?, ?)",
+                         (event_id, event_type, json.dumps(data, default=str), _utcnow().isoformat()))
+        return event_id
+
+    async def record_event(self, event_type: str, data: dict) -> str:
+        async with self._connect() as db:
+            event_id = await self._insert_event(db, event_type, data)
+            await db.commit()
+        return event_id
+
+    async def person_for_event(self, prospect_id: str) -> dict:
+        """The person block every event carries."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT id, first_name, last_name, email, title, company, stage, lead_source "
+                    "FROM prospects WHERE id = ?", (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+        if row is None:
+            return {"id": prospect_id}
+        return {"id": row["id"], "email": row["email"],
+                "name": " ".join(x for x in (row["first_name"], row["last_name"]) if x),
+                "title": row["title"], "company": row["company"],
+                "stage": deals.clean_stage(row["stage"]) or "new",
+                "source": row["lead_source"] or deals.DEFAULT_SOURCE}
+
+    async def get_events(self, limit: int = 50) -> list[dict]:
+        """Recent events, newest first, each with its deliveries."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM events ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                                  (limit,)) as cursor:
+                events = [dict(r) for r in await cursor.fetchall()]
+            if not events:
+                return []
+            marks = ",".join("?" * len(events))
+            async with db.execute(
+                    f"SELECT * FROM event_deliveries WHERE event_id IN ({marks})",
+                    [e["id"] for e in events]) as cursor:
+                deliveries = [dict(r) for r in await cursor.fetchall()]
+        for e in events:
+            try:
+                e["data"] = json.loads(e.pop("payload_json") or "{}")
+            except (TypeError, ValueError):
+                e["data"] = {}
+            e["deliveries"] = [d for d in deliveries if d["event_id"] == e["id"]]
+        return events
+
+    async def webhook_first_seen(self, endpoint: str) -> str:
+        """When this endpoint was first configured (now, the first time it is asked)."""
+        key = "webhook_seen:" + endpoint
+        seen = await self.get_setting(key)
+        if not seen:
+            seen = _utcnow().isoformat()
+            await self.set_setting(key, seen)
+        return seen
+
+    async def events_due_for(self, endpoint: str, *, since: str = "", limit: int = 50) -> list[dict]:
+        """Events this endpoint has not had yet and is due to be sent, oldest first."""
+        now = _utcnow()
+        floor = max(since or "", (now - timedelta(hours=72)).isoformat())
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT e.*, COALESCE(d.attempts, 0) AS attempts FROM events e "
+                    "LEFT JOIN event_deliveries d ON d.event_id = e.id AND d.endpoint = ? "
+                    "WHERE e.created_at >= ? AND (d.event_id IS NULL OR "
+                    "  (d.status = 'retrying' AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= ?))) "
+                    "ORDER BY e.created_at, e.rowid LIMIT ?",
+                    (endpoint, floor, now.isoformat(), limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def record_delivery(self, event_id: str, endpoint: str, *, status: str, attempts: int,
+                              response_status: int = 0, error: str = "",
+                              next_attempt_at: str | None = None) -> None:
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO event_deliveries (event_id, endpoint, status, attempts, response_status, "
+                "error, next_attempt_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(event_id, endpoint) DO UPDATE SET status = excluded.status, "
+                "attempts = excluded.attempts, response_status = excluded.response_status, "
+                "error = excluded.error, next_attempt_at = excluded.next_attempt_at, "
+                "updated_at = excluded.updated_at",
+                (event_id, endpoint, status, attempts, response_status, error[:200],
+                 next_attempt_at, _utcnow().isoformat()))
+            await db.commit()
+
+    # ── Stages and meetings (sellbird.deals) ──
+
+    async def set_stage(self, prospect_id: str, stage: str, *, by: str = "sellbird",
+                        reason: str = "", manual: bool = False) -> dict | None:
+        """Move one person to ``stage``. Returns the change, or None when
+        nothing changed.
+
+        Sellbird's own moves (``manual`` False) only go forward and never
+        leave "won" or "lost"; a person, or their agent, may set any stage."""
+        stage = deals.clean_stage(stage)
+        if not stage:
+            return None
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT stage, email, first_name, last_name, company, lead_source "
+                    "FROM prospects WHERE id = ?", (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
+                return None
+            current = deals.clean_stage(row["stage"]) or "new"
+            if current == stage:
+                return None
+            if not manual and not deals.automatic_move_allowed(current, stage):
+                return None
+            now = _utcnow().isoformat()
+            await db.execute(
+                "UPDATE prospects SET stage = ?, stage_changed_at = ?, updated_at = ? WHERE id = ?",
+                (stage, now, now, prospect_id))
+            await db.execute(
+                "INSERT INTO stage_events (id, prospect_id, from_stage, to_stage, changed_by, reason) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (_new_id(), prospect_id, current, stage, by, reason[:300]))
+            await db.execute(
+                "INSERT INTO actions (id, action_type, agent, details_json) VALUES (?, ?, ?, ?)",
+                (_new_id(), "stage_change", "user" if manual else "main", json.dumps({
+                    "prospect_id": prospect_id, "prospect_email": row["email"],
+                    "from": current, "to": stage, "by": by, "reason": reason[:300]})))
+            await self._insert_event(db, "stage.changed", {
+                "person": {"id": prospect_id, "email": row["email"],
+                           "name": " ".join(x for x in (row["first_name"], row["last_name"]) if x),
+                           "company": row["company"], "stage": stage,
+                           "source": row["lead_source"] or deals.DEFAULT_SOURCE},
+                "from": current, "to": stage, "by": by, "reason": reason[:300]})
+            await db.commit()
+        return {"prospect_id": prospect_id, "email": row["email"],
+                "name": " ".join(x for x in (row["first_name"], row["last_name"]) if x),
+                "company": row["company"], "source": row["lead_source"] or deals.DEFAULT_SOURCE,
+                "from": current, "to": stage, "by": by, "reason": reason}
+
+    async def get_stage_events(self, prospect_id: str, limit: int = 50) -> list[dict]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT * FROM stage_events WHERE prospect_id = ? "
+                    "ORDER BY created_at DESC, rowid DESC LIMIT ?", (prospect_id, limit)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def set_deal(self, prospect_id: str, *, value: int | None = None,
+                       next_step: str | None = None, notes: str | None = None) -> dict | None:
+        """Change the deal on a person: what it is worth (whole units of the
+        owner's currency), the next step and a note. Only the fields given
+        change. Returns the three as they now stand, or None for nobody."""
+        sets, params = [], []
+        if value is not None:
+            sets.append("deal_value = ?")
+            params.append(max(0, min(int(value), DEAL_VALUE_MAX)))
+        if next_step is not None:
+            sets.append("next_step = ?")
+            params.append(str(next_step).strip()[:DEAL_TEXT_MAX])
+        if notes is not None:
+            sets.append("deal_notes = ?")
+            params.append(str(notes).strip()[:DEAL_NOTES_MAX])
+        async with self._connect() as db:
+            if sets:
+                await db.execute(f"UPDATE prospects SET {', '.join(sets)}, updated_at = ? WHERE id = ?",
+                                 (*params, _utcnow().isoformat(), prospect_id))
+                await db.commit()
+            async with db.execute("SELECT deal_value, next_step, deal_notes FROM prospects WHERE id = ?",
+                                  (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {"value": row[0] or 0, "next_step": row[1] or "", "notes": row[2] or ""}
+
+    async def person_record(self, prospect_id: str) -> dict | None:
+        """Everything about one person in one read: who they are, the deal,
+        every email written to them, every reply, their texts, their consent
+        records, each stage move and each booked meeting."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+
+            async def rows(sql: str, params: tuple) -> list[dict]:
+                async with db.execute(sql, params) as cursor:
+                    return [dict(r) for r in await cursor.fetchall()]
+
+            found = await rows("SELECT * FROM prospects WHERE id = ?", (prospect_id,))
+            if not found:
+                return None
+            person = found[0]
+            emails = await rows(
+                "SELECT id, campaign_id, step, kind, subject, body, status, send_at, sent_at, created_at"
+                " FROM outbox WHERE prospect_id = ? ORDER BY COALESCE(sent_at, send_at, created_at)",
+                (prospect_id,))
+            conversations = await rows(
+                "SELECT id, campaign_id, thread_json, intent, stage, status, updated_at"
+                " FROM conversations WHERE prospect_id = ? ORDER BY created_at", (prospect_id,))
+            phone = person.get("phone") or ""
+            texts = await rows(
+                "SELECT id, direction, body, status, error, created_at, sent_at FROM texts"
+                " WHERE prospect_id = ? OR (phone != '' AND phone = ?) ORDER BY created_at, rowid",
+                (prospect_id, phone))
+            consents = await rows(
+                "SELECT channel, status, source, evidence, recorded_by, created_at FROM consents"
+                " WHERE prospect_id = ? OR (phone != '' AND phone = ?) ORDER BY created_at DESC, rowid DESC",
+                (prospect_id, phone))
+            stages = await rows(
+                "SELECT * FROM stage_events WHERE prospect_id = ? ORDER BY created_at, rowid", (prospect_id,))
+            meetings = await rows(
+                "SELECT * FROM meetings WHERE prospect_id = ? ORDER BY created_at", (prospect_id,))
+            blocked = await rows("SELECT reason FROM phone_blocks WHERE phone = ? AND phone != ''", (phone,))
+        for c in conversations:
+            try:
+                thread = json.loads(c.pop("thread_json") or "[]")
+            except ValueError:
+                thread = []
+            c["thread"] = thread if isinstance(thread, list) else []
+        return {"person": person, "emails": emails, "conversations": conversations, "texts": texts,
+                "consents": consents, "stage_events": stages, "meetings": meetings,
+                "phone_blocked": blocked[0]["reason"] if blocked else "",
+                "suppressed": await self.is_suppressed(person.get("email") or "") or ""}
+
+    async def log_agent_request(self, method: str, path: str, status: int) -> None:
+        """One line for a call made with the agent's token. The oldest lines
+        go once there are more than AGENT_LOG_KEEP."""
+        async with self._connect() as db:
+            await db.execute("INSERT INTO agent_requests (method, path, status) VALUES (?, ?, ?)",
+                             (str(method)[:8], str(path)[:200], int(status)))
+            await db.execute(
+                "DELETE FROM agent_requests WHERE id <= (SELECT MAX(id) FROM agent_requests) - ?",
+                (AGENT_LOG_KEEP,))
+            await db.commit()
+
+    async def get_agent_requests(self, limit: int = 100) -> list[dict]:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT method, path, status, created_at FROM agent_requests ORDER BY id DESC LIMIT ?",
+                    (int(limit),)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def set_lead_source(self, prospect_id: str, source: str) -> str:
+        source = deals.clean_source(source)
+        async with self._connect() as db:
+            await db.execute("UPDATE prospects SET lead_source = ?, updated_at = ? WHERE id = ?",
+                             (source, _utcnow().isoformat(), prospect_id))
+            await db.commit()
+        return source
+
+    async def record_booking(self, prospect_id: str, *, starts_at: str | None = None,
+                             note: str = "", by: str = "you") -> dict | None:
+        """A meeting was booked with this person. Their follow-ups stop, and
+        so do the sequence emails queued for colleagues at their company;
+        they move to "meeting booked".
+
+        Returns the meeting with how many queued emails were cancelled, or
+        None when there is no such person or they have opted out (an opt-out
+        is never overwritten)."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT status FROM prospects WHERE id = ?",
+                                  (prospect_id,)) as cursor:
+                row = await cursor.fetchone()
+        if row is None or row["status"] == "opted_out":
+            return None
+        meeting_id = _new_id()
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO meetings (id, prospect_id, starts_at, note, recorded_by) VALUES (?, ?, ?, ?, ?)",
+                (meeting_id, prospect_id, starts_at or None, note[:500], by))
+            await db.commit()
+        cancelled = await self.cancel_pending_outbox_for_prospect(prospect_id, reason=MEETING_BOOKED)
+        cancelled += await self.stop_company(prospect_id)
+        async with self._connect() as db:
+            await db.execute("UPDATE prospects SET status = 'meeting', updated_at = ? WHERE id = ?",
+                             (_utcnow().isoformat(), prospect_id))
+            await db.commit()
+        change = await self.set_stage(prospect_id, "meeting_booked", by=by, reason="meeting booked",
+                                      manual=by != "sellbird")
+        await self.record_event("meeting.booked", {
+            "person": await self.person_for_event(prospect_id),
+            "meeting": {"id": meeting_id, "starts_at": starts_at or None, "note": note[:500]},
+            "by": by, "emails_cancelled": cancelled})
+        await self.log_action("meeting_booked", "user" if by != "sellbird" else "handler", {
+            "prospect_id": prospect_id, "meeting_id": meeting_id, "starts_at": starts_at or "",
+            "cancelled": cancelled, "by": by})
+        return {"id": meeting_id, "prospect_id": prospect_id, "starts_at": starts_at or "",
+                "note": note[:500], "by": by, "cancelled": cancelled, "stage_change": change}
+
+    async def get_meetings(self, limit: int = 100) -> list[dict]:
+        """Booked meetings, newest first, with who they are with."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT m.*, p.first_name, p.last_name, p.email, p.title, p.company "
+                    "FROM meetings m JOIN prospects p ON p.id = m.prospect_id "
+                    "WHERE m.status = 'booked' ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?",
+                    (limit,)) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def count_by_stage_and_source(self) -> dict:
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                    "SELECT COALESCE(NULLIF(stage, ''), 'new') AS stage, "
+                    "COALESCE(NULLIF(lead_source, ''), 'cold_email') AS source, COUNT(*) AS n "
+                    "FROM prospects GROUP BY 1, 2") as cursor:
+                rows = await cursor.fetchall()
+        stages = dict.fromkeys(deals.STAGES, 0)
+        sources: dict[str, int] = {}
+        for r in rows:
+            stages[deals.clean_stage(r["stage"]) or "new"] += r["n"]
+            sources[r["source"]] = sources.get(r["source"], 0) + r["n"]
+        return {"stages": stages, "sources": sources}
 
     async def undo_opt_out(self, prospect_id: str, details: dict | None = None) -> bool:
         """A human's undo of an opt-out: the one way off 'opted_out'.
@@ -932,7 +1778,9 @@ class StateManager:
                  json.dumps({"prospect_id": prospect_id, **(details or {})})),
             )
             await db.commit()
-            return True
+        # A person decided they are back in the conversation.
+        await self.set_stage(prospect_id, "talking", by="you", reason="opt-out undone", manual=True)
+        return True
 
     async def opt_out_history(self, prospect_id: str) -> list[dict]:
         """Every opt-out and undo recorded for this person, oldest first."""

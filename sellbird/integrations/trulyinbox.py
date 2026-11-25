@@ -31,8 +31,11 @@ import httpx
 
 API_BASE = "https://lynx-api.trulyinbox.com"
 # The referral link, used everywhere Sellbird points people at TrulyInbox.
-AFFILIATE_URL = "https://trulyinbox.com/?via=sellbird"
-AFFILIATE_TAG = "(affiliate link)"
+# It lives with every other recommended link, in sellbird.recommended.
+from sellbird.recommended import AFFILIATE_TAG  # noqa: E402
+from sellbird.recommended import link as _recommended_link  # noqa: E402
+
+AFFILIATE_URL = _recommended_link("trulyinbox")
 TIMEOUT = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)
 REPORT_DAYS = 14
 FIND_LIMIT = 25

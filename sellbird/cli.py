@@ -191,6 +191,12 @@ def cmd_mcp(args):
     run_stdio()
 
 
+def cmd_connect(args):
+    """Add Sellbird to every agent on this machine (Claude Code, Claude desktop, Codex)."""
+    from sellbird import connect
+    sys.exit(connect.run_command(args.agent, remove=args.remove, yes=args.yes))
+
+
 def cmd_dashboard(args):
     """Launch the local web dashboard."""
     from sellbird.dashboard import DashboardSetupError, dashboard_url, start_dashboard
@@ -222,7 +228,10 @@ def cmd_status(args):
 
         print("\n  Sellbird Pipeline Status")
         print("  " + "=" * 40)
-        print(f"  Prospects:            {summary['prospects']}")
+        by_status = summary.get("prospects") or {}
+        total = sum(by_status.values())
+        detail = ", ".join(f"{status} {n}" for status, n in sorted(by_status.items()) if n)
+        print(f"  Prospects:            {total}" + (f" ({detail})" if detail else ""))
         print(f"  Ready to write for:   {summary.get('writable_prospects', 0)} "
               "(new, with a verified or catch-all email)")
         write_failed = (summary.get("prospects") or {}).get("write_failed", 0)
@@ -623,7 +632,8 @@ def cmd_discover(args):
                 print(f"    Cost: {m['cost_note']}")
                 print(f"    Free: {m['free_tier']}")
                 if m["env_keys"]:
-                    print(f"    Needs: {', '.join(m['env_keys'])} in .env  —  {m['signup_url']}")
+                    print(f"    Needs: {', '.join(m['env_keys'])} in .env. Sign up: {m['signup_url']}"
+                          + (f" {m['signup_tag']}" if m.get("signup_tag") else ""))
                 if m["caveat"]:
                     print(f"    Note: {m['caveat']}")
             print("\n  Run one with: sellbird discover --provider <key> --estimate\n")
@@ -840,6 +850,10 @@ def cmd_warmup(args):
     smtp_user = os.getenv("SMTP_USERNAME", "").strip() if email.provider == "smtp" else ""
     sender = smtp_user if "@" in smtp_user else config.persona.email
     domain = (args.domain or sender.rpartition("@")[2]).strip().lower().rstrip(".")
+    if not args.domain and domain == "yourcompany.com":     # the template's placeholder, not yours
+        print("\n  No sending address set yet (persona.email is still the example)."
+              "\n  Run 'sellbird setup', or pass your domain: sellbird warmup yourdomain.com\n")
+        raise SystemExit(1)
     if not d.DOMAIN_RE.match(domain):
         print("\n  No valid sending domain found. Pass one: sellbird warmup yourdomain.com\n")
         raise SystemExit(1)
@@ -1081,6 +1095,54 @@ def _carry_over_from_harvey():
         print(f"Sellbird (formerly Harvey): {note}", file=sys.stderr)
 
 
+def cmd_import(args):
+    """Bring a CSV of people in. They land in People; nobody is emailed."""
+    from pathlib import Path
+
+    from sellbird import importer
+    from sellbird.config import load_env
+    from sellbird.integrations.email_finder import verify_published_address
+    from sellbird.state import StateManager
+    from sellbird.textio import read_user_text
+
+    path = Path(args.file).expanduser()
+    if not path.is_file():
+        print(f"\n  No such file: {path}\n")
+        sys.exit(1)
+    people, problems = importer.read_rows(read_user_text(path))
+    for line in problems[:20]:
+        print(f"  {line}")
+    if len(problems) > 20:
+        print(f"  ...and {len(problems) - 20} more rows left out.")
+    if not people:
+        print("\n  Nothing to import.\n")
+        sys.exit(1)
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        env = load_env()
+
+        async def check(email: str) -> str:
+            return await verify_published_address(email, env)
+
+        return await importer.import_people(
+            state, people, check=None if args.no_check else check, dry_run=args.dry_run)
+
+    counts = asyncio.run(_run())
+    verb = "Would add" if args.dry_run else "Added"
+    print(f"\n  {verb} {counts['added']} of {len(people)} people.")
+    if not args.dry_run and counts["added"]:
+        print(f"    {counts['verified']} verified, {counts['risky']} catch-all, "
+              f"{counts['guess']} not checked (a guess is never sent to)")
+    for key, words in (("already_here", "already in People"),
+                       ("never_email", "on your never-email list, left out"),
+                       ("invalid", "address does not exist, left out")):
+        if counts[key]:
+            print(f"    {counts[key]} {words}")
+    print("  Nobody was emailed. They are in People with the source \"import\".\n")
+
+
 def cmd_suppressions(args):
     """See, add or remove suppressed addresses and domains. Removing is yours alone."""
     from sellbird.state import StateManager
@@ -1114,6 +1176,151 @@ def cmd_suppressions(args):
     code = asyncio.run(_run())
     if code:
         sys.exit(code)
+
+
+def cmd_leads(args):
+    """Leads that came to you: list them, or add one by hand."""
+    from sellbird import leads
+    from sellbird.config import load_config
+    from sellbird.state import StateManager
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        if args.lead_action == "add":
+            try:
+                config = load_config()
+            except Exception:
+                config = None
+            return await leads.add_lead(
+                state, config, email=args.email, phone=args.phone, name=args.name, company=args.company,
+                message=args.message, form_name=args.form, source=args.source, via="cli")
+        return await state.get_leads(limit=args.limit)
+
+    result = asyncio.run(_run())
+    if args.lead_action == "add":
+        print(f"\n  {result['message']}\n")
+        if not result["success"]:
+            sys.exit(1)
+        return
+    if not result:
+        print("\n  No leads yet. Add one with 'sellbird leads add --email ...', or point your form\n"
+              "  tool's notification emails at an inbox Sellbird reads (docs/inbound-leads.md).\n")
+        return
+    words = {"pending_review": "answer waits for you", "approved": "answer approved", "sent": "answered",
+             "rejected": "answer rejected", "cancelled": "answer cancelled"}
+    print(f"\n  {len(result)} lead(s), newest first:\n")
+    for lead in result:
+        who = lead["name"] or " ".join(x for x in (lead.get("first_name"), lead.get("last_name")) if x) \
+            or lead["email"] or lead["phone"] or "(nobody found)"
+        state_ = words.get(lead.get("answer_status") or "", "") or {
+            "unreadable": "could not be read", "held": "held", "dismissed": "set aside"}.get(lead["status"], "no answer yet")
+        print(f"  {str(lead['created_at'])[:16]}  {leads.source_label(lead['source']):<9} {who[:40]:<40} {state_}")
+    print()
+
+
+def cmd_mentions(args):
+    """Brand mentions: list what was found, watch a term, or check now."""
+    from sellbird import mentions
+    from sellbird.config import load_config, load_env
+    from sellbird.state import StateManager
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        load_env()
+        if args.mention_action == "watch":
+            return await mentions.add_watch(state, args.term, args.kind, by="you")
+        if args.mention_action == "check":
+            wait = await mentions.minutes_until_allowed(state)
+            if wait:
+                return {"success": False, "message": f"A check ran a moment ago. Try again in {wait} minute(s)."}
+            if not await state.get_mention_watches(active_only=True):
+                return {"success": False, "message": "Nothing is being watched. Add a term: sellbird mentions watch \"Your Company\""}
+            return {"success": True, **await mentions.check(state, load_config())}
+        return {"watches": await state.get_mention_watches(), "mentions": await state.get_mentions(limit=args.limit)}
+
+    result = asyncio.run(_run())
+    if args.mention_action == "watch":
+        print(f"\n  {result['message']}\n")
+        sys.exit(0 if result["success"] else 1)
+    if args.mention_action == "check":
+        if not result["success"]:
+            print(f"\n  {result['message']}\n")
+            sys.exit(1)
+        print(f"\n  {result['found']} new mention(s) from {result['searches']} search(es).")
+        for line in result["skipped"]:
+            print(f"    Skipped {line}")
+        for line in result["problems"]:
+            print(f"    Failed  {line}")
+        print()
+        return
+    watches = result["watches"]
+    if not watches:
+        print("\n  Nothing is being watched. Start with your own name:\n"
+              "    sellbird mentions watch \"Your Company\"\n  See docs/mentions.md.\n")
+        return
+    print("\n  Watching:")
+    for w in watches:
+        print(f"    {'on ' if w['active'] else 'off'}  {mentions.WATCH_KIND_WORDS.get(w['kind'], w['kind']):<22} {w['term']}")
+    print(f"\n  {len(result['mentions'])} mention(s), newest first:\n")
+    for m in result["mentions"]:
+        print(f"  {str(m['found_at'])[:16]}  {m['status']:<8} {mentions.SOURCES.get(m['source'], {}).get('label', m['source']):<14} "
+              f"{(m['title'] or m['body'])[:60]}")
+        print(f"                    {m['url']}")
+    print()
+
+
+def cmd_social(args):
+    """Social playbooks and post drafts: list, switch a playbook, approve or skip a post."""
+    from sellbird import social
+    from sellbird.state import StateManager
+
+    async def _run():
+        state = StateManager()
+        await state.init_db()
+        if args.social_action in ("on", "off"):
+            return await social.set_active(state, args.target, args.social_action == "on")
+        if args.social_action == "approve":
+            return await social.approve(state, args.target)
+        if args.social_action == "skip":
+            return await social.skip(state, args.target)
+        return await social.overview(state)
+
+    result = asyncio.run(_run())
+    if args.social_action != "list":
+        if not result["success"]:
+            print(f"\n  {result['message']}\n")
+            sys.exit(1)
+        print("\n  " + (result.get("message") or "Done.") + "\n")
+        return
+    print("\n  Playbooks:")
+    for book in result["playbooks"]:
+        print(f"    {'on ' if book['active'] else 'off'}  {book['key']:<22} {book['name']}  ({', '.join(book['platforms'])})")
+    for title, key in (("Waiting for you", "waiting"), ("Approved, not posted yet", "approved")):
+        if result[key]:
+            print(f"\n  {title}:")
+            for post in result[key]:
+                print(f"    {post['id']}  {post['platform_label']:<10} {post['body'][:70]!r}")
+    print("\n  sellbird social on|off PLAYBOOK   ·   sellbird social approve|skip POST_ID")
+    print("  Sellbird posts nothing itself. See docs/social.md.\n")
+
+
+def cmd_recommended(args):
+    """The service Sellbird recommends for each job, with its link."""
+    from sellbird import recommended
+
+    print("\n  What Sellbird recommends, one service per job. Every job has a free way too.")
+    for name in recommended.JOBS:
+        j = recommended.job(name)
+        print(f"\n  {j['label']}")
+        if j["free"]:
+            print(f"    Free: {j['free']}")
+        print(f"    Recommended: {j['name']}. {j['why']}")
+        print(f"    {j['url']}" + (f" {recommended.AFFILIATE_TAG}" if j["affiliate"] else ""))
+    if recommended.DISCLOSURE:
+        print(f"\n  {recommended.DISCLOSURE}")
+    print()
 
 
 def main():
@@ -1307,12 +1514,20 @@ def main():
         "mcp", help="MCP server for your coding agent (launched by it, over stdio)")
     sub.add_argument("mcp_action", nargs="?", choices=["install", "uninstall"],
                      help="Add or remove the server in your coding agent's config")
-    sub.add_argument("client", nargs="?", choices=["claude", "codex"],
-                     help="Which agent (default: Claude Code only)")
+    sub.add_argument("client", nargs="?", choices=["claude", "claude-desktop", "codex"],
+                     help="Which agent (default: Claude Code only; sellbird connect does all)")
     sub.add_argument("--print", dest="print_config", action="store_true",
                      help="Print the config to add by hand; change nothing")
     sub.add_argument("--yes", action="store_true", help="Apply without asking")
     sub.set_defaults(func=cmd_mcp)
+
+    sub = subparsers.add_parser(
+        "connect", help="Add Sellbird to Claude Code, Claude desktop and Codex in one step")
+    sub.add_argument("agent", nargs="?", choices=["claude", "claude-desktop", "codex"],
+                     help="Just this one (default: every agent found here)")
+    sub.add_argument("--remove", action="store_true", help="Take Sellbird out again")
+    sub.add_argument("--yes", action="store_true", help="Apply without asking")
+    sub.set_defaults(func=cmd_connect)
 
     from sellbird.inbox_cli import register as register_inboxes
     register_inboxes(subparsers)
@@ -1320,6 +1535,40 @@ def main():
     from sellbird import desktop_cli
     desktop_cli.register_desktop_commands(subparsers)
     desktop_cli.register(subparsers)
+
+    sub = subparsers.add_parser("import", help="Bring your own list in from a CSV (emails nobody)")
+    sub.add_argument("file", help="A CSV with a header row; one column must be email")
+    sub.add_argument("--no-check", action="store_true",
+                     help="Skip checking each address; every one stays a guess and is never sent to")
+    sub.add_argument("--dry-run", action="store_true", help="Count what would be added; change nothing")
+    sub.set_defaults(func=cmd_import)
+
+    sub = subparsers.add_parser("leads", help="Leads that came to you; 'leads add' records one (emails nobody)")
+    sub.add_argument("lead_action", nargs="?", default="list", choices=["list", "add"])
+    sub.add_argument("--email", default="")
+    sub.add_argument("--phone", default="")
+    sub.add_argument("--name", default="")
+    sub.add_argument("--company", default="")
+    sub.add_argument("--message", default="", help="What they said or asked")
+    sub.add_argument("--form", default="", help="The form or place they came from")
+    sub.add_argument("--source", default="form", choices=["form", "call", "text", "mention", "referral", "other"])
+    sub.add_argument("--limit", type=int, default=50)
+    sub.set_defaults(func=cmd_leads)
+
+    sub = subparsers.add_parser("mentions", help="Brand mentions: what was found; 'watch TERM' adds a term; 'check' searches now")
+    sub.add_argument("mention_action", nargs="?", default="list", choices=["list", "watch", "check"])
+    sub.add_argument("term", nargs="?", default="", help="watch: the name or phrase to look for")
+    sub.add_argument("--kind", default="brand", choices=["brand", "competitor", "topic"])
+    sub.add_argument("--limit", type=int, default=30)
+    sub.set_defaults(func=cmd_mentions)
+
+    sub = subparsers.add_parser("social", help="Social playbooks and post drafts; on|off PLAYBOOK, approve|skip POST_ID")
+    sub.add_argument("social_action", nargs="?", default="list", choices=["list", "on", "off", "approve", "skip"])
+    sub.add_argument("target", nargs="?", default="", help="A playbook's key, or a post's id")
+    sub.set_defaults(func=cmd_social)
+
+    sub = subparsers.add_parser("recommended", help="The service Sellbird recommends for each job, with its link")
+    sub.set_defaults(func=cmd_recommended)
 
     sub = subparsers.add_parser("suppressions", help="Addresses and domains Sellbird never emails")
     sub.add_argument("suppression_action", nargs="?", default="list", choices=["list", "add", "remove"])

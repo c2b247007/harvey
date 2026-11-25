@@ -7,7 +7,179 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
+**Your sales team, inside your agent.** Sellbird now lives where you already
+work: in Claude Code, Claude desktop and Codex.
+
+- **Connect in one click.** `sellbird connect`, or Connect in the dashboard
+  under Set up, Your agent, adds Sellbird to Claude Code, Claude desktop and
+  Codex. No config files to edit, no keys pasted anywhere. Your agent gets its
+  own key with limited reach.
+- **Ask your agent "What needs me?"** It answers with a card in the chat: what
+  Sellbird did, what is waiting for your OK, how each campaign is doing. One
+  click opens the full app beside the chat, already signed in.
+- **A new app, built around your agent.** A dock with six places (Today,
+  Outbound, Inbound, People, Calendar, Numbers) and Set up. Pages open with
+  one sentence on where things stand, Today shows what your agent did and
+  what only you can decide, and drafts show why each person was picked.
+- **Everything in one place.** Outbound, inbound leads from your site's forms,
+  texts with consent, brand mentions, social playbooks, people with stages,
+  a calendar with week and month views, and numbers with charts over time and
+  a found-to-meeting funnel.
+- **You stay in charge.** Your agent can read, draft, plan and explain.
+  Approving, sending, buying and resuming are always your clicks.
+
+### Upgrading from 0.3 and 0.4
+
+```bash
+git pull
+pip install -e .
+sellbird connect        # once, to add Sellbird to your agents
+sellbird dashboard
+```
+
+- **Your data and settings are kept.** The database gains its new tables and
+  columns on first start (stages, sources, events, consent, leads, mentions,
+  social posts), and each person you already have gets a stage from their
+  status. Nothing is deleted. `sellbird.yaml`,
+  `sellbird.local.yaml`, `.env`, `prompts/` and `skills/` are left as they are,
+  and your dashboard sign-in still works.
+- **No config change is required.** Everything new is off or waits for you
+  until you turn it on: signals still need your confirmation, texting needs
+  Twilio keys and a recorded yes per person, webhooks need an address under
+  `webhooks:`, and form leads need `inbound.form_senders`. Sequences keep three
+  emails unless you set `writer.sequence_length`.
+- **Reconnect your agents.** If you added Sellbird to Claude Code, Claude
+  desktop or Codex by hand (or with `sellbird mcp install`), run
+  `sellbird connect`: it shows the change, replaces the old entry on your yes
+  and keeps a copy of each settings file. Start a new Claude Code or Codex
+  session; quit Claude desktop completely and open it again. Then ask "Open
+  Sellbird".
+- **Bookmarks still work.** The dashboard's old tab names (`#inbox`,
+  `#contacts` and so on) open the matching page in the new dock.
+- **Coming from Harvey (before 0.4)?** Your files are renamed on first run
+  as before: see "Upgrading from Harvey" in the README.
+
 ### Added
+
+- **The dashboard, agent first.** Every page opens with a sentence that says
+  where things stand; on Today and Outbound it is your agent's report ("Claude
+  found 4 people and wrote 3 emails in the last day"), built from real
+  records by `/api/agent/report`. Today has a "What Claude did" log that mixes
+  what the agent did with what you decided. Every draft opens in place with
+  the reason that person was picked, then Approve, Ask your agent to change
+  it (copies a prompt), Edit or Skip, and the decisions only you can make
+  carry an "Only you" mark. A chip in the top bar shows whether the agent is
+  working, connected or not there. Sections are bordered panels, with five
+  tones and line sparklines. The dock floats in the same place on every page
+  and never covers the last row. Page changes are a 150ms fade with no layout
+  shift, a draft opens and closes smoothly and can reverse mid-way, and reduced
+  motion keeps fades only.
+
+- **`sellbird connect`: Sellbird in your agent in one step.** It finds Claude
+  Code, Claude desktop and Codex on this machine, shows what it will add to
+  each, and adds them all on one yes; `--remove` takes it out. Claude desktop
+  is a new target (`sellbird mcp install claude-desktop` too), edited with the
+  same care as the others: merge, backup, verify, never a token, and a Sellbird
+  entry it didn't write is left alone. The setup wizard ends by offering it, and Set up, Your agent has a
+  Connect, Reconnect or Remove button for each agent. Those buttons answer
+  only your own dashboard sign-in, never a browser pane your agent opened.
+  The same now holds for letting the agent back in, resuming sending,
+  turning on autopilot and making more pane links; a pane can still cut
+  the agent off, pause, go back to approval and sign panes out.
+  On Windows it finds the Microsoft Store build of Claude desktop, edits the
+  file instead of passing JSON through an npm `.cmd` shim, keeps CRLF line
+  endings and a byte-order mark, and stops cleanly when another app has the
+  file open.
+
+- **Sellbird inside your agent app.** `dashboard_open` gives your agent a
+  link that opens the full dashboard in its app's browser pane, signed in.
+  The link carries a one-use code that lasts two minutes, never your
+  dashboard token; Set up, Your agent lists signed-in panes and signs them
+  out, and cutting the agent off signs them out too. `show_today`,
+  `show_needs_you` and `show_campaign_report` answer with a card in hosts
+  that support MCP Apps, and as plain text everywhere else. Cards show and
+  link; they never approve. See `docs/agent-app.md`.
+
+- **The dock has seven places, as in the approved prototype.** Outbound
+  (waiting for you, replies, campaigns, finding businesses, signals, social)
+  and Inbound (leads, texts, mentions) replace Inbox. Set up opens with
+  *Everything Sellbird does*: every part of the suite with its state and one
+  button each. Views and filters are quiet text tabs on one line, a row that
+  only opens something is the link itself, labels are plain words unless they
+  need you, and lists sit on the page with hairlines between rows. The dock
+  hides its words below 460 pixels and still fits 320.
+
+- **One recommended service per job.** `sellbird recommended` (and Set up,
+  and Today) names the one service Sellbird recommends for warmup, checking
+  addresses, finding businesses and finding people, and why. Finding
+  businesses and people stays free by default; Today now suggests, without
+  blocking, a paid option for when the free list runs thin. Every link lives
+  in `sellbird/recommended.py`, and the disclosure line names every service
+  whose link is an affiliate link.
+
+- **Social playbooks.** Five playbooks ship as plain files
+  (`skills/social_*.md`: finished work, customer questions, what we learned,
+  local and seasonal, in their words) and you can add your own. You switch on
+  the ones you want under Outbound → Social; your agent drafts posts from them
+  for LinkedIn, Instagram, Facebook or X; every draft waits for your
+  approval. Sellbird posts nothing and stores no social login: you post the
+  approved text, or the agent you connected the account to does. Agent tools
+  `social_playbooks`, `social_playbook_get`, `social_post_draft` and
+  `social_post_mark_posted`, with `skills/posting_to_social.md`. See
+  `docs/social.md`.
+
+- **Brand mentions.** Sellbird searches for the names and questions you
+  watch and lists what it finds under Inbound → Mentions: make one a lead (a
+  person with the source "Mention"), copy a drafted reply to post from your
+  own account, note it or skip it. Hacker News and news articles need no
+  key; Reddit and YouTube use your own free keys; a web search uses your
+  Serper or TinyFish key and is off until you add it. It checks every few
+  hours while Sellbird runs, never posts, and scrapes no social site. Agent
+  tools `mentions_list`, `mentions_check`, `mention_watch_propose`,
+  `mention_update` and `mention_to_lead`, with `skills/brand_mentions.md`.
+  See `docs/mentions.md`.
+
+- **Inbound leads, the local way.** Sellbird hosts no forms, so leads arrive
+  by checking in: form notification emails in an inbox Sellbird already reads
+  become leads (`inbound.form_senders`, plus the form tools it knows), your
+  agent can add one from anywhere (`lead_add`, `lead_answer_draft`,
+  `leads_list`), and so can you (Inbound → Leads, or `sellbird leads add`). A
+  new lead is a person with the source "Form", a `lead.created` event, and a
+  first answer drafted for the Outbox. That answer waits for your approval
+  even on autopilot. What a submitter typed is kept as data and never acted
+  on. See `docs/inbound-leads.md`.
+
+- **Five more screens in the dashboard.** *Email records* (Set up) reads MX,
+  SPF, DKIM and DMARC on each domain you send from and says what to change;
+  Sellbird never writes DNS. *Opt-outs and bounces* is the never-email list
+  with the reason for each entry, add, remove and CSV export. *Limits and
+  rules* puts the stop button, every sending limit and anything that sends
+  without you in one place. *Your agent* shows what your coding agent may do,
+  logs every call it makes (allowed or refused) and has a switch that cuts it
+  off at once. Each person on People opens a page of their own: the deal
+  (worth, next step, notes), every email, reply and text, consent, stage
+  history and meetings.
+- **`sellbird import people.csv`.** Bring your own list in. Each address is
+  checked like a found one, people on the never-email list are left out, and
+  nobody is emailed: they land in People with the source "import".
+- **Agent tools** `person_get`, `person_update_deal`, `email_records`,
+  `never_email_list` and `limits`.
+
+- **A consent check for calls and texts, and texts through your own Twilio.**
+  One gate in code (`sellbird/consent.py`): a stored yes for that channel, not
+  opted out, not on the do-not-contact list, not in quiet hours. There is no
+  first text to someone who has not opted in, and no setting turns the check
+  off. Texts are drafted by you or your agent, approved by you under Inbound →
+  Texts, then sent through the Twilio account you connect. STOP opts a number
+  out at once. Off by default. See `docs/texting.md`.
+
+- **Events other tools can listen to.** Every reply, new lead, booking and
+  stage change is recorded as an event and, when you add an address under
+  `webhooks:`, sent there as a signed POST (`Sellbird-Signature`, HMAC-SHA256)
+  with retries. Works with Zapier, n8n, Make or your own code. See
+  `docs/events.md` and Set up → Events and webhooks.
 
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
@@ -27,62 +199,6 @@ minor versions can still change behaviour.
   stages only its first email on Gmail, Microsoft and SMTP, so steps 2 and 3
   can't go to someone who never answered. Replies are read and answered as
   before. On by default, so nothing changes unless you turn it off.
-
-### Changed
-
-- **The writer sees what Sellbird read off a company's own site.** The free
-  homepage signals (no structured data, a site untouched for six months, a very
-  small sitemap, AI crawlers blocked) were collected but
-  never reached the writer's prompt, so an email asked to name one concrete
-  thing to change had nothing true to name and said it hadn't looked. Findings
-  that are true now go in as fact lines, each saying how it was found and that
-  the check can miss things; a signal checked and found fine is left out. "No
-  online booking" is not passed on: a homepage read misses widgets that load
-  late, and it called a bookable business unbookable too often.
-  Those findings come from one page and can be wrong, so `writer.site_facts:
-  false` turns them off, and `CLAUDE.md` and the approval guide now tell
-  Claude to offer a browser check of each draft's claims before the user
-  approves.
-- **The cold-email check takes a sender based in any of Precleared's
-  fourteen countries.** `compliance.precleared.sender_country` accepts GB, US,
-  CA, DE, FR, AU, IE, NL, ES, IT, LV, AE, EG and QA (`UK`, `USA` and `UAE` are
-  read as their codes), where it took only GB or US; `sellbird setup` asks for
-  a two-letter code and lists them when the answer isn't one. A sender whose
-  timezone is Europe/London is told the check is recommended for them and
-  offered GB as their country; it still waits for their yes. The docs say a
-  new key's 14 days at 100 checks a day start at its first check.
-- Seeding the signal catalog writes only a signal that is missing or whose catalog text changed. The dashboard seeds on every Today load, so this was a write per signal on every page view.
-- **The opt-out line takes any wording.** `compliance.opt_out_line` no longer
-  has to ask for a keyword: "Not interested? Just let me know and I won't email
-  you again." is the new default. Clear phrases are still caught by rule, and
-  the model reads every other reply for a request to stop. The line must still
-  say the emails can stop, however it's worded, so a sign-off like "Cheers!" is
-  refused; `""` leaves the line off on purpose. A link or an email address is
-  still refused.
-- **An `unknown` answer from the cold-email check holds the email instead of
-  failing it.** Precleared answers `unknown` when a fact can't be established,
-  usually the recipient's country, sometimes a register that was too slow.
-  That email now waits in the Outbox with what would settle it (set
-  `prospect_country`, or give the company a location or number) and is asked
-  about again, after six hours and then after a day; the third unknown on the
-  same facts fails it as before. Rejecting or sending the email clears the
-  note, as for an address the check couldn't reach.
-
-### Security
-
-- **Autopilot holds phone numbers and money requests.** An email nobody
-  approved now waits in the Outbox when it gives a phone number that isn't
-  yours (`channels.email.phone_numbers`, or one in your postal address) or
-  asks the reader to send money (wire or bank transfer, IBAN, crypto, gift
-  cards and the like), as it already did for links to domains that aren't
-  yours. A planted "call this number instead" can't go out on its own.
-- **Training reads your website as data.** The pages `sellbird train` crawls
-  are fenced as untrusted text, like replies and research already were, so
-  a comment or review on your site can't steer what training writes into
-  every later email.
-
-### Added
-
 - **Owners on French-language sites.** Finding the decision maker now reads
   Québec French: propriétaire, président(e), PDG, président-directeur
   général, fondateur/fondatrice, directeur/directrice général(e) and
@@ -177,6 +293,111 @@ minor versions can still change behaviour.
 
 ### Changed
 
+- **Contributor License Agreement.** Outside contributors now sign the
+  [Sellbird CLA](CLA.md) once, by commenting on their first pull request. They
+  keep their copyright and give Sellbird a license to use the contribution in
+  any version of Sellbird, hosted included. A bot checks every pull request.
+  The DCO sign-off stays.
+
+- **Today, by importance.** One column: the answer, the four numbers, Finish
+  setting up (steps in order, the next one as the only primary button, gone
+  once done), Needs you, then the last five things your agent did with Show
+  all. Each number opens its own page: a chart over 7, 30 or 90 days or all
+  time, the change against the period before, and the records behind it.
+- **Numbers, rethought.** One range and one campaign filter for the page,
+  tiles with sparklines and change, a line chart with series you switch on and
+  off, a found-to-meeting funnel with the share kept at each step, and a
+  sortable breakdown by campaign or inbox. New read-only `/api/numbers` and
+  `/api/stat/{metric}`.
+- **Calendar, rebuilt.** Week (a time grid with a line at now) and Month (two
+  items a day and "+N more", click a day to see it), previous, next and Today,
+  and the arrow keys. Narrow screens get a list by day.
+- **Every warning says where it is fixed.** Setup steps, the postal address on
+  Outbound, the booking link and the rest open the screen with the field
+  ready. The postal address, opt-out line, booking link and your form's sender
+  address can now be edited in the dashboard.
+- **Inbound and signals as steps.** Leads from your website is three steps:
+  an inbox Sellbird reads, your form's emails sent there, a test. Choosing
+  signals is a named setup step, and People links to what Sellbird looks for.
+- **The chat cards match the dashboard.** Today, Waiting for you and a campaign
+  report open with the answer sentence, show stat tiles with sparklines and the
+  change against the period before, and mark what only you can approve. They
+  still only show and link. A button turns the Sellbird tab you already have
+  open (a side panel, a pane or your browser) to that page, through a new
+  "go to" channel: only a page name travels, never a token or a code, and only
+  signed-in tabs listen. With no tab open the app may open a one-use sign-in
+  link (Codex won't: it opens only https links from a card); otherwise the card
+  says to open Sellbird first. A card never posts into the chat. Claude Code
+  doesn't yet pass a card's clicks on to Sellbird, so each card also carries a
+  pass and posts the click straight to the dashboard (`POST
+  /api/navigate/card`, the one route open cross-origin). A pass can only
+  switch the page of a tab that is already open and signed in, lasts 30
+  minutes, and stops working when you switch your agent off. Where the app's
+  browser won't let a card reach this machine, the card says so and offers a
+  prompt to copy instead. Cards fill the width the app gives them.
+- **Set up in groups** (Get started, Sending, Finding people, Inbound, Your
+  agent, Account, Everything Sellbird does) with an index when there is room.
+  Whole rows open what they are about on People, Companies, Leads and Replies.
+
+- **Sequences have no fixed length.** `writer.sequence_length` (default 3) sets
+  how many emails a sequence has, with no upper limit; the Writer used to ask
+  for exactly three and drop anything past five. Follow-ups to a person stop
+  on a reply, a booked meeting or an opt-out.
+- **Every person has a stage and a source.** Stages are new, talking, meeting
+  booked, proposal, won and lost. Sellbird moves people forward as things
+  happen and never backwards; you or your agent set proposal and won. Source
+  says where they came from (cold email, import and so on). People, Numbers
+  and the new `/api/pipeline` show both.
+- **A booking stops follow-ups.** Mark a meeting on People, let your agent
+  record it (`meeting_record`), or let Sellbird catch a reply that says "I
+  booked a time": queued emails to that person and their colleagues are
+  cancelled and they move to meeting booked. Calendar shows timed meetings
+  and your booking link.
+
+- **The dashboard has a new frame.** The 15-tab sidebar is replaced by a dock
+  with six places (Today, Inbox, People, Calendar, Numbers, Set up), in the
+  Pale Harbor colours with the real Sellbird logo. Every earlier tab is still
+  there, inside one of the six. The layout sizes to its own container, so it
+  works at 320 pixels wide inside an agent's panel as well as full width, in
+  light and dark. Calendar and Numbers are new screens over data the engine
+  already kept. Screens have addresses (`#outbox`, `#signals`).
+- **The writer sees what Sellbird read off a company's own site.** The free
+  homepage signals (no structured data, a site untouched for six months, a very
+  small sitemap, AI crawlers blocked) were collected but
+  never reached the writer's prompt, so an email asked to name one concrete
+  thing to change had nothing true to name and said it hadn't looked. Findings
+  that are true now go in as fact lines, each saying how it was found and that
+  the check can miss things; a signal checked and found fine is left out. "No
+  online booking" is not passed on: a homepage read misses widgets that load
+  late, and it called a bookable business unbookable too often.
+  Those findings come from one page and can be wrong, so `writer.site_facts:
+  false` turns them off, and `CLAUDE.md` and the approval guide now tell
+  Claude to offer a browser check of each draft's claims before the user
+  approves.
+- **The cold-email check takes a sender based in any of Precleared's
+  fourteen countries.** `compliance.precleared.sender_country` accepts GB, US,
+  CA, DE, FR, AU, IE, NL, ES, IT, LV, AE, EG and QA (`UK`, `USA` and `UAE` are
+  read as their codes), where it took only GB or US; `sellbird setup` asks for
+  a two-letter code and lists them when the answer isn't one. A sender whose
+  timezone is Europe/London is told the check is recommended for them and
+  offered GB as their country; it still waits for their yes. The docs say a
+  new key's 14 days at 100 checks a day start at its first check.
+- Seeding the signal catalog writes only a signal that is missing or whose catalog text changed. The dashboard seeds on every Today load, so this was a write per signal on every page view.
+- **The opt-out line takes any wording.** `compliance.opt_out_line` no longer
+  has to ask for a keyword: "Not interested? Just let me know and I won't email
+  you again." is the new default. Clear phrases are still caught by rule, and
+  the model reads every other reply for a request to stop. The line must still
+  say the emails can stop, however it's worded, so a sign-off like "Cheers!" is
+  refused; `""` leaves the line off on purpose. A link or an email address is
+  still refused.
+- **An `unknown` answer from the cold-email check holds the email instead of
+  failing it.** Precleared answers `unknown` when a fact can't be established,
+  usually the recipient's country, sometimes a register that was too slow.
+  That email now waits in the Outbox with what would settle it (set
+  `prospect_country`, or give the company a location or number) and is asked
+  about again, after six hours and then after a day; the third unknown on the
+  same facts fails it as before. Rejecting or sending the email clears the
+  note, as for an address the check couldn't reach.
 - **`Referrer-Policy: same-origin`** on the dashboard, instead of
   `no-referrer`: under `no-referrer` Firefox sends `Origin: null` on POSTs,
   which the dashboard's provenance check refuses. Other sites still never
@@ -187,10 +408,32 @@ minor versions can still change behaviour.
   still deletes it. Any provider that reports a possible send is marked the
   same way.
 
+### Security
+
+- **Autopilot holds phone numbers and money requests.** An email nobody
+  approved now waits in the Outbox when it gives a phone number that isn't
+  yours (`channels.email.phone_numbers`, or one in your postal address) or
+  asks the reader to send money (wire or bank transfer, IBAN, crypto, gift
+  cards and the like), as it already did for links to domains that aren't
+  yours. A planted "call this number instead" can't go out on its own.
+- **Training reads your website as data.** The pages `sellbird train` crawls
+  are fenced as untrusted text, like replies and research already were, so
+  a comment or review on your site can't steer what training writes into
+  every later email.
+
 ### Fixed
 
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
+- **A fresh install reads right with nothing in it.** `sellbird status` prints
+  the number of prospects instead of a raw `{}`, and the postal-address
+  warning says cold emails *will* go out without one rather than that they
+  are. `sellbird warmup` no longer checks `yourcompany.com`, the example
+  address in the template, as if it were yours. The browser tab's title
+  follows the page you are on. The setup wizard's banner lines up again.
+- **Hosted Sellbird isn't promised before it ships.** Connect, Your agent and
+  Everything Sellbird does no longer send ChatGPT users or the phone line and
+  hosted forms to a hosted version that isn't out yet.
 
 ## [0.4.0] - 2026-11-06
 

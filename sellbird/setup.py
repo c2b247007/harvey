@@ -247,7 +247,7 @@ class SetupWizard:
         print(f"""
 ╔══════════════════════════════════════════════════════════╗
 ║                                                          ║
-║   Sellbird Setup Wizard                                    ║
+║   Sellbird Setup Wizard                                  ║
 ║   Let's get you closing deals.                           ║
 ║                                                          ║
 ╚══════════════════════════════════════════════════════════╝""")
@@ -967,8 +967,19 @@ class SetupWizard:
        option and your physical mailing address (CAN-SPAM).
     See docs/deliverability.md.
 """)
+        _offer_connect()
         _print_sellbird("I'm ready. Run 'sellbird run' and I'll start closing.")
         _print_sellbird("Make the first move.\n")
+
+
+def _offer_connect() -> None:
+    """Last step: offer to put Sellbird into the agents on this machine."""
+    from sellbird import connect
+    try:
+        connect.offer(out=lambda line: print(f"  {line}" if line else ""))
+    except Exception as e:  # never let this end the wizard badly
+        print(f"  Connecting your agent didn't work ({type(e).__name__}). "
+              "Run sellbird connect to try again.")
 
 
 async def run_setup():

@@ -7,7 +7,7 @@
   </a>
 </p>
 
-<p align="center"><strong>The open-source outreach platform that runs on your Claude or ChatGPT plan.</strong></p>
+<p align="center"><strong>The open-source outreach platform that lives inside your agent, on your Claude or ChatGPT plan.</strong></p>
 
 <p align="center">
 Sellbird finds companies that need what you sell, finds the person who decides, checks their email address, writes each one a personal cold email, sends it and handles the replies.
@@ -20,7 +20,6 @@ It runs on your own machine, and by default nothing goes out until you approve i
   <a href="https://github.com/ethanplusai/sellbird/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/ethanplusai/sellbird/actions/workflows/tests.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-244b62"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-244b62?logo=python&logoColor=white">
-  <a href="https://sellbird.ai"><img alt="Hosted at sellbird.ai" src="https://img.shields.io/badge/hosted-sellbird.ai-244b62"></a>
   <a href="https://sellbird.ai/harvey/"><img alt="Formerly Harvey" src="https://img.shields.io/badge/formerly-Harvey-8aa0ad"></a>
 </p>
 
@@ -32,11 +31,39 @@ It runs on your own machine, and by default nothing goes out until you approve i
 
 **New releases, features and the roadmap go out first on X: [follow @sellbirdagent](https://x.com/sellbirdagent).**
 
-**Prefer not to run it yourself? [sellbird.ai](https://sellbird.ai) is the hosted version, with sending domains, inboxes and warmup set up for you. It's in early access.**
+Coming soon: a hosted version of Sellbird, at sellbird.ai.
 
-![Sellbird's dashboard: the Today screen, a conversation that needs you, approving a drafted reply in the Outbox, the signals to confirm, searching contacts, then dark mode](docs/dashboard.gif)
+## Inside your agent
 
-<sub>The demo data is invented: "Bookwell" selling online booking to roofers, dental practices and HVAC shops, on `.test` domains.</sub>
+New in 0.5: Sellbird lives where you already work, in Claude Code, Claude desktop and Codex. Run `sellbird connect` once (or press **Connect** in the dashboard), then ask your agent **"What needs me?"** or **"What did you do overnight?"**. It answers with a card in the chat: what Sellbird did, what waits for your OK, how each campaign is doing. One click opens the full app beside the chat, already signed in.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/in-claude-dark.png">
+  <img alt="Claude desktop: you ask &quot;What needs me today?&quot;, Claude answers with Sellbird's Today card (people found, emails sent, conversations, what waits for you), and Sellbird's Outbound page is open in the side panel with a draft and the reason that person was picked" src="docs/screenshots/in-claude-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/in-codex-dark.png">
+  <img alt="Codex: you ask how the Lakewood campaign is doing, Codex answers with Sellbird's campaign card (sent, replied, meetings, one email waiting for you), and Sellbird's Today page is open in the side panel" src="docs/screenshots/in-codex-light.png">
+</picture>
+
+Your agent can read everything, draft, plan and explain. Approving, sending, buying and resuming are always your clicks, in the app. Your agent gets its own key with limited reach, never your dashboard token, and Set up, Your agent logs every call it makes and has a switch that cuts it off. More: [Sellbird inside your agent app](docs/agent-app.md).
+
+## The app
+
+Today, Outbound, Calendar and Numbers each open with one sentence on where things stand. A dock at the bottom holds six places: **Today** (what your agent did and what only you can decide), **Outbound** (drafts waiting for you, replies, campaigns, finding businesses, signals, social), **Inbound** (leads from your site's forms, texts, mentions), **People** (and companies), **Calendar** (week and month, with meetings and scheduled sends) and **Numbers** (charts over time and a found-to-meeting funnel), plus **Set up**. It fits a phone and the narrow side panel of an agent app the same way.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
+  <img alt="The Today page: Claude found 3 people in the last day and 4 emails wait for your OK, four headline figures with trends, the last setup step, and what needs you" src="docs/screenshots/today-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/outbound-dark.png">
+  <img alt="The Outbound page: Claude wrote 4 emails that wait for you, and each draft opens with why that person was picked, then the email, then Approve, which only you can press" src="docs/screenshots/outbound-light.png">
+</picture>
+
+<sub>The demo data is invented: "Bookwell" selling online booking to roofers, dental practices and HVAC shops, on `.example` and `.test` domains.</sub>
 
 ## What it does
 
@@ -90,6 +117,9 @@ You need:
 - **Claude Pro or Max** with the CLI signed in (`claude login`), or a **ChatGPT plan with the Codex CLI** ([Codex setup](docs/codex.md)).
 - **A mailbox to send from**, ideally Google Workspace on a separate sending domain. [Microsoft 365](docs/microsoft365.md) and SMTP work too.
 - **Warmup on that mailbox.** We recommend [TrulyInbox](https://trulyinbox.com/?via=sellbird): it warms a new mailbox before cold email and keeps it out of spam after, and Sellbird reads its inbox rate to tell you when you're ready.
+- **An address checker.** Without one, found addresses are guesses and are never sent. We recommend [Reoon](https://www.reoon.com/email-verifier/) for its free tier (600 checks a month), and [ZeroBounce](https://www.zerobounce.net/members/signup) as well if you write to Microsoft 365 or Google Workspace domains.
+
+Finding businesses and people is free: businesses come from OpenStreetMap, people from each company's own site. When that runs thin, we recommend [DataForSEO](https://app.dataforseo.com/register) for more businesses (about $0.37 per 1,000, $1 free to try) and [Hunter](https://hunter.io/users/sign_up) for the right person at each (25 searches a month free). `sellbird recommended` lists the one service we recommend for each job, and why.
 
 ### Let Claude set it up
 
@@ -126,11 +156,39 @@ sellbird run
 
 On Linux you can also [run it with Docker](docs/docker.md).
 
+### Connect your agent
+
+```bash
+sellbird connect
+```
+
+It finds Claude Code, Claude desktop and Codex on your machine, shows the line it will add to each, and adds them all on one yes. Then ask your agent "Open Sellbird" or "What needs me?":
+
+- **Claude Code** and **Codex** (the CLI and the app): start a new session.
+- **Claude desktop**: quit it completely and open it again. It can open the dashboard in its side panel and show cards in the chat.
+
+Or click **Connect** in the dashboard, under Set up, Your agent: one row per agent, with Connect, Reconnect (when Sellbird has moved) or Remove. It works on macOS and Windows, including the Microsoft Store build of Claude desktop.
+
+`sellbird connect claude-desktop` (or `claude`, `codex`) does just one. `sellbird connect --remove` takes Sellbird out again. Nothing goes into those configs but the command and Sellbird's folder: no key, no token.
+
+ChatGPT and claude.ai in a browser connect from their own servers, so they can't reach Sellbird on your machine. On a ChatGPT plan, use Codex.
+
 ## Nothing sends without you
 
 Every outgoing email waits in the Outbox for your approval until you turn on autopilot yourself. Before anything leaves, a pre-send check with no model involved rejects unfilled merge tags, banned phrases, overlong emails, extra links and undeliverable addresses. Autopilot still holds back any email that links to a domain that isn't yours or quotes Sellbird's own instructions. `sellbird sending pause` stops everything at once.
 
 Details: [Approval and sending](docs/approval-and-sending.md) and [Legal and deliverability](docs/deliverability.md).
+
+## Upgrading to 0.5
+
+```bash
+git pull
+pip install -e .
+sellbird connect        # once: adds Sellbird to Claude Code, Claude desktop and Codex
+sellbird dashboard
+```
+
+Your config, data and dashboard sign-in carry over, and nothing needs editing. If you added Sellbird to an agent by hand before, `sellbird connect` shows the change and replaces that entry on your yes, keeping a copy of each settings file. The [changelog](CHANGELOG.md) has the full list, under "Upgrading from 0.3 and 0.4".
 
 ## Upgrading from Harvey
 
@@ -181,13 +239,15 @@ database, the logs and the dashboard token.
 | [Configuration and commands](docs/configuration.md) | `.env`, `sellbird.yaml` and every command |
 | [Extensions](docs/extensions.md) | Adding routes, heartbeat steps and commands from a separate package |
 | [Using a ChatGPT plan (Codex)](docs/codex.md) | Running on Codex instead of Claude |
+| [Sellbird inside your agent app](docs/agent-app.md) | Connecting your agent, cards in the chat, and the dashboard in its side panel |
+| [Inbound leads](docs/inbound-leads.md) · [Texting](docs/texting.md) · [Mentions](docs/mentions.md) · [Social](docs/social.md) · [Events](docs/events.md) | Leads from your forms, consent-first texts, brand mentions, social playbooks and webhooks |
 | [Legal and deliverability](docs/deliverability.md) | The rules you're sending under, and warmup |
 | [Microsoft 365](docs/microsoft365.md) · [Precleared](docs/precleared.md) | Provider setup guides |
 | [Docker](docs/docker.md) · [Troubleshooting](docs/troubleshooting.md) · [Roadmap](docs/roadmap.md) | Running, fixing and what's next |
 
 ## Contributing
 
-Pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: it covers keeping real contact data out of the repo, test email, and signing off your commits. Found a security problem? Follow [SECURITY.md](SECURITY.md) instead of opening an issue.
+Pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: it covers keeping real contact data out of the repo, test email, signing off your commits, and the one-time [Contributor License Agreement](CLA.md). Found a security problem? Follow [SECURITY.md](SECURITY.md) instead of opening an issue.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed in each release, and [follow @sellbirdagent on X](https://x.com/sellbirdagent) to hear about new ones first.
 

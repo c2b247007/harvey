@@ -19,6 +19,33 @@ import pytz
 
 from sellbird.config import operator_timezone, send_window_of
 
+import re
+
+# A reply that says the meeting is already on the calendar: "booked a slot
+# for Thursday", "just scheduled a call". Deliberately narrow: "can we
+# schedule a call?" is a request, not a booking.
+_BOOKED_RE = re.compile(
+    r"\b(?:i|we)(?:'ve| have)?\s+(?:just\s+|already\s+)?(?:booked|scheduled|grabbed|picked)\s+"
+    r"(?:a|the|an|my|our|that|some)?\s*(?:\d+[- ]?min(?:ute)?s?\s+)?"
+    r"(?:time|slot|call|meeting|spot|appointment|demo)\b"
+    r"|\bjust\s+(?:booked|scheduled)\b"
+    r"|\b(?:booked|scheduled)\s+(?:it|one|in)\b(?!\s+(?:yet|later))"
+    r"|\bsee\s+you\s+(?:on|at|then|tomorrow|next|monday|tuesday|wednesday|thursday|friday)\b",
+    re.IGNORECASE)
+_NOT_BOOKED_RE = re.compile(r"\b(?:haven't|have not|didn't|did not|couldn't|could not|can't|cannot|not yet)\b",
+                            re.IGNORECASE)
+
+
+def said_they_booked(reply_text: str) -> bool:
+    """Does this reply say they have already booked a time?
+
+    Used to record the booking and stop their follow-ups without waiting for
+    a person. It only reads what they wrote, so it errs towards False: a
+    missed booking is marked by hand, a wrong one would stop a real sequence."""
+    text = str(reply_text or "")
+    return bool(_BOOKED_RE.search(text)) and not _NOT_BOOKED_RE.search(text)
+
+
 DEFAULT_START = time(9, 0)
 DEFAULT_END = time(17, 0)
 SUGGESTED_TIMES = 3

@@ -136,8 +136,30 @@ def test_the_users_token_still_reaches_everything(core):
 
 def test_the_allowlist_is_reads_estimates_pause_and_offer_proposals_only():
     # The offer routes write a sample or a proposal; none changes what's sent.
+    # Moving a person's stage sends nothing, and recording a booking can only
+    # stop email: neither lets the agent cause a send.
     allowed_posts = ("/api/discover/estimate", "/api/sending/pause", "/api/inboxes/[^/]+/pause",
-                     "/api/offer/suggest", "/api/offer/preview", "/api/offer/propose")
+                     "/api/offer/suggest", "/api/offer/preview", "/api/offer/propose",
+                     "/api/prospects/[^/]+/stage", "/api/prospects/[^/]+/meeting",
+                     # A text draft waits for the user; the check and a block send nothing.
+                     "/api/texts", "/api/consent/check", "/api/phone-blocks",
+                     # A deal's value, next step and notes: a record, nothing sent.
+                     "/api/prospects/[^/]+/deal",
+                     # A lead is a person and a record; its answer is a draft the user approves.
+                     "/api/leads", "/api/leads/[^/]+/answer",
+                     # Mentions: a proposed term stays off, a check only searches free
+                     # sources, a reply is a draft to copy. Nothing is posted or sent.
+                     "/api/mentions/watches", "/api/mentions/check",
+                     "/api/mentions/(?!watches$|check$)[^/]+", "/api/mentions/(?!watches/)[^/]+/lead",
+                     # A social post is a draft the user approves; "posted" only records one
+                     # they approved. Sellbird posts nothing.
+                     "/api/social/posts", "/api/social/posts/[^/]+/posted",
+                     # A one-use sign-in link for the agent's browser pane: never the token.
+                     "/api/pane/code",
+                     # Which page a dashboard tab you have open shows. Nothing else changes.
+                     "/api/navigate",
+                     # A card's pass: it too can only switch the page of an open tab.
+                     "/api/navigate/pass")
     for method, pattern in agent_policy.AGENT_ROUTES:
         assert method == "GET" or pattern in allowed_posts
     assert not agent_policy.agent_may("POST", "/api/offer")
