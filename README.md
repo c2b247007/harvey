@@ -38,8 +38,13 @@ Coming soon: a hosted version of Sellbird, at sellbird.ai.
 New in 0.5: Sellbird lives where you already work, in Claude Code, Claude desktop and Codex. Run `sellbird connect` once (or press **Connect** in the dashboard), then ask your agent **"What needs me?"** or **"What did you do overnight?"**. It answers with a card in the chat: what Sellbird did, what waits for your OK, how each campaign is doing. One click opens the full app beside the chat, already signed in.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/agent-card-needs-you-dark.png">
-  <img alt="A card in the chat answering &quot;What needs me?&quot;: six things waiting for a decision (a conversation handed to you, three new leads, a social post and a text), each with a Review button" src="docs/screenshots/agent-card-needs-you-light.png" width="640">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/in-claude-dark.png">
+  <img alt="Claude desktop: you ask &quot;What needs me today?&quot;, Claude answers with Sellbird's Today card (people found, emails sent, conversations, what waits for you), and Sellbird's Outbound page is open in the side panel with a draft and the reason that person was picked" src="docs/screenshots/in-claude-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/in-codex-dark.png">
+  <img alt="Codex: you ask how the Lakewood campaign is doing, Codex answers with Sellbird's campaign card (sent, replied, meetings, one email waiting for you), and Sellbird's Today page is open in the side panel" src="docs/screenshots/in-codex-light.png">
 </picture>
 
 Your agent can read everything, draft, plan and explain. Approving, sending, buying and resuming are always your clicks, in the app. Your agent gets its own key with limited reach, never your dashboard token, and Set up, Your agent logs every call it makes and has a switch that cuts it off. More: [Sellbird inside your agent app](docs/agent-app.md).
@@ -50,12 +55,12 @@ Today, Outbound, Calendar and Numbers each open with one sentence on where thing
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/today-dark.png">
-  <img alt="The Today page: one sentence on what Claude did in the last day, four headline figures with trends, the setup steps left, and what needs you" src="docs/screenshots/today-light.png">
+  <img alt="The Today page: Claude found 3 people in the last day and 4 emails wait for your OK, four headline figures with trends, the last setup step, and what needs you" src="docs/screenshots/today-light.png">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/numbers-dark.png">
-  <img alt="The Numbers page: 9 replies from 57 emails in the last 30 days, with people found, emails sent, replies and meetings over time" src="docs/screenshots/numbers-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/outbound-dark.png">
+  <img alt="The Outbound page: Claude wrote 4 emails that wait for you, and each draft opens with why that person was picked, then the email, then Approve, which only you can press" src="docs/screenshots/outbound-light.png">
 </picture>
 
 <sub>The demo data is invented: "Bookwell" selling online booking to roofers, dental practices and HVAC shops, on `.example` and `.test` domains.</sub>
