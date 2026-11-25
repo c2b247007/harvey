@@ -93,7 +93,7 @@ particular purpose. You are not expected to provide support for Your Contributio
 
 ### 9. General
 
-This Agreement is governed by the laws of the State of [STATE], United States, without regard to its conflict of
+This Agreement is governed by the laws of the State of Florida, United States, without regard to its conflict of
 laws rules. If any provision is held unenforceable, the rest stays in effect. This Agreement is the entire
 agreement between You and Sellbird about Your Contributions. Sellbird may publish new versions of this Agreement;
 a new version applies only to Contributions You submit after You accept it.
